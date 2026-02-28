@@ -8,6 +8,7 @@ from pathlib import Path
 
 from src.emulator.engine import (
     EmulatorEngine,
+    stream_demo_highrate,
     stream_jsonl,
     stream_jsonl_infinite,
     write_csv,
@@ -122,6 +123,27 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "<1 decreases. (default: 1.0).",
     )
     p.add_argument(
+        "--attack-every-sec",
+        type=float,
+        default=10.0,
+        help="Seconds between attack burst injections in demo_high_rate "
+        "profile (default: 10). Round-robin across 5 scenarios.",
+    )
+    p.add_argument(
+        "--background-events-per-tick",
+        type=int,
+        default=20,
+        help="Number of benign background events emitted per tick in "
+        "demo_high_rate profile (default: 20).",
+    )
+    p.add_argument(
+        "--max-file-mb",
+        type=float,
+        default=50.0,
+        help="Max output file size in MB before rotation (default: 50). "
+        "Applies to JSONL and CSV in live mode.",
+    )
+    p.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -167,13 +189,31 @@ def main(argv: list[str] | None = None) -> None:
             f"  interval: {args.live_interval_ms} ms, max_events: {args.max_events or 'infinite'}"
         )
         print(f"  profile: {args.profile}, attack_rate: {args.attack_rate}")
+        if args.profile == "demo_high_rate":
+            print(
+                f"  attack_every: {args.attack_every_sec}s, "
+                f"bg/tick: {args.background_events_per_tick}, "
+                f"max_file: {args.max_file_mb} MB"
+            )
         if raw_log_dir:
             print(f"  raw logs -> {raw_log_dir}/")
         if csv_out:
             print(f"  csv out  -> {csv_out}")
         print("  Press Ctrl+C to stop.")
         try:
-            if args.max_events is not None:
+            if args.profile == "demo_high_rate":
+                # Purpose-built high-rate demo loop
+                stream_demo_highrate(
+                    engine=engine,
+                    path=out_path,
+                    interval_sec=interval_sec,
+                    attack_every_sec=args.attack_every_sec,
+                    bg_per_tick=args.background_events_per_tick,
+                    max_file_mb=args.max_file_mb,
+                    raw_log_dir=raw_log_dir,
+                    csv_out=csv_out,
+                )
+            elif args.max_events is not None:
                 # Finite live mode (legacy)
                 count = stream_jsonl(
                     engine=engine,

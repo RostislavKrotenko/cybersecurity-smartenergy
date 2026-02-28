@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import logging
 import random as _random_mod
@@ -570,3 +571,450 @@ def _format_system_line(ev: Event, now: datetime, rng: _random_mod.Random) -> st
             line += f" severity={ev.severity}"
 
     return line
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Demo high-rate streaming (tick-based batching + periodic attack bursts)
+# ══════════════════════════════════════════════════════════════════════════
+
+_ATTACK_SEQUENCE: list[str] = [
+    "brute_force",
+    "ddos_abuse",
+    "telemetry_spoofing",
+    "unauthorized_command",
+    "outage_db_corruption",
+]
+
+# ── Attack burst specifications ──────────────────────────────────────────
+# Each burst is calibrated to exceed the detection threshold defined in
+# rules.yaml so that the analyzer fires an incident immediately.
+#
+#   brute_force:       RULE-BF-001    -> 5 auth_failure  / 60 s  -> burst 8
+#   ddos:              RULE-DDOS-001  -> 10 rate_exceeded / 30 s -> burst 15
+#   telemetry_spoof:   RULE-SPOOF-001 -> 3 anomalies     / 60 s -> burst 6
+#   unauthorized_cmd:  RULE-UCMD-001  -> 1 cmd_exec              -> burst 3
+#   outage/db:         RULE-OUT-001/2 -> 1 svc + 2 db_error      -> burst 3+2
+# ─────────────────────────────────────────────────────────────────────────
+
+_DEMO_BURSTS: dict[str, dict[str, Any]] = {
+    "brute_force": {
+        "phases": [
+            {
+                "event": "auth_failure",
+                "count": 8,
+                "interval_ms": 200,
+                "actor": "unknown",
+                "severity": "high",
+                "ip_pool": ["192.168.8.55"],
+                "source_pool": ["gateway-01"],
+                "keys": [
+                    {"key": "username", "values": ["admin", "root", "operator", "test"]},
+                ],
+                "tags": "auth;failure",
+            },
+        ],
+    },
+    "ddos_abuse": {
+        "phases": [
+            {
+                "event": "rate_exceeded",
+                "count": 15,
+                "interval_ms": 100,
+                "actor": "unknown",
+                "severity": "critical",
+                "ip_pool": [
+                    "203.0.113.10",
+                    "203.0.113.11",
+                    "203.0.113.12",
+                ],
+                "source_pool": ["api-gw-01"],
+                "keys": [
+                    {
+                        "key": "requests_per_sec",
+                        "range": [2000, 5000],
+                        "unit": "req/s",
+                    },
+                ],
+                "tags": "network;flood",
+            },
+            {
+                "event": "service_status",
+                "count": 2,
+                "interval_ms": 500,
+                "actor": "system",
+                "severity": "critical",
+                "source_pool": ["api-gw-01"],
+                "keys": [{"key": "status", "values": ["degraded", "down"]}],
+                "tags": "system;overload",
+            },
+        ],
+    },
+    "telemetry_spoofing": {
+        "phases": [
+            {
+                "event": "telemetry_read",
+                "count": 6,
+                "interval_ms": 300,
+                "actor": "system",
+                "severity": "low",
+                "source_pool": ["meter-17"],
+                "keys": [
+                    {"key": "voltage", "range": [500.0, 1200.0], "unit": "V"},
+                ],
+                "tags": "telemetry;periodic",
+            },
+        ],
+    },
+    "unauthorized_command": {
+        "phases": [
+            {
+                "event": "cmd_exec",
+                "count": 3,
+                "interval_ms": 500,
+                "actor_pool": ["readonly", "unknown", "guest"],
+                "severity": "critical",
+                "ip_pool": ["10.0.5.88", "10.0.5.89"],
+                "source_pool": ["scada-hmi-01"],
+                "keys": [
+                    {
+                        "key": "command",
+                        "values": [
+                            "breaker_open",
+                            "breaker_close",
+                            "set_voltage",
+                            "emergency_shutdown",
+                        ],
+                    },
+                ],
+                "tags": "command;unauthorized",
+            },
+        ],
+    },
+    "outage_db_corruption": {
+        "phases": [
+            {
+                "event": "db_error",
+                "count": 3,
+                "interval_ms": 500,
+                "actor": "system",
+                "severity": "critical",
+                "source_pool": ["db-primary"],
+                "keys": [
+                    {
+                        "key": "error_type",
+                        "values": [
+                            "integrity_violation",
+                            "checksum_mismatch",
+                            "wal_corruption",
+                        ],
+                    },
+                ],
+                "tags": "system;db;corruption",
+            },
+            {
+                "event": "service_status",
+                "count": 2,
+                "interval_ms": 1000,
+                "actor": "system",
+                "severity": "critical",
+                "source_pool": ["db-primary"],
+                "keys": [{"key": "status", "values": ["degraded", "down"]}],
+                "tags": "system;outage",
+            },
+        ],
+    },
+}
+
+# ── Background event templates (always benign) ───────────────────────────
+_BG_TEMPLATES: list[tuple[str, str, list[str], list[dict[str, Any]]]] = [
+    (
+        "telemetry_read",
+        "system",
+        [
+            "meter-17",
+            "meter-22",
+            "inverter-01",
+            "inverter-02",
+            "inverter-03",
+            "collector-01",
+        ],
+        [
+            {"key": "voltage", "range": [218.0, 242.0], "unit": "V"},
+            {"key": "power_kw", "range": [0.0, 55.0], "unit": "kW"},
+            {"key": "frequency_hz", "range": [49.8, 50.2], "unit": "Hz"},
+            {"key": "temperature_c", "range": [20.0, 65.0], "unit": "C"},
+        ],
+    ),
+    (
+        "http_request",
+        "_rand_actor",
+        ["api-gw-01", "ui-web-01"],
+        [
+            {
+                "key": "endpoint",
+                "values": [
+                    "/api/v1/meters",
+                    "/api/v1/inverters",
+                    "/api/v1/status",
+                    "/dashboard",
+                    "/api/v1/config",
+                ],
+            },
+        ],
+    ),
+    (
+        "auth_success",
+        "_rand_actor",
+        ["api-gw-01", "gateway-01"],
+        [
+            {"key": "method", "values": ["password", "mfa", "certificate"]},
+        ],
+    ),
+    (
+        "service_status",
+        "system",
+        ["db-primary", "db-replica", "switch-core-01", "firewall-01"],
+        [
+            {"key": "status", "values": ["healthy"]},
+        ],
+    ),
+]
+
+
+def _random_bg_event(
+    rng: _random_mod.Random,
+    devices: dict[str, Any],
+    now: datetime,
+) -> Event:
+    """Generate a single random benign background event."""
+    tpl = rng.choice(_BG_TEMPLATES)
+    event_type, actor_tmpl, sources, key_specs = tpl
+    source = rng.choice(sources)
+    dev = devices.get(source)
+    comp = dev.component if dev else "unknown"
+    ip = dev.ip if dev else ""
+    ks = rng.choice(key_specs)
+    k = ks["key"]
+    if "range" in ks:
+        v = str(round(rng.uniform(ks["range"][0], ks["range"][1]), 2))
+    else:
+        v = str(rng.choice(ks["values"]))
+    unit = ks.get("unit", "")
+    if actor_tmpl == "_rand_actor":
+        actor = rng.choice(["operator", "admin", "readonly"])
+    else:
+        actor = actor_tmpl
+    return Event(
+        timestamp=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        source=source,
+        component=comp,
+        event=event_type,
+        key=k,
+        value=v,
+        severity="low",
+        actor=actor,
+        ip=ip,
+        unit=unit,
+        tags="demo;background",
+    )
+
+
+def _generate_attack_burst(
+    name: str,
+    rng: _random_mod.Random,
+    devices: dict[str, Any],
+    now: datetime,
+) -> list[Event]:
+    """Generate a burst of events for *name* calibrated to exceed detector thresholds."""
+    spec = _DEMO_BURSTS[name]
+    events: list[Event] = []
+    cor_id = f"COR-DEMO-{rng.randint(1000, 9999)}"
+    t = now
+
+    for phase in spec["phases"]:
+        count: int = phase["count"]
+        interval_ms: int = phase["interval_ms"]
+        # Fix source per phase so events land in the same detector group
+        source = rng.choice(phase["source_pool"])
+        dev = devices.get(source)
+        comp = dev.component if dev else "unknown"
+
+        for _i in range(count):
+            ip_pool = phase.get("ip_pool", [dev.ip if dev else "0.0.0.0"])
+            ip = rng.choice(ip_pool)
+            ks = rng.choice(phase["keys"])
+            k = ks.get("key", "")
+            if "range" in ks:
+                v = str(round(rng.uniform(ks["range"][0], ks["range"][1]), 2))
+            else:
+                v = str(rng.choice(ks.get("values", [""])))
+            unit = ks.get("unit", "")
+            actor = phase.get("actor") or rng.choice(
+                phase.get("actor_pool", ["unknown"])
+            )
+            events.append(
+                Event(
+                    timestamp=t.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    source=source,
+                    component=comp,
+                    event=phase["event"],
+                    key=k,
+                    value=v,
+                    severity=phase["severity"],
+                    actor=actor,
+                    ip=ip,
+                    unit=unit,
+                    tags=phase.get("tags", ""),
+                    correlation_id=cor_id,
+                )
+            )
+            t = t + timedelta(milliseconds=interval_ms)
+
+    return events
+
+
+def _rotate_if_needed(path: Path, max_mb: float) -> bool:
+    """Rotate (truncate) file when it exceeds *max_mb*.
+
+    Renames current file to ``*.bak`` (overwriting previous backup) so the
+    next append creates a fresh file.  Returns ``True`` if rotation occurred.
+    """
+    try:
+        if path.stat().st_size / 1_048_576 > max_mb:
+            bak = path.with_suffix(path.suffix + ".bak")
+            if bak.exists():
+                bak.unlink()
+            path.rename(bak)
+            log.info("Rotated %s (exceeded %.0f MB)", path.name, max_mb)
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def stream_demo_highrate(
+    engine: EmulatorEngine,
+    path: Path,
+    interval_sec: float = 0.25,
+    attack_every_sec: float = 10.0,
+    bg_per_tick: int = 20,
+    max_file_mb: float = 50.0,
+    raw_log_dir: Path | None = None,
+    csv_out: Path | None = None,
+) -> None:
+    """Stream events optimised for live demo: high background rate + periodic attack bursts.
+
+    This function never returns under normal operation (stop with Ctrl+C /
+    SIGTERM).
+
+    Compared to ``stream_jsonl_infinite`` which streams one event at a time,
+    this function writes *bg_per_tick* background events per tick (every
+    *interval_sec* seconds) and injects a full attack burst every
+    *attack_every_sec* seconds.  Attack bursts cycle round-robin through the
+    five scenarios and are calibrated to exceed detection thresholds so that
+    incidents appear within 10--20 seconds of launch.
+
+    Args:
+        engine: Configured EmulatorEngine (used for rng and device index).
+        path: JSONL output path.
+        interval_sec: Seconds between ticks (default 0.25 = 250 ms).
+        attack_every_sec: Seconds between attack burst injections.
+        bg_per_tick: Background events emitted per tick.
+        max_file_mb: Max file size in MB before rotation.
+        raw_log_dir: Optional directory for dirty raw logs.
+        csv_out: Optional CSV output path.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if raw_log_dir is not None:
+        raw_log_dir.mkdir(parents=True, exist_ok=True)
+    if csv_out is not None:
+        csv_out.parent.mkdir(parents=True, exist_ok=True)
+
+    rng = engine.rng
+    devices = engine.devices
+    attack_idx = 0
+    total_count = 0
+
+    csv_header_written = False
+    if csv_out is not None:
+        with contextlib.suppress(OSError):
+            csv_header_written = csv_out.stat().st_size > 0
+
+    # Fire the first burst immediately by pretending we're overdue
+    last_attack_wall = time.monotonic() - attack_every_sec
+
+    log.info(
+        "Demo high-rate stream -> %s "
+        "(tick=%.0f ms, attack_every=%ds, bg/tick=%d, max_file=%.0f MB)",
+        path,
+        interval_sec * 1000,
+        int(attack_every_sec),
+        bg_per_tick,
+        max_file_mb,
+    )
+
+    while True:
+        now = datetime.now(tz=timezone.utc)
+        events: list[Event] = []
+
+        # 1. Background noise -------------------------------------------
+        for _ in range(bg_per_tick):
+            events.append(_random_bg_event(rng, devices, now))
+
+        # 2. Attack burst (round-robin) ---------------------------------
+        wall_elapsed = time.monotonic() - last_attack_wall
+        if wall_elapsed >= attack_every_sec:
+            name = _ATTACK_SEQUENCE[attack_idx % len(_ATTACK_SEQUENCE)]
+            burst = _generate_attack_burst(name, rng, devices, now)
+            events.extend(burst)
+            attack_idx += 1
+            last_attack_wall = time.monotonic()
+            log.info(
+                "ATTACK BURST [%d]: %s -> %d events (next in %ds)",
+                attack_idx,
+                name,
+                len(burst),
+                int(attack_every_sec),
+            )
+
+        # 3. Write JSONL ------------------------------------------------
+        with path.open("a", encoding="utf-8") as fh:
+            for ev in events:
+                fh.write(ev.to_json() + "\n")
+            fh.flush()
+
+        # 4. Write CSV (optional) ---------------------------------------
+        if csv_out is not None and events:
+            with csv_out.open("a", encoding="utf-8", newline="") as cf:
+                if not csv_header_written:
+                    cf.write(Event.csv_header() + "\n")
+                    csv_header_written = True
+                for ev in events:
+                    cf.write(ev.to_csv_row() + "\n")
+                cf.flush()
+
+        # 5. Write raw logs (optional) ----------------------------------
+        if raw_log_dir is not None:
+            for ev in events:
+                _write_dirty_raw_log(raw_log_dir, ev, rng)
+
+        total_count += len(events)
+
+        # 6. File rotation ----------------------------------------------
+        _rotate_if_needed(path, max_file_mb)
+        if csv_out is not None and _rotate_if_needed(csv_out, max_file_mb):
+            csv_header_written = False
+
+        if raw_log_dir is not None:
+            for lf in raw_log_dir.glob("*.log"):
+                _rotate_if_needed(lf, max_file_mb)
+
+        # 7. Progress ---------------------------------------------------
+        if total_count % 500 < len(events):
+            log.info(
+                "Demo stream: %d events total, %d attack bursts fired",
+                total_count,
+                attack_idx,
+            )
+
+        time.sleep(interval_sec)

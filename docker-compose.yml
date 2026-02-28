@@ -97,12 +97,14 @@ services:
     command: >-
       python -m src.emulator
         --live
-        --live-interval-ms 500
+        --live-interval-ms 250
+        --attack-every-sec 10
+        --background-events-per-tick 20
+        --max-file-mb 50
         --out data/live/events.jsonl
         --raw-log-dir logs/live
         --csv-out data/live/events.csv
         --profile demo_high_rate
-        --attack-rate 3
         --seed 42
         --log-level INFO
     restart: unless-stopped
