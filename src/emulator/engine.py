@@ -90,8 +90,7 @@ def _apply_attack_rate(attacks_cfg: dict[str, Any], attack_rate: float) -> dict[
         for phase in atk.get("injection", []):
             c = phase.get("count")
             if isinstance(c, list):
-                phase["count"] = [max(1, int(c[0] * attack_rate)),
-                                  max(2, int(c[1] * attack_rate))]
+                phase["count"] = [max(1, int(c[0] * attack_rate)), max(2, int(c[1] * attack_rate))]
             elif isinstance(c, (int, float)):
                 phase["count"] = max(1, int(c * attack_rate))
     return cfg
@@ -415,8 +414,18 @@ _AUTH_EVENTS = frozenset(
 
 # Syslog months for dirty timestamp format
 _MONTHS = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
 ]
 
 # Severity level token pools for each log type
@@ -520,19 +529,13 @@ def _format_api_line(ev: Event, now: datetime, rng: _random_mod.Random) -> str:
         if ev.actor and rng.random() > 0.3:
             line += f" user={ev.actor}"
     elif ev.event == "rate_exceeded":
-        line = (
-            f"{ts} {level} {ev.source} rate limit exceeded: "
-            f"{ev.value} {ev.unit} from {ev.ip}"
-        )
+        line = f"{ts} {level} {ev.source} rate limit exceeded: {ev.value} {ev.unit} from {ev.ip}"
     elif ev.event == "service_status":
         line = f"{ts} {level} {ev.source} service status: {ev.value}"
         if rng.random() > 0.5:
             line += f" response time {rng.randint(50, 5000)}ms"
     elif ev.event == "db_error":
-        line = (
-            f"{ts} {level} {ev.source} database error: "
-            f"{ev.value} table={ev.key}"
-        )
+        line = f"{ts} {level} {ev.source} database error: {ev.value} table={ev.key}"
     else:
         line = f"{ts} {level} {ev.source} {ev.event}: {ev.key}={ev.value}"
 
@@ -849,9 +852,7 @@ def _generate_attack_burst(
             else:
                 v = str(rng.choice(ks.get("values", [""])))
             unit = ks.get("unit", "")
-            actor = phase.get("actor") or rng.choice(
-                phase.get("actor_pool", ["unknown"])
-            )
+            actor = phase.get("actor") or rng.choice(phase.get("actor_pool", ["unknown"]))
             events.append(
                 Event(
                     timestamp=t.strftime("%Y-%m-%dT%H:%M:%SZ"),

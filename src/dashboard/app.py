@@ -228,7 +228,11 @@ def _live_data_section() -> None:
         _res_rows = file_row_count(RESULTS_PATH)
 
         _last_inc_ts = "N/A"
-        if df_incidents_raw is not None and not df_incidents_raw.empty and "start_ts" in df_incidents_raw.columns:
+        if (
+            df_incidents_raw is not None
+            and not df_incidents_raw.empty
+            and "start_ts" in df_incidents_raw.columns
+        ):
             _max_ts = df_incidents_raw["start_ts"].max()
             if pd.notna(_max_ts):
                 _last_inc_ts = str(_max_ts)

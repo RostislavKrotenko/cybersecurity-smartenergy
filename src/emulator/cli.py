@@ -104,8 +104,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--csv-out",
         type=str,
         default=None,
-        help="Also write a CSV file in live mode (append batches). "
-        "Example: data/live/events.csv",
+        help="Also write a CSV file in live mode (append batches). Example: data/live/events.csv",
     )
     p.add_argument(
         "--profile",

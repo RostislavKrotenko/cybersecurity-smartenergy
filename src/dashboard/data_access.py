@@ -28,6 +28,7 @@ _READ_RETRY_DELAY_SEC = 0.15  # 150 ms between retries
 
 # ── file info helpers ───────────────────────────────────────────────────────
 
+
 def file_mtime(path: Path) -> float:
     """Повертає mtime як UNIX timestamp, або 0.0 якщо файл відсутній."""
     try:
@@ -84,7 +85,10 @@ def _read_csv_safe(path: Path, **kwargs) -> pd.DataFrame | None:
         except Exception as exc:
             log.debug(
                 "CSV read attempt %d/%d for %s failed: %s",
-                attempt, _MAX_READ_RETRIES, path, exc,
+                attempt,
+                _MAX_READ_RETRIES,
+                path,
+                exc,
             )
             if attempt < _MAX_READ_RETRIES:
                 time.sleep(_READ_RETRY_DELAY_SEC)

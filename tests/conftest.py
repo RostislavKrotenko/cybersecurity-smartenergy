@@ -110,7 +110,6 @@ def make_incident(
     )
 
 
-
 def ts_offset(base: str = "2026-02-26T10:00:00Z", seconds: int = 0) -> str:
     """Повертає ISO-8601 timestamp зі зсувом в секундах."""
     dt = datetime.fromisoformat(base.replace("Z", "+00:00"))
