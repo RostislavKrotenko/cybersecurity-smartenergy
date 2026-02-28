@@ -10,8 +10,14 @@ import streamlit as st
 _LIVE_MODE = os.environ.get("SMARTENERGY_LIVE_MODE", "") == "1"
 
 _DEFAULTS: dict[str, object] = {
+    "policies": ["baseline", "minimal", "standard"],
+    "severity_filter": [],
+    "threat_type_filter": [],
+    "component_filter": [],
+    "horizon_days": 1.0,
     "auto_refresh": _LIVE_MODE,
     "refresh_interval": 5,
+    "display_tz": "Europe/Kyiv",
 }
 
 

@@ -2,21 +2,34 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import streamlit as st
 
-from src.dashboard.data_access import (
-    INCIDENTS_PATH,
-    RESULTS_PATH,
-    file_mtime_str,
-    file_row_count,
-    file_size,
-)
+_TZ_OPTIONS: list[str] = [
+    "UTC",
+    "Europe/Kyiv",
+    "Europe/Berlin",
+    "Europe/London",
+    "US/Eastern",
+    "US/Pacific",
+    "Asia/Tokyo",
+]
 
-# Fixed display timezone -- no user-selectable widget.
-DISPLAY_TZ = "Europe/Kyiv"
+
+@dataclass
+class SidebarState:
+    """Значення з елементів керування sidebar."""
+
+    policies: list[str]
+    severities: list[str]
+    threat_types: list[str]
+    components: list[str]
+    horizon_days: float
+    display_tz: str
 
 
 # ── header ──────────────────────────────────────────────────────────────────
@@ -35,18 +48,103 @@ def render_header() -> None:
 # ── sidebar ─────────────────────────────────────────────────────────────────
 
 
-def _reset_defaults() -> None:
-    """Callback: reset auto-refresh settings to defaults."""
-    st.session_state["auto_refresh"] = False
-    st.session_state["refresh_interval"] = 5
-
-
-def render_sidebar() -> None:
-    """Minimal sidebar: auto-refresh controls, file diagnostics, reset."""
+def render_sidebar(
+    incidents_df: pd.DataFrame | None,
+) -> SidebarState:
+    """Відображає елементи керування sidebar та повертає поточні вибори."""
 
     with st.sidebar:
         st.markdown('<p class="sidebar-brand">SmartEnergy</p>', unsafe_allow_html=True)
         st.caption("Cyber-Resilience Analyzer")
+        st.divider()
+
+        # -- policies --
+        st.markdown("##### Policies")
+        policies = st.multiselect(
+            "Policies",
+            options=["baseline", "minimal", "standard"],
+            default=["baseline", "minimal", "standard"],
+            label_visibility="collapsed",
+            key="f_policies",
+        )
+
+        st.divider()
+
+        # -- incident filters --
+        st.markdown("##### Filter Incidents")
+
+        # severity
+        sev_options = (
+            sorted(
+                incidents_df["severity"].dropna().unique(),
+                key=lambda s: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(s, 9),
+            )
+            if incidents_df is not None and "severity" in incidents_df.columns
+            else []
+        )
+        severities = st.multiselect(
+            "Severity",
+            options=sev_options,
+            default=sev_options,
+            label_visibility="visible",
+            key="f_severities",
+        )
+        # Store initial option set so the fragment can detect "all selected"
+        st.session_state["_sev_opts"] = list(sev_options)
+
+        # threat type
+        type_options = (
+            sorted(incidents_df["threat_type"].dropna().unique())
+            if incidents_df is not None and "threat_type" in incidents_df.columns
+            else []
+        )
+        threat_types = st.multiselect(
+            "Threat type",
+            options=type_options,
+            default=type_options,
+            label_visibility="visible",
+            key="f_threats",
+        )
+        st.session_state["_threat_opts"] = list(type_options)
+
+        # component
+        comp_options = (
+            sorted(incidents_df["component"].dropna().unique())
+            if incidents_df is not None and "component" in incidents_df.columns
+            else []
+        )
+        components = st.multiselect(
+            "Component",
+            options=comp_options,
+            default=comp_options,
+            label_visibility="visible",
+            key="f_components",
+        )
+        st.session_state["_comp_opts"] = list(comp_options)
+
+        # horizon
+        horizon_days = st.number_input(
+            "Horizon (days)",
+            min_value=0.0,
+            max_value=365.0,
+            value=0.0,
+            step=0.5,
+            help="Filter incidents within the last N days. 0 = show all.",
+            key="f_horizon",
+        )
+
+        st.divider()
+
+        # -- display timezone --
+        st.markdown("##### Display timezone")
+        display_tz = st.selectbox(
+            "Timezone",
+            options=_TZ_OPTIONS,
+            index=_TZ_OPTIONS.index("Europe/Kyiv"),
+            key="display_tz",
+            label_visibility="collapsed",
+        )
+
         st.divider()
 
         # -- auto-refresh --
@@ -68,41 +166,18 @@ def render_sidebar() -> None:
         if auto_refresh:
             st.caption("Fragment-based auto-refresh is active.")
 
-        tz_obj = ZoneInfo(DISPLAY_TZ)
+        tz_obj = ZoneInfo(display_tz)
         now_str = datetime.now(tz_obj).strftime("%Y-%m-%d %H:%M:%S")
         st.markdown(
-            f'<p class="refresh-timestamp">Last refresh: {now_str} ({DISPLAY_TZ})</p>',
+            f'<p class="refresh-timestamp">Last refresh: {now_str} ({display_tz})</p>',
             unsafe_allow_html=True,
         )
 
-        st.divider()
-
-        # -- file diagnostics (read-only) --
-        st.markdown("##### Data files")
-
-        _inc_mtime = file_mtime_str(INCIDENTS_PATH)
-        _inc_size = file_size(INCIDENTS_PATH)
-        _inc_rows = file_row_count(INCIDENTS_PATH)
-
-        _res_mtime = file_mtime_str(RESULTS_PATH)
-        _res_size = file_size(RESULTS_PATH)
-        _res_rows = file_row_count(RESULTS_PATH)
-
-        st.markdown(
-            f"""
-**incidents.csv**
-- mtime: {_inc_mtime}
-- size: {_inc_size} bytes
-- rows: {_inc_rows}
-
-**results.csv**
-- mtime: {_res_mtime}
-- size: {_res_size} bytes
-- rows: {_res_rows}
-""",
-        )
-
-        st.divider()
-
-        # -- reset --
-        st.button("Reset to defaults", on_click=_reset_defaults)
+    return SidebarState(
+        policies=policies,
+        severities=severities,
+        threat_types=threat_types,
+        components=components,
+        horizon_days=horizon_days,
+        display_tz=display_tz,
+    )
