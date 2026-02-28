@@ -1,4 +1,4 @@
-"""Logging setup — plain human-readable format for the prototype."""
+"""Налаштування логування."""
 
 from __future__ import annotations
 
@@ -7,7 +7,11 @@ import sys
 
 
 def setup_logging(level: str = "INFO") -> None:
-    """Configure stdlib logging with a concise format."""
+    """Налаштовує стандартний логер з лаконічним форматом.
+
+    Args:
+        level: Рівень логування (DEBUG, INFO, WARNING, ERROR).
+    """
     numeric = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(
         level=numeric,

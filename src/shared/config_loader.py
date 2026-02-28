@@ -1,4 +1,4 @@
-"""Load and merge YAML configuration files."""
+"""Завантаження YAML конфігурацій."""
 
 from __future__ import annotations
 
@@ -12,7 +12,17 @@ log = logging.getLogger(__name__)
 
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
-    """Read a single YAML file and return its contents as a dict."""
+    """Зчитує YAML файл та повертає його вміст як dict.
+
+    Args:
+        path: Шлях до файлу.
+
+    Returns:
+        Вміст файлу як словник.
+
+    Raises:
+        FileNotFoundError: Якщо файл не знайдено.
+    """
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Config not found: {p}")

@@ -1,19 +1,4 @@
-"""CLI entry-point for the SmartEnergy Emulator.
-
-Usage examples
---------------
-# Batch mode (default, 1 h, seed=42, CSV output):
-python -m src.emulator
-
-# Batch JSONL:
-python -m src.emulator --format jsonl --out data/events.jsonl
-
-# Live mode (stream events to JSONL with 500 ms intervals):
-python -m src.emulator --live --live-interval-ms 500 --out data/events_live.jsonl
-
-# Live mode with event cap:
-python -m src.emulator --live --max-events 500 --out data/events_live.jsonl
-"""
+"""Командний інтерфейс емулятора SmartEnergy."""
 
 from __future__ import annotations
 
@@ -111,8 +96,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--raw-log-dir",
         type=str,
         default=None,
-        help="Directory for raw syslog-style log files (api.log, auth.log, edge.log). "
+        help="Directory for raw syslog-style log files (api.log, auth.log, system.log). "
         "Only used in --live mode.",
+    )
+    p.add_argument(
+        "--csv-out",
+        type=str,
+        default=None,
+        help="Also write a CSV file in live mode (append batches). "
+        "Example: data/live/events.csv",
+    )
+    p.add_argument(
+        "--profile",
+        type=str,
+        default="default",
+        choices=["default", "demo_high_rate"],
+        help="Emulation profile. demo_high_rate: short cycles, frequent attacks "
+        "(default: default).",
+    )
+    p.add_argument(
+        "--attack-rate",
+        type=float,
+        default=1.0,
+        help="Attack rate multiplier: >1 increases attack count and frequency, "
+        "<1 decreases. (default: 1.0).",
     )
     p.add_argument(
         "--log-level",
@@ -142,6 +149,8 @@ def main(argv: list[str] | None = None) -> None:
         days=args.days,
         start_time=start_time,
         scenario_set=args.scenario_set,
+        profile=args.profile,
+        attack_rate=args.attack_rate,
     )
 
     out_path = Path(args.out)
@@ -152,12 +161,16 @@ def main(argv: list[str] | None = None) -> None:
             out_path = out_path.with_suffix(".jsonl")
         interval_sec = args.live_interval_ms / 1000.0
         raw_log_dir = Path(args.raw_log_dir) if args.raw_log_dir else None
+        csv_out = Path(args.csv_out) if args.csv_out else None
         print(f"Emulator live mode -> {out_path}")
         print(
             f"  interval: {args.live_interval_ms} ms, max_events: {args.max_events or 'infinite'}"
         )
+        print(f"  profile: {args.profile}, attack_rate: {args.attack_rate}")
         if raw_log_dir:
             print(f"  raw logs -> {raw_log_dir}/")
+        if csv_out:
+            print(f"  csv out  -> {csv_out}")
         print("  Press Ctrl+C to stop.")
         try:
             if args.max_events is not None:
@@ -176,6 +189,7 @@ def main(argv: list[str] | None = None) -> None:
                     path=out_path,
                     interval_sec=interval_sec,
                     raw_log_dir=raw_log_dir,
+                    csv_out=csv_out,
                 )
         except KeyboardInterrupt:
             print("\nEmulator stopped by user.")

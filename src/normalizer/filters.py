@@ -1,8 +1,4 @@
-"""Post-parse filters: deduplication and validation.
-
-These run *after* raw lines have been parsed into Events but *before*
-writing the final CSV output.
-"""
+"""Фільтри після парсингу: дедуплікація та валідація."""
 
 from __future__ import annotations
 
@@ -17,15 +13,14 @@ def deduplicate(
     events: list[Event],
     window_sec: int = 2,
 ) -> list[Event]:
-    """Remove near-duplicate events within a sliding time window.
+    """Видаляє дублікати у межах часового вікна.
 
-    Two events are considered duplicates when they share the same
-    (source, event, key, value) and their timestamps differ by at most
-    *window_sec* seconds.
+    Args:
+        events: Відсортований список подій.
+        window_sec: Вікно дедуплікації в секундах.
 
-    The list must be **sorted by timestamp** before calling.
-
-    Returns a new list with duplicates removed.
+    Returns:
+        Список подій без дублікатів.
     """
     if not events:
         return events
@@ -63,13 +58,7 @@ def deduplicate(
 
 
 def validate_event(event: Event) -> list[str]:
-    """Return a list of validation warnings (empty = valid).
-
-    Currently checks:
-      - severity is one of the known values
-      - component is one of the known values
-      - timestamp is non-empty
-    """
+    """Перевіряє подію та повертає список попереджень (порожній = валідна)."""
     warnings: list[str] = []
 
     valid_severities = {"low", "medium", "high", "critical"}

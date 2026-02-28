@@ -1,8 +1,4 @@
-"""Pipeline — orchestrator: load events -> detect -> correlate -> metrics -> report.
-
-Supports CSV and JSONL input. In watch mode the pipeline tails a JSONL
-file and re-runs analysis incrementally each time new lines appear.
-"""
+"""Оркестратор: завантаження подій -> детекція -> кореляція -> метрики -> звіт."""
 
 from __future__ import annotations
 
@@ -38,7 +34,7 @@ log = logging.getLogger(__name__)
 
 
 def _ts(iso: str) -> datetime:
-    """Parse ISO-8601 timestamp to datetime."""
+    """Парсить ISO-8601 timestamp у datetime."""
     return datetime.fromisoformat(iso.replace("Z", "+00:00"))
 
 
@@ -48,7 +44,7 @@ def _ts(iso: str) -> datetime:
 
 
 def _parse_event(row: dict[str, str]) -> Event:
-    """Build an Event from a dict (row from CSV DictReader or JSON object)."""
+    """Створює Event зі словника."""
     return Event(
         timestamp=row.get("timestamp", ""),
         source=row.get("source", ""),
@@ -66,7 +62,7 @@ def _parse_event(row: dict[str, str]) -> Event:
 
 
 def load_events_csv(path: str) -> list[Event]:
-    """Load events from a CSV file that follows the Event Contract."""
+    """Завантажує події з CSV файлу."""
     events: list[Event] = []
     with open(path, encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
@@ -77,7 +73,7 @@ def load_events_csv(path: str) -> list[Event]:
 
 
 def load_events_jsonl(path: str) -> list[Event]:
-    """Load events from a JSONL (one JSON object per line) file."""
+    """Завантажує події з JSONL файлу."""
     events: list[Event] = []
     with open(path, encoding="utf-8") as fh:
         for line_no, line in enumerate(fh, 1):
@@ -94,7 +90,7 @@ def load_events_jsonl(path: str) -> list[Event]:
 
 
 def load_events(path: str) -> list[Event]:
-    """Auto-detect format by file extension and load events."""
+    """Автовизначає формат та завантажує події."""
     p = Path(path)
     if p.suffix in (".jsonl", ".ndjson"):
         return load_events_jsonl(path)
@@ -113,12 +109,17 @@ def run_pipeline(
     config_dir: str = "config",
     horizon_days: float | None = None,
 ) -> dict[str, Any]:
-    """Execute the full analysis pipeline and write outputs.
+    """Виконує повний аналітичний конвеєр та записує результати.
 
-    Returns
-    -------
-    dict with keys: events, alerts (per-policy), incidents (per-policy),
-    metrics (per-policy), control_ranking.
+    Args:
+        input_path: Шлях до вхідного файлу.
+        out_dir: Директорія виводу.
+        policy_names: Список політик для аналізу.
+        config_dir: Директорія конфігурації.
+        horizon_days: Горизонт аналізу в днях.
+
+    Returns:
+        Словник з результатами аналізу.
     """
     events = load_events(input_path)
     if not events:
@@ -218,6 +219,9 @@ def watch_pipeline(
     The function blocks until interrupted (Ctrl+C). It keeps a file offset
     and re-reads only newly appended lines, then re-runs the full
     detect -> correlate -> metrics -> report chain on the accumulated events.
+
+    Every poll cycle logs a tick with event/incident counts even when
+    no new data arrives, so operators can verify the process is alive.
     """
     rules_cfg = load_yaml(f"{config_dir}/rules.yaml")
     policies_cfg = load_policies(config_dir)
@@ -230,12 +234,27 @@ def watch_pipeline(
     accumulated_events: list[Event] = []
     file_offset: int = 0
     iteration = 0
+    last_analysis_events = 0
+    tick_counter = 0
 
     # If file already exists pre-load existing lines
     if os.path.isfile(input_path):
         accumulated_events = load_events(input_path)
         file_offset = os.path.getsize(input_path)
         log.info("Watch: pre-loaded %d events (offset=%d)", len(accumulated_events), file_offset)
+
+    # Run initial analysis if we have pre-loaded events
+    if accumulated_events:
+        _run_analysis(
+            events=accumulated_events,
+            rules_cfg=rules_cfg,
+            policies_cfg=policies_cfg,
+            selected=selected,
+            out_dir=out_dir,
+            horizon_days=horizon_days,
+        )
+        last_analysis_events = len(accumulated_events)
+        log.info("Watch: initial analysis complete (%d events)", last_analysis_events)
 
     print(f"Analyzer watch mode -> {input_path}")
     print(f"  poll interval: {poll_interval_sec:.1f}s, policies: {', '.join(selected)}")
@@ -244,6 +263,7 @@ def watch_pipeline(
     try:
         while True:
             new_events: list[Event] = []
+            tick_counter += 1
 
             if os.path.isfile(input_path):
                 current_size = os.path.getsize(input_path)
@@ -265,20 +285,35 @@ def watch_pipeline(
                 accumulated_events.extend(new_events)
                 iteration += 1
                 log.info(
-                    "Watch iteration %d: +%d new, %d total events",
+                    "[tick %d] Watch iteration %d: +%d new, %d total events",
+                    tick_counter,
                     iteration,
                     len(new_events),
                     len(accumulated_events),
                 )
 
                 # Re-run full analysis on accumulated state
-                _run_analysis(
+                result_info = _run_analysis(
                     events=accumulated_events,
                     rules_cfg=rules_cfg,
                     policies_cfg=policies_cfg,
                     selected=selected,
                     out_dir=out_dir,
                     horizon_days=horizon_days,
+                )
+                last_analysis_events = len(accumulated_events)
+                log.info(
+                    "[tick %d] Analysis done: %d events -> %d incidents",
+                    tick_counter,
+                    last_analysis_events,
+                    result_info.get("total_incidents", 0),
+                )
+            elif tick_counter % 10 == 0:
+                # Periodic heartbeat tick even when no new data
+                log.info(
+                    "[tick %d] Heartbeat: %d accumulated events, waiting for new data...",
+                    tick_counter,
+                    len(accumulated_events),
                 )
 
             time.sleep(poll_interval_sec)
@@ -293,8 +328,11 @@ def _run_analysis(
     selected: list[str],
     out_dir: str,
     horizon_days: float | None,
-) -> None:
-    """Internal helper: run detect -> correlate -> metrics -> write for all policies."""
+) -> dict[str, Any]:
+    """Internal helper: run detect -> correlate -> metrics -> write for all policies.
+
+    Returns a dict with summary info (total_incidents, total_alerts).
+    """
     # Compute horizon_sec from horizon_days or derive from event time span
     if horizon_days is not None and horizon_days > 0:
         horizon_sec = horizon_days * 86400
@@ -309,10 +347,12 @@ def _run_analysis(
 
     all_metrics = []
     all_incidents: list[Any] = []
+    total_alerts = 0
 
     for pname in selected:
         modifiers = get_modifiers(policies_cfg, pname)
         alerts = detect(events, rules_cfg, policy_modifiers=modifiers)
+        total_alerts += len(alerts)
         incidents = correlate(alerts, pname, policy_modifiers=modifiers)
         m = compute(incidents, pname, horizon_sec=horizon_sec)
         all_metrics.append(m)
@@ -325,3 +365,5 @@ def _run_analysis(
     write_results_csv(all_metrics, str(out / "results.csv"))
     write_incidents_csv(all_incidents, str(out / "incidents.csv"))
     write_report_txt(all_metrics, all_incidents, control_ranking, str(out / "report.txt"))
+
+    return {"total_incidents": len(all_incidents), "total_alerts": total_alerts}

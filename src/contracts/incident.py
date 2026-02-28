@@ -1,4 +1,4 @@
-"""Incident data-class — a correlated group of Alerts."""
+"""Модель інциденту (Incident)."""
 
 from __future__ import annotations
 
@@ -26,21 +26,7 @@ INCIDENT_CSV_COLUMNS = [
 
 @dataclass(slots=True)
 class Incident:
-    """A correlated security incident with timing metrics.
-
-    Timing model
-    ─────────────
-      start_ts   — timestamp of the first malicious event
-      detect_ts  — timestamp when the alert was raised (= start_ts + MTTD)
-      recover_ts — timestamp when the incident was resolved (= detect_ts + MTTR)
-
-    Metric formulas
-    ───────────────
-      MTTD = detect_ts − start_ts          (Mean-Time-To-Detect per incident)
-      MTTR = recover_ts − detect_ts         (Mean-Time-To-Recover per incident)
-      Downtime = recover_ts − start_ts      (total incident duration)
-      impact_score ∈ [0..1] = severity_weight × confidence × impact_multiplier
-    """
+    """Корельований інцидент безпеки з метриками часу."""
 
     incident_id: str  # e.g. "INC-001"
     policy: str  # which policy was applied
@@ -53,13 +39,12 @@ class Incident:
     recover_ts: str  # ISO-8601
     mttd_sec: float  # seconds
     mttr_sec: float  # seconds
-    impact_score: float  # 0.0 — 1.0
+    impact_score: float
     description: str
     response_action: str
 
-    # ── serialisation ────────────────────────────────────────────────────
-
     def to_csv_row(self) -> str:
+        """Повертає один рядок CSV без символу нового рядка."""
         buf = io.StringIO()
         writer = csv.writer(buf)
         writer.writerow([getattr(self, c) for c in INCIDENT_CSV_COLUMNS])

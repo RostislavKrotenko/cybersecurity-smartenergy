@@ -1,4 +1,4 @@
-"""CLI entry-point for the SmartEnergy Normalizer."""
+"""Командний інтерфейс нормалізатора SmartEnergy."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from src.shared.logger import setup_logging
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="normalizer",
-        description="SmartEnergy Normalizer — raw logs → Event Contract CSV",
+        description="SmartEnergy Normalizer -- raw logs -> Event Contract CSV/JSONL",
     )
     p.add_argument(
         "--inputs",
@@ -26,7 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--out",
         default="data/events.csv",
-        help="Output CSV path — Event Contract format (default: data/events.csv)",
+        help="Output path -- Event Contract format (default: data/events.csv). "
+        "In follow mode with .jsonl extension, appends JSONL.",
     )
     p.add_argument(
         "--quarantine",
@@ -47,6 +48,20 @@ def build_parser() -> argparse.ArgumentParser:
             "Examples: Europe/Kyiv, US/Eastern"
         ),
     )
+    # Follow (live) mode flags
+    p.add_argument(
+        "--follow",
+        action="store_true",
+        default=False,
+        help="Enable follow mode: tail input logs continuously and append "
+        "normalized events to --out (JSONL recommended).",
+    )
+    p.add_argument(
+        "--poll-interval-ms",
+        type=int,
+        default=1000,
+        help="Poll interval for follow mode, ms (default: 1000).",
+    )
     p.add_argument(
         "--log-level",
         default="INFO",
@@ -64,12 +79,20 @@ def main(argv: list[str] | None = None) -> None:
         mapping_path=args.mapping,
         tz_name=args.timezone,
     )
-    pipeline.run(
-        input_glob=args.inputs,
-        out_path=args.out,
-        quarantine_path=args.quarantine,
-        stats_path=args.stats,
-    )
+
+    if args.follow:
+        pipeline.follow(
+            input_glob=args.inputs,
+            out_path=args.out,
+            poll_interval_sec=args.poll_interval_ms / 1000.0,
+        )
+    else:
+        pipeline.run(
+            input_glob=args.inputs,
+            out_path=args.out,
+            quarantine_path=args.quarantine,
+            stats_path=args.stats,
+        )
 
 
 if __name__ == "__main__":

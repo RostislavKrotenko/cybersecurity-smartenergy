@@ -1,9 +1,4 @@
-"""KPI card HTML builders.
-
-Each function returns a raw-HTML string rendered with
-``st.markdown(..., unsafe_allow_html=True)``.
-All visual tokens come from ``theme.css`` (CSS custom properties).
-"""
+"""Білдери HTML KPI карток."""
 
 from __future__ import annotations
 
@@ -35,7 +30,7 @@ def policy_kpi_card(
     mttd_min: float,
     mttr_min: float,
 ) -> str:
-    """Build a single policy KPI card (one of the three top cards)."""
+    """Побудова однієї KPI картки політики."""
     accent_cls = POLICY_ACCENT_CLASS.get(policy, "")
     title = POLICY_DISPLAY.get(policy, policy.capitalize())
     return (

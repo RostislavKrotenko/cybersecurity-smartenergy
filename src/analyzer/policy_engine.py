@@ -1,9 +1,4 @@
-"""Policy Engine — load policy configs and apply multipliers.
-
-Reads ``config/policies.yaml`` and provides per-threat_type multiplier
-dicts that the Detector and Correlator use to adjust thresholds, windows,
-MTTD, MTTR, and impact scoring.
-"""
+"""Движок політик: завантаження та застосування модифікаторів."""
 
 from __future__ import annotations
 
@@ -16,11 +11,13 @@ log = logging.getLogger(__name__)
 
 
 def load_policies(config_dir: str) -> dict[str, Any]:
-    """Load policies.yaml and return the full dict.
+    """Завантажує policies.yaml.
 
-    Returns
-    ───────
-    { "policies": { "minimal": {...}, "baseline": {...}, "standard": {...} } }
+    Args:
+        config_dir: Шлях до директорії конфігурації.
+
+    Returns:
+        Словник політик.
     """
     path = f"{config_dir}/policies.yaml"
     cfg = load_yaml(path)
@@ -33,15 +30,14 @@ def get_modifiers(
     policies_cfg: dict[str, Any],
     policy_name: str,
 ) -> dict[str, dict[str, float]]:
-    """Extract per-threat_type multipliers for a given policy.
+    """Повертає модифікатори для вказаної політики.
 
-    Returns
-    ───────
-    {
-      "credential_attack": {"prob_multiplier": 1.0, "mttd_multiplier": 1.0, ...},
-      "availability_attack": {...},
-      ...
-    }
+    Args:
+        policies_cfg: Конфіг політик.
+        policy_name: Назва політики.
+
+    Returns:
+        Словник модифікаторів по threat_type.
     """
     policy = policies_cfg.get("policies", {}).get(policy_name)
     if policy is None:
@@ -54,12 +50,12 @@ def get_policy_meta(
     policies_cfg: dict[str, Any],
     policy_name: str,
 ) -> dict[str, Any]:
-    """Return the full policy dict (name, description, controls, modifiers)."""
+    """Повертає повний словник політики."""
     return policies_cfg.get("policies", {}).get(policy_name, {})
 
 
 def list_policy_names(policies_cfg: dict[str, Any]) -> list[str]:
-    """Return names of all available policies."""
+    """Повертає список назв доступних політик."""
     return list(policies_cfg.get("policies", {}).keys())
 
 
@@ -67,12 +63,14 @@ def rank_controls(
     policies_cfg: dict[str, Any],
     policy_names: list[str],
 ) -> list[dict[str, Any]]:
-    """Compare policies and return a ranked list of controls.
+    """Ранжує політики за ефективністю контролів.
 
-    For each control, compute a simple "effectiveness" estimate based on
-    how much it reduces average mttd+mttr across threat_types.
+    Args:
+        policies_cfg: Конфіг політик.
+        policy_names: Список назв політик.
 
-    Returns a list sorted by effectiveness descending.
+    Returns:
+        Список, відсортований за ефективністю спадно.
     """
     results: list[dict[str, Any]] = []
 

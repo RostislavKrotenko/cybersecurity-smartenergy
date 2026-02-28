@@ -1,19 +1,10 @@
-"""Reporter — write analysis outputs: CSV, TXT, HTML, PNG.
-
-Output files
-────────────
-  out/results.csv          — 1 row per policy with aggregate metrics
-  out/incidents.csv        — all incidents across all policies
-  out/report.txt           — human-readable summary + top-3 effective controls
-  out/plots/availability.png  — bar chart
-  out/plots/downtime.png      — bar chart
-  out/plots/mttd_mttr.png    — grouped bar chart
-  out/report.html          — optional self-contained HTML
-"""
+"""Звітування: запис CSV, TXT, HTML, PNG."""
 
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +12,30 @@ from src.analyzer.metrics import PolicyMetrics
 from src.contracts.incident import Incident
 
 log = logging.getLogger(__name__)
+
+
+def _atomic_write(path: str, content: str) -> None:
+    """Атомарно записує content у файл path."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        dir=str(target.parent),
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # Clean up temp file on any failure
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -32,11 +47,10 @@ def write_results_csv(
     metrics_list: list[PolicyMetrics],
     path: str,
 ) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(PolicyMetrics.csv_header() + "\n")
-        for m in metrics_list:
-            f.write(m.to_csv_row() + "\n")
+    lines = [PolicyMetrics.csv_header()]
+    for m in metrics_list:
+        lines.append(m.to_csv_row())
+    _atomic_write(path, "\n".join(lines) + "\n")
     log.info("Wrote results → %s (%d policies)", path, len(metrics_list))
 
 
@@ -44,11 +58,10 @@ def write_incidents_csv(
     incidents: list[Incident],
     path: str,
 ) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(Incident.csv_header() + "\n")
-        for inc in incidents:
-            f.write(inc.to_csv_row() + "\n")
+    lines = [Incident.csv_header()]
+    for inc in incidents:
+        lines.append(inc.to_csv_row())
+    _atomic_write(path, "\n".join(lines) + "\n")
     log.info("Wrote incidents → %s (%d rows)", path, len(incidents))
 
 
@@ -63,7 +76,7 @@ def write_report_txt(
     control_ranking: list[dict[str, Any]],
     path: str,
 ) -> None:
-    """Generate a human-readable text report."""
+    """Генерує текстовий звіт."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
 

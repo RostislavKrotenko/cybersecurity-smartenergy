@@ -1,4 +1,4 @@
-"""Canonical Event data-class — the single source of truth for all modules."""
+"""Модель події (Event) для всіх модулів системи."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import io
 import json
 from dataclasses import asdict, dataclass
 
-# CSV column order — matches EVENT_CONTRACT.md §2
 CSV_COLUMNS: list[str] = [
     "timestamp",
     "source",
@@ -26,35 +25,30 @@ CSV_COLUMNS: list[str] = [
 
 @dataclass(slots=True)
 class Event:
-    """One normalised event in the SmartEnergy pipeline."""
+    """Нормалізована подія в конвеєрі SmartEnergy."""
 
-    # ── mandatory ──
-    timestamp: str  # ISO-8601 UTC  e.g. "2026-02-26T10:00:00Z"
-    source: str  # device / service id
-    component: str  # edge | api | db | ui | collector | inverter | network
-    event: str  # event type (auth_failure, telemetry_read …)
-    key: str  # metric / parameter name
-    value: str  # always string
-    severity: str  # low | medium | high | critical
-
-    # ── optional ──
+    timestamp: str
+    source: str
+    component: str
+    event: str
+    key: str
+    value: str
+    severity: str
     actor: str = ""
     ip: str = ""
     unit: str = ""
     tags: str = ""
     correlation_id: str = ""
 
-    # ── serialisation ─────────────────────────────────────────────────────
-
     def to_csv_row(self) -> str:
-        """Return a single CSV line (no trailing newline)."""
+        """Повертає один рядок CSV без символу нового рядка."""
         buf = io.StringIO()
         writer = csv.writer(buf)
         writer.writerow([getattr(self, c) for c in CSV_COLUMNS])
         return buf.getvalue().rstrip("\r\n")
 
     def to_json(self) -> str:
-        """Return compact JSON string."""
+        """Повертає компактний JSON рядок."""
         return json.dumps(asdict(self), ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod

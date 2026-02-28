@@ -1,4 +1,4 @@
-"""Deterministic seed initialisation for reproducible experiments."""
+"""Ініціалізація seed для відтворюваності експериментів."""
 
 from __future__ import annotations
 
@@ -9,10 +9,13 @@ log = logging.getLogger(__name__)
 
 
 def init_seed(seed: int) -> random.Random:
-    """Set the global random seed and return a dedicated Random instance.
+    """Встановлює глобальний seed та повертає екземпляр Random.
 
-    We also seed the *global* ``random`` module so that any library code
-    relying on ``random.random()`` behaves deterministically.
+    Args:
+        seed: Значення seed.
+
+    Returns:
+        Екземпляр random.Random з встановленим seed.
     """
     random.seed(seed)
     rng = random.Random(seed)

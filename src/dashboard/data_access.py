@@ -1,16 +1,17 @@
-"""Data loading and filtering layer.
-
-All read operations go through cached loaders so that the dashboard
-never re-reads CSVs on every re-render.  A single ``apply_filters``
-helper is used everywhere to keep filtering logic consistent.
-"""
+"""Шар завантаження та фільтрації даних."""
 
 from __future__ import annotations
 
+import logging
+import os
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+log = logging.getLogger(__name__)
 
 # ── paths (relative to repo root) ───────────────────────────────────────────
 
@@ -19,43 +20,108 @@ RESULTS_PATH = ROOT / "out" / "results.csv"
 INCIDENTS_PATH = ROOT / "out" / "incidents.csv"
 EVENTS_PATH = ROOT / "data" / "events.csv"
 
+# ── retry / stability settings ──────────────────────────────────────────────
 
-# ── cached loaders ──────────────────────────────────────────────────────────
+_MAX_READ_RETRIES = 3
+_READ_RETRY_DELAY_SEC = 0.15  # 150 ms between retries
 
 
-@st.cache_data(show_spinner=False, ttl=10)
+# ── file info helpers ───────────────────────────────────────────────────────
+
+def file_mtime(path: Path) -> float:
+    """Повертає mtime як UNIX timestamp, або 0.0 якщо файл відсутній."""
+    try:
+        return os.path.getmtime(path) if path.exists() else 0.0
+    except OSError:
+        return 0.0
+
+
+def file_mtime_str(path: Path) -> str:
+    """Повертає людськочитаний mtime файлу, або 'N/A'."""
+    ts = file_mtime(path)
+    if ts == 0.0:
+        return "N/A"
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def file_size(path: Path) -> int:
+    """Повертає розмір файлу в байтах, або 0."""
+    try:
+        return path.stat().st_size if path.exists() else 0
+    except OSError:
+        return 0
+
+
+def file_row_count(path: Path) -> int:
+    """Повертає кількість рядків даних (без заголовка), або 0."""
+    if not path.exists() or file_size(path) == 0:
+        return 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return max(0, sum(1 for _ in fh) - 1)
+    except Exception:
+        return 0
+
+
+# ── internal CSV reader with retry ──────────────────────────────────────────
+
+
+def _read_csv_safe(path: Path, **kwargs) -> pd.DataFrame | None:
+    """Зчитує CSV з повторними спробами для стійкості."""
+    for attempt in range(1, _MAX_READ_RETRIES + 1):
+        if not path.exists():
+            return None
+        sz = file_size(path)
+        if sz == 0:
+            # File may have just been created / replaced; wait and retry
+            if attempt < _MAX_READ_RETRIES:
+                time.sleep(_READ_RETRY_DELAY_SEC)
+                continue
+            return None
+        try:
+            return pd.read_csv(path, **kwargs)
+        except Exception as exc:
+            log.debug(
+                "CSV read attempt %d/%d for %s failed: %s",
+                attempt, _MAX_READ_RETRIES, path, exc,
+            )
+            if attempt < _MAX_READ_RETRIES:
+                time.sleep(_READ_RETRY_DELAY_SEC)
+    return None
+
+
+# ── loaders ─────────────────────────────────────────────────────────────────
+
+
+def _is_live() -> bool:
+    return bool(st.session_state.get("auto_refresh", False))
+
+
 def load_results() -> pd.DataFrame | None:
-    """Load ``out/results.csv``.  Returns *None* when the file is absent."""
-    if not RESULTS_PATH.exists():
-        return None
-    return pd.read_csv(RESULTS_PATH)
+    """Завантажує out/results.csv. Повертає None якщо відсутній."""
+    return _read_csv_safe(RESULTS_PATH)
 
 
-@st.cache_data(show_spinner=False, ttl=10)
 def load_incidents() -> pd.DataFrame | None:
-    """Load ``out/incidents.csv``.  Returns *None* when the file is absent."""
-    if not INCIDENTS_PATH.exists():
+    """Завантажує out/incidents.csv. Повертає None якщо відсутній."""
+    df = _read_csv_safe(INCIDENTS_PATH)
+    if df is None:
         return None
-    df = pd.read_csv(INCIDENTS_PATH)
     for col in ("start_ts", "detect_ts", "recover_ts"):
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], utc=True, errors="coerce")
     return df
 
 
-@st.cache_data(show_spinner=False, ttl=30)
 def load_events(nrows: int = 200) -> pd.DataFrame | None:
-    """Load ``data/events.csv`` (first *nrows* rows)."""
-    if not EVENTS_PATH.exists():
-        return None
-    return pd.read_csv(EVENTS_PATH, nrows=nrows)
+    """Завантажує data/events.csv (перші nrows рядків)."""
+    return _read_csv_safe(EVENTS_PATH, nrows=nrows)
 
 
 def clear_caches() -> None:
-    """Bust every cached loader so the next render gets fresh data."""
-    load_results.clear()
-    load_incidents.clear()
-    load_events.clear()
+    """Не використовується, збережено для сумісності інтерфейсу."""
+    pass
 
 
 # ── filtering ───────────────────────────────────────────────────────────────
@@ -67,7 +133,7 @@ def filter_results(
     df: pd.DataFrame,
     policies: list[str],
 ) -> pd.DataFrame:
-    """Return results rows matching *policies*."""
+    """Фільтрує results за політиками."""
     if not policies:
         return df
     return df[df["policy"].isin(policies)].copy()
@@ -82,7 +148,7 @@ def filter_incidents(
     components: list[str] | None = None,
     horizon_days: float | None = None,
 ) -> pd.DataFrame:
-    """Apply every sidebar filter to the incidents dataframe."""
+    """Застосовує фільтри sidebar до incidents."""
     mask = pd.Series(True, index=df.index)
 
     if policies:

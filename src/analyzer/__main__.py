@@ -1,4 +1,4 @@
-"""Allow ``python -m src.analyzer`` to launch the CLI."""
+"""Точка входу для python -m src.analyzer."""
 
 from src.analyzer.cli import main
 

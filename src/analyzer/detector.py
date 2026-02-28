@@ -1,17 +1,4 @@
-"""Detector — rule-based engine: Event stream → Alerts.
-
-For each rule in rules.yaml the detector scans the event stream and
-fires an Alert when the rule conditions are met.  Rules are evaluated
-independently; the detector does NOT import anything from the emulator.
-
-Supported rule types
-────────────────────
-  brute_force         — N auth_failure events from same IP within window
-  ddos                — N rate_exceeded events within window
-  telemetry_spoofing  — value out-of-bounds or delta > threshold
-  unauthorized_cmd    — cmd_exec where actor ∉ allowed_roles
-  outage              — service_status down/degraded or db_error events
-"""
+"""Детектор: потік Event -> Alert на основі правил."""
 
 from __future__ import annotations
 
@@ -29,7 +16,7 @@ _SEV_WEIGHT = {"low": 0.2, "medium": 0.4, "high": 0.7, "critical": 1.0}
 
 
 def _ts(iso: str) -> datetime:
-    """Parse ISO-8601 timestamp to datetime (UTC)."""
+    """Парсить ISO-8601 timestamp у datetime (UTC)."""
     s = iso.replace("Z", "+00:00")
     return datetime.fromisoformat(s)
 
@@ -48,21 +35,15 @@ def detect(
     rules_cfg: dict[str, Any],
     policy_modifiers: dict[str, dict[str, float]] | None = None,
 ) -> list[Alert]:
-    """Run all enabled rules against *events* and return raised Alerts.
+    """Запускає всі активні правила на подіях та повертає оповіщення.
 
-    Parameters
-    ──────────
-    events
-        Sorted list of Event objects (by timestamp).
-    rules_cfg
-        Parsed config/rules.yaml.
-    policy_modifiers
-        ``policy.modifiers[threat_type]`` dict of multipliers.  Can be
-        None (= baseline / all multipliers 1.0).
+    Args:
+        events: Відсортований список подій.
+        rules_cfg: Конфігурація rules.yaml.
+        policy_modifiers: Модифікатори політики по threat_type.
 
-    Returns
-    ───────
-    Sorted list of Alerts.
+    Returns:
+        Відсортований список оповіщень.
     """
     if not events:
         log.warning("No events to analyse — detector returns empty list")
@@ -158,7 +139,6 @@ def _detect_brute_force(
                     )
                 )
                 buf.clear()
-                break  # one alert per group
 
     return alerts
 
@@ -220,7 +200,6 @@ def _detect_ddos(
                     )
                 )
                 buf.clear()
-                break
 
     return alerts
 
@@ -299,7 +278,6 @@ def _detect_telemetry_spoof(
                         )
                     )
                     buf.clear()
-                    break
 
     return alerts
 
@@ -309,41 +287,65 @@ def _detect_unauthorized_cmd(
     rule: dict,
     counter: int,
 ) -> list[Alert]:
-    """RULE-UCMD-001 — cmd_exec where actor ∉ allowed actors."""
+    """RULE-UCMD-001 — cmd_exec where actor ∉ allowed actors.
+
+    Groups unauthorized events by source, then splits each source's
+    events into time-clusters (gap > 120 s starts a new cluster) so
+    that repeated attack cycles produce separate alerts.
+    """
     alerts: list[Alert] = []
     allowed = set(rule.get("match", {}).get("actor_not_in", []))
-    # "actor_not_in" in rules.yaml means these actors ARE allowed
-    # An event is unauthorized if actor is not in this set
+    allowed_lower = {a.lower() for a in allowed}
 
     unauth: list[Event] = []
     for e in cmd_events:
         actor = e.actor.strip().lower()
-        if not actor or actor not in {a.lower() for a in allowed}:
+        if not actor or actor not in allowed_lower:
             unauth.append(e)
 
-    if unauth:
-        sev = "critical"
-        counter += 1
-        alerts.append(
-            Alert(
-                alert_id=f"ALR-{counter:04d}",
-                rule_id=rule["id"],
-                rule_name=rule["name"],
-                threat_type=rule["threat_type"],
-                severity=sev,
-                confidence=0.99 if len(unauth) >= 3 else rule.get("confidence", 0.95),
-                timestamp=unauth[0].timestamp,
-                component=unauth[0].component,
-                source=unauth[0].source,
-                description=(
-                    f"Unauthorized command: {len(unauth)} cmd_exec by "
-                    f"non-allowed actor(s) on {unauth[0].source}"
-                ),
-                event_count=len(unauth),
-                event_ids=";".join(e.correlation_id or e.timestamp for e in unauth),
-                response_hint=rule.get("response_hint", ""),
+    if not unauth:
+        return alerts
+
+    # Group by source
+    by_source: dict[str, list[Event]] = defaultdict(list)
+    for e in unauth:
+        by_source[e.source].append(e)
+
+    cluster_gap = 120.0  # seconds
+
+    for source, evts in by_source.items():
+        evts.sort(key=lambda e: e.timestamp)
+        # Split into time clusters
+        clusters: list[list[Event]] = [[evts[0]]]
+        for e in evts[1:]:
+            if _diff_sec(clusters[-1][-1].timestamp, e.timestamp) > cluster_gap:
+                clusters.append([e])
+            else:
+                clusters[-1].append(e)
+
+        for cluster in clusters:
+            sev = "critical"
+            counter += 1
+            alerts.append(
+                Alert(
+                    alert_id=f"ALR-{counter:04d}",
+                    rule_id=rule["id"],
+                    rule_name=rule["name"],
+                    threat_type=rule["threat_type"],
+                    severity=sev,
+                    confidence=0.99 if len(cluster) >= 3 else rule.get("confidence", 0.95),
+                    timestamp=cluster[0].timestamp,
+                    component=cluster[0].component,
+                    source=source,
+                    description=(
+                        f"Unauthorized command: {len(cluster)} cmd_exec by "
+                        f"non-allowed actor(s) on {source}"
+                    ),
+                    event_count=len(cluster),
+                    event_ids=";".join(e.correlation_id or e.timestamp for e in cluster),
+                    response_hint=rule.get("response_hint", ""),
+                )
             )
-        )
 
     return alerts
 
@@ -406,6 +408,5 @@ def _detect_outage(
                     )
                 )
                 buf.clear()
-                break
 
     return alerts

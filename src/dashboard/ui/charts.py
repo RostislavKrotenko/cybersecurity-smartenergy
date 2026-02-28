@@ -1,8 +1,4 @@
-"""Plotly chart builders — unified dark theme, consistent policy palette.
-
-Every function returns a ``plotly.graph_objects.Figure`` ready for
-``st.plotly_chart(fig, width="stretch", config=CHART_CONFIG)``.
-"""
+"""Білдери Plotly графіків."""
 
 from __future__ import annotations
 
@@ -125,13 +121,18 @@ def downtime_bar(df: pd.DataFrame) -> go.Figure:
 # -- incidents per minute -------------------------------------------------
 
 
-def incidents_per_minute(df: pd.DataFrame) -> go.Figure | None:
+def incidents_per_minute(
+    df: pd.DataFrame,
+    *,
+    tz: str = "UTC",
+) -> go.Figure | None:
     """Line chart -- incident count aggregated by minute.
 
     Returns *None* when the dataframe is empty or lacks a usable
     timestamp column, so the caller can show a placeholder instead.
     Missing minute bins inside the range are filled with zeros so the
-    line is continuous.
+    line is continuous.  Timestamps are converted to *tz* before
+    aggregation so the X-axis reflects the selected display timezone.
     """
     if df is None or df.empty:
         return None
@@ -147,7 +148,16 @@ def incidents_per_minute(df: pd.DataFrame) -> go.Figure | None:
         return None
 
     tmp = df[[ts_col]].copy()
-    tmp["minute"] = tmp[ts_col].dt.floor("min")
+
+    # Convert to the display timezone, then drop tz info so Plotly
+    # renders local time on the X-axis (Plotly converts tz-aware
+    # timestamps to UTC internally, which would undo the conversion).
+    if tmp[ts_col].dt.tz is not None:
+        tmp["_local"] = tmp[ts_col].dt.tz_convert(tz).apply(lambda t: t.replace(tzinfo=None))
+    else:
+        tmp["_local"] = tmp[ts_col]
+
+    tmp["minute"] = tmp["_local"].dt.floor("min")
     agg = tmp.groupby("minute").size().reset_index(name="count")
     agg = agg.sort_values("minute")
 
@@ -160,7 +170,12 @@ def incidents_per_minute(df: pd.DataFrame) -> go.Figure | None:
         end=agg["minute"].max(),
         freq="min",
     )
-    agg = agg.set_index("minute").reindex(full_range, fill_value=0).rename_axis("minute").reset_index()
+    agg = (
+        agg.set_index("minute")
+        .reindex(full_range, fill_value=0)
+        .rename_axis("minute")
+        .reset_index()
+    )
 
     fig = go.Figure()
     fig.add_trace(

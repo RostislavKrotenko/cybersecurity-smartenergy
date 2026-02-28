@@ -1,4 +1,4 @@
-"""Scenario 3: Telemetry spoofing — anomalous sensor values (MitM)."""
+"""Сценарій: Підробка телеметрії."""
 
 from __future__ import annotations
 

@@ -1,15 +1,4 @@
-"""Normalizer pipeline: read raw logs → parse → filter → write outputs.
-
-Orchestrates the full normalisation flow:
-  1. Read mapping.yaml, compile profiles
-  2. Glob input files
-  3. For each file, select profile by filename, parse each line
-  4. Sort events by timestamp
-  5. Optionally deduplicate
-  6. Write data/events.csv   (Event Contract)
-  7. Write out/quarantine.csv (rejected lines + reasons)
-  8. Write out/normalize_stats.json
-"""
+"""Конвеєр нормалізації: raw логи -> парсинг -> фільтрація -> запис."""
 
 from __future__ import annotations
 
@@ -17,6 +6,8 @@ import csv
 import glob
 import json
 import logging
+import os
+import time
 from datetime import UTC, timezone
 from pathlib import Path
 from typing import Any
@@ -30,7 +21,7 @@ log = logging.getLogger(__name__)
 
 
 def _resolve_tz(tz_name: str) -> timezone | Any:
-    """Return a tzinfo object for the given timezone name."""
+    """Повертає tzinfo об'єкт для вказаного імені часового поясу."""
     if tz_name.upper() == "UTC":
         return UTC
     # Python 3.9+ zoneinfo
@@ -40,7 +31,7 @@ def _resolve_tz(tz_name: str) -> timezone | Any:
 
 
 class NormalizerPipeline:
-    """Top-level orchestrator for normalisation."""
+    """Оркестратор нормалізації."""
 
     def __init__(self, mapping_path: str, tz_name: str = "UTC") -> None:
         cfg = load_yaml(mapping_path)
@@ -204,4 +195,91 @@ class NormalizerPipeline:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(stats, fh, indent=2, ensure_ascii=False)
-        log.info("Wrote stats → %s", path)
+        log.info("Wrote stats -> %s", path)
+
+    # ── Follow (live tail) mode ──────────────────────────────────────────
+
+    def follow(
+        self,
+        input_glob: str,
+        out_path: str,
+        poll_interval_sec: float = 1.0,
+    ) -> None:
+        """Continuously tail log files matching *input_glob* and append
+        normalized events to *out_path* (JSONL if .jsonl, else CSV).
+
+        Never returns under normal operation -- stop with Ctrl+C.
+        """
+        out_p = Path(out_path)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        use_jsonl = out_p.suffix in (".jsonl", ".ndjson")
+
+        # Track file offsets for tailing
+        file_offsets: dict[str, int] = {}
+        total_parsed = 0
+        total_quarantined = 0
+        iteration = 0
+
+        # Write CSV header once if CSV mode
+        if not use_jsonl and not out_p.exists():
+            with open(out_p, "w", encoding="utf-8", newline="") as fh:
+                fh.write(Event.csv_header() + "\n")
+
+        print(f"Normalizer follow mode: {input_glob} -> {out_path}")
+        print(f"  poll interval: {poll_interval_sec:.1f}s")
+        print("  Press Ctrl+C to stop.")
+
+        try:
+            while True:
+                files = sorted(glob.glob(input_glob))
+                new_events: list[Event] = []
+
+                for fpath in files:
+                    fname = Path(fpath).name
+                    profile = select_profile(self.profiles, fname)
+                    if profile is None:
+                        continue
+
+                    current_size = os.path.getsize(fpath)
+                    prev_offset = file_offsets.get(fpath, 0)
+
+                    if current_size <= prev_offset:
+                        continue
+
+                    with open(fpath, encoding="utf-8", errors="replace") as fh:
+                        fh.seek(prev_offset)
+                        for raw_line in fh:
+                            result = parse_line(raw_line, profile, self.tz)
+                            if isinstance(result, Event):
+                                new_events.append(result)
+                                total_parsed += 1
+                            else:
+                                total_quarantined += 1
+
+                    file_offsets[fpath] = current_size
+
+                if new_events:
+                    iteration += 1
+                    # Append to output
+                    with open(out_p, "a", encoding="utf-8", newline="") as fh:
+                        for ev in new_events:
+                            if use_jsonl:
+                                fh.write(ev.to_json() + "\n")
+                            else:
+                                fh.write(ev.to_csv_row() + "\n")
+                        fh.flush()
+
+                    log.info(
+                        "[tick %d] +%d events normalized, total=%d parsed, %d quarantined",
+                        iteration,
+                        len(new_events),
+                        total_parsed,
+                        total_quarantined,
+                    )
+
+                time.sleep(poll_interval_sec)
+        except KeyboardInterrupt:
+            print(
+                f"\nNormalizer follow stopped. total_parsed={total_parsed}, "
+                f"quarantined={total_quarantined}"
+            )

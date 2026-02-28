@@ -1,12 +1,4 @@
-"""Line parser: raw log line → Event using regex profiles from mapping.yaml.
-
-Each profile defines:
-  - a line regex with named groups
-  - timestamp format (iso_space / iso_t / syslog)
-  - field extractions (source, severity, event type, component, ip, actor, kv)
-
-The parser compiles all regexes once and reuses them for every line.
-"""
+"""Парсер: raw логи -> Event за допомогою regex профілів з mapping.yaml."""
 
 from __future__ import annotations
 
@@ -33,7 +25,7 @@ _TS_PATTERNS: dict[str, str] = {
 
 @dataclass(slots=True)
 class Profile:
-    """Compiled parsing profile (one per log-source type)."""
+    """Скомпільований профіль парсингу."""
 
     name: str
     file_pattern: re.Pattern[str]
@@ -57,7 +49,7 @@ class Profile:
 
 
 def build_profiles(mapping: dict[str, Any]) -> list[Profile]:
-    """Compile all profiles from the mapping config dict."""
+    """Компілює всі профілі з конфігурації."""
     defaults = mapping.get("defaults", {})
     result: list[Profile] = []
 
@@ -121,7 +113,7 @@ def build_profiles(mapping: dict[str, Any]) -> list[Profile]:
 
 
 def select_profile(profiles: list[Profile], filename: str) -> Profile | None:
-    """Select the first profile whose file_pattern matches *filename*."""
+    """Вибирає перший профіль, що відповідає імені файлу."""
     for p in profiles:
         if p.file_pattern.search(filename):
             return p
@@ -136,7 +128,7 @@ def _parse_timestamp(
     profile: Profile,
     tz: timezone | Any,
 ) -> str | None:
-    """Parse timestamp from regex named groups. Returns ISO-8601 UTC or None."""
+    """Парсить timestamp з regex груп. Повертає ISO-8601 UTC або None."""
     fmt = profile.timestamp_format
     try:
         if fmt == "syslog":
@@ -173,8 +165,7 @@ def _detect_severity(
     message: str,
     profile: Profile,
 ) -> str:
-    """Determine severity from log level field or message content."""
-    # 1) From explicit level field
+    """Визначає severity з поля рівня або вмісту повідомлення."""
     if profile.level_field:
         level = groups.get(profile.level_field, "").lower()
         if level in profile.severity_map:
@@ -194,7 +185,7 @@ def _detect_severity(
 
 
 def _detect_component(source: str, profile: Profile) -> str:
-    """Determine component from source/host name."""
+    """Визначає component з імені джерела."""
     for pattern, component in profile.component_rules:
         if pattern.search(source):
             return component
@@ -202,7 +193,7 @@ def _detect_component(source: str, profile: Profile) -> str:
 
 
 def _detect_event(message: str, profile: Profile) -> tuple[str, str]:
-    """Determine event type and tags from message content. First match wins."""
+    """Визначає тип події та теги з вмісту повідомлення."""
     for pattern, event, tags in profile.event_rules:
         if pattern.search(message):
             return event, tags
@@ -210,7 +201,7 @@ def _detect_event(message: str, profile: Profile) -> tuple[str, str]:
 
 
 def _extract_ip(message: str, profile: Profile) -> str:
-    """Extract first IP address from message."""
+    """Витягує першу IP адресу з повідомлення."""
     if profile.ip_regex:
         m = profile.ip_regex.search(message)
         if m:
@@ -219,7 +210,7 @@ def _extract_ip(message: str, profile: Profile) -> str:
 
 
 def _extract_actor(message: str, profile: Profile) -> str:
-    """Extract actor/user from message."""
+    """Витягує actor/user з повідомлення."""
     if profile.actor_regex:
         m = profile.actor_regex.search(message)
         if m:
@@ -254,11 +245,15 @@ def parse_line(
     profile: Profile,
     tz: timezone | Any,
 ) -> Event | tuple[str, str]:
-    """Parse a single raw log line.
+    """Парсить один рядок raw логу.
+
+    Args:
+        line: Рядок логу.
+        profile: Профіль парсингу.
+        tz: Часовий пояс.
 
     Returns:
-        Event — on success
-        (raw_line, reason) — on failure (for quarantine)
+        Event у разі успіху. (raw_line, reason) для карантину.
     """
     line = line.rstrip("\n\r")
 

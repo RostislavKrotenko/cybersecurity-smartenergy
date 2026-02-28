@@ -1,8 +1,4 @@
-"""Background (normal) traffic generators.
-
-Each generator is a *callable* that, given the current simulation timestamp,
-returns zero or more ``Event`` objects representing benign activity.
-"""
+"""Генератори фонового (нормального) трафіку."""
 
 from __future__ import annotations
 
@@ -40,7 +36,7 @@ def _ts(dt: datetime) -> str:
 
 
 class TelemetryGenerator:
-    """Periodic telemetry readings from edge/inverter/collector devices."""
+    """Генерація періодичних телеметрічних зчитувань."""
 
     def __init__(
         self, cfg: dict[str, Any], devices: dict[str, Device], rng: _random_mod.Random

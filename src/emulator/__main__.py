@@ -1,4 +1,4 @@
-"""Allow ``python -m src.emulator`` to launch the CLI."""
+"""Точка входу для python -m src.emulator."""
 
 from src.emulator.cli import main
 

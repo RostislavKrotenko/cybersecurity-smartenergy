@@ -1,4 +1,4 @@
-"""Base class for all attack scenarios."""
+"""Базовий клас для сценаріїв атак."""
 
 from __future__ import annotations
 
@@ -32,12 +32,7 @@ def _randint_range(rng: _random_mod.Random, r: list[int]) -> int:
 
 
 class BaseScenario(abc.ABC):
-    """Abstract base class for injectable attack scenarios.
-
-    Each scenario reads its definition from the ``attacks`` section of
-    ``scenarios.yaml`` and pre-generates a batch of ``Event`` objects
-    that will be merged into the main timeline by the engine.
-    """
+    """Абстрактний базовий клас для сценаріїв атак."""
 
     name: str = "base"
 

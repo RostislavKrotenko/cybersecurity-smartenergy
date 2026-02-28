@@ -1,4 +1,4 @@
-"""Alert data-class — produced by the Detector from matched Events."""
+"""Модель оповіщення (Alert)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class Alert:
-    """One detection alert raised by a rule match on Events."""
+    """Оповіщення, згенероване детектором при спрацюванні правила."""
 
     alert_id: str  # e.g. "ALR-001"
     rule_id: str  # e.g. "RULE-BF-001"

@@ -59,7 +59,7 @@ RESULTS_CSV_COLUMNS = [
 
 @dataclass
 class PolicyMetrics:
-    """Aggregated resilience metrics for one policy."""
+    """Агреговані метрики стійкості для однієї політики."""
 
     policy: str
     availability_pct: float = 100.0
@@ -71,7 +71,7 @@ class PolicyMetrics:
     incidents_by_threat: dict[str, int] = field(default_factory=dict)
 
     def to_csv_row(self) -> str:
-        """Return one CSV line for results.csv."""
+        """Повертає один рядок CSV для results.csv."""
         sev = self.incidents_by_severity
         thr = self.incidents_by_threat
         vals = [
@@ -106,17 +106,15 @@ def compute(
     policy_name: str,
     horizon_sec: float,
 ) -> PolicyMetrics:
-    """Compute resilience metrics for a single policy run.
+    """Обчислює метрики стійкості для однієї політики.
 
-    Parameters
-    ──────────
-    incidents    — all incidents for this policy
-    policy_name  — e.g. "baseline"
-    horizon_sec  — total analysis horizon in seconds
+    Args:
+        incidents: Список інцидентів.
+        policy_name: Назва політики.
+        horizon_sec: Горизонт аналізу в секундах.
 
-    Returns
-    ───────
-    PolicyMetrics dataclass with all computed values.
+    Returns:
+        PolicyMetrics з обчисленими значеннями.
     """
     m = PolicyMetrics(policy=policy_name)
 

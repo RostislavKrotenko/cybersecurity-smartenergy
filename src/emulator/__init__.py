@@ -1,1 +1,1 @@
-"""SmartEnergy Emulator package."""
+"""Пакет емулятора SmartEnergy."""

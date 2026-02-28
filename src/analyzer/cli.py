@@ -1,16 +1,4 @@
-"""CLI entry-point for the SmartEnergy Analyzer.
-
-Usage examples
---------------
-# Batch mode (CSV input):
-python -m src.analyzer --input data/events.csv
-
-# Batch mode (JSONL input):
-python -m src.analyzer --input data/events.jsonl
-
-# Watch mode (tail JSONL produced by live emulator):
-python -m src.analyzer --input data/events_live.jsonl --watch
-"""
+"""Командний інтерфейс аналізатора SmartEnergy."""
 
 from __future__ import annotations
 

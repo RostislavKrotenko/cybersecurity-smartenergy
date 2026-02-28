@@ -1,1 +1,1 @@
-"""SmartEnergy Normalizer — raw log files → Event Contract CSV."""
+"""Нормалізатор SmartEnergy: raw логи -> Event Contract CSV."""

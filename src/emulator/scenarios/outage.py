@@ -1,4 +1,4 @@
-"""Scenario 5: Outage / DB Corruption — cascading failure."""
+"""Сценарій: Відключення / пошкодження БД."""
 
 from __future__ import annotations
 

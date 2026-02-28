@@ -1,4 +1,4 @@
-"""Infrastructure model — builds device/IP lookup from components.yaml."""
+"""Модель інфраструктури: індекс пристроїв з components.yaml."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class Device:
-    """One infrastructure instance (meter, gateway, DB server …)."""
+    """Один екземпляр інфраструктури."""
 
     id: str
     ip: str
@@ -20,7 +20,14 @@ class Device:
 
 
 def build_device_index(components_cfg: dict[str, Any]) -> dict[str, Device]:
-    """Parse ``components`` section and return a dict keyed by device id."""
+    """Створює індекс пристроїв з конфігурації.
+
+    Args:
+        components_cfg: Конфіг компонентів.
+
+    Returns:
+        Словник пристроїв за id.
+    """
     comps: dict[str, Any] = components_cfg.get("components", {})
     index: dict[str, Device] = {}
     for comp_name, comp in comps.items():

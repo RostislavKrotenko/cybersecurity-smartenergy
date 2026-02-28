@@ -1,12 +1,4 @@
-"""Correlator — group Alerts into Incidents.
-
-Grouping strategy (priority order):
-  1. By ``correlation_id`` — if the emulator tagged events with COR-* IDs,
-     alerts referencing the same correlation_id are grouped.
-  2. By time window + component + threat_type — alerts within a configurable
-     window (default 120 s) that share the same component and threat_type
-     are merged into one incident.
-"""
+"""Корелятор: групування Alert у Incident."""
 
 from __future__ import annotations
 
@@ -32,7 +24,7 @@ def _max_sev(*sevs: str) -> str:
 
 
 def _extract_cor_ids(event_ids_str: str) -> set[str]:
-    """Extract COR-* prefixed correlation IDs from semicolon-joined string."""
+    """Витягує COR-* ідентифікатори з рядка, розділеного ';'."""
     return {t.strip() for t in event_ids_str.split(";") if t.strip().startswith("COR-")}
 
 
@@ -42,18 +34,16 @@ def correlate(
     policy_modifiers: dict[str, dict[str, float]] | None = None,
     merge_window_sec: float = _DEFAULT_MERGE_WINDOW_SEC,
 ) -> list[Incident]:
-    """Group alerts into incidents.
+    """Групує оповіщення у інциденти.
 
-    Parameters
-    ──────────
-    alerts           — sorted list of Alerts
-    policy_name      — e.g. "baseline"
-    policy_modifiers — per-threat_type multipliers (mttd, mttr, impact)
-    merge_window_sec — time window for grouping alerts without correlation_id
+    Args:
+        alerts: Відсортований список оповіщень.
+        policy_name: Назва політики.
+        policy_modifiers: Модифікатори по threat_type.
+        merge_window_sec: Вікно групування в секундах.
 
-    Returns
-    ───────
-    Sorted list of Incidents with computed MTTD / MTTR / impact_score.
+    Returns:
+        Відсортований список інцидентів.
     """
     if not alerts:
         return []
@@ -110,8 +100,7 @@ def correlate(
 
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Base timing constants (seconds) per threat_type — these represent
-# the "baseline" detection and recovery times before policy multipliers.
+# Базові часові константи (секунди) по threat_type.
 _BASE_TIMING: dict[str, dict[str, float]] = {
     "credential_attack": {"mttd": 30.0, "mttr": 120.0},
     "availability_attack": {"mttd": 15.0, "mttr": 180.0},
@@ -128,16 +117,16 @@ def _build_incident(
     policy: str,
     pm: dict[str, dict[str, float]],
 ) -> Incident:
-    """Build a single Incident from a group of correlated alerts.
+    """Створює інцидент з групи корельованих оповіщень.
 
-    Timing formulas
-    ───────────────
-      base_mttd / base_mttr — from _BASE_TIMING dict above
-      mttd = base_mttd × mttd_multiplier      (policy-dependent)
-      mttr = base_mttr × mttr_multiplier       (policy-dependent)
-      detect_ts  = start_ts + mttd
-      recover_ts = detect_ts + mttr
-      impact_score = severity_weight × avg_confidence × impact_multiplier
+    Args:
+        group: Група оповіщень.
+        idx: Індекс інциденту.
+        policy: Назва політики.
+        pm: Модифікатори політики.
+
+    Returns:
+        Створений інцидент.
     """
     threat = group[0].threat_type
     bases = _BASE_TIMING.get(threat, {"mttd": 30.0, "mttr": 120.0})

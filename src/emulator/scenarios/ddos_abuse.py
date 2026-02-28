@@ -1,4 +1,4 @@
-"""Scenario 2: DDoS / API-abuse flood."""
+"""Сценарій: DDoS / API-abuse flood."""
 
 from __future__ import annotations
 

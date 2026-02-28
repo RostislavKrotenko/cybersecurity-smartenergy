@@ -1,1 +1,1 @@
-"""Attack scenario package."""
+"""Пакет сценаріїв атак."""

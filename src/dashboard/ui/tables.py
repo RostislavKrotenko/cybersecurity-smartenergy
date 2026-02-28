@@ -1,8 +1,4 @@
-"""Incident table rendering.
-
-Provides ``render_incident_table`` which shows a filterable, sortable
-``st.dataframe`` with severity colour coding.
-"""
+"""Відображення таблиці інцидентів."""
 
 from __future__ import annotations
 
@@ -38,7 +34,7 @@ _COL_LABELS = {
 
 
 def render_incident_table(df: pd.DataFrame) -> None:
-    """Render the incidents dataframe as a styled table."""
+    """Відображає таблицю інцидентів."""
     if df.empty:
         st.info("No incidents match the current filters.")
         return
@@ -67,4 +63,5 @@ def render_incident_table(df: pd.DataFrame) -> None:
         hide_index=True,
         width="stretch",
         height=min(len(view) * 36 + 42, 520),
+        key="tbl_incidents",
     )

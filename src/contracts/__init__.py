@@ -1,4 +1,4 @@
-"""Event Contract — canonical data structures shared by all modules."""
+"""Контракти даних для всіх модулів системи."""
 
 from src.contracts.alert import Alert
 from src.contracts.enums import Component, EventType, Severity

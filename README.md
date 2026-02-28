@@ -31,6 +31,39 @@ To stop and clean up containers afterwards:
 make docker-down
 ```
 
+### Live Mode (continuous streaming)
+
+```bash
+docker compose --profile live up --build
+```
+
+This launches the full live pipeline:
+
+| Service           | Role                                                        |
+|-------------------|-------------------------------------------------------------|
+| `emulator-live`   | Generates events every 500 ms in JSONL + CSV + raw logs     |
+| `normalizer-live` | Tails raw logs (`logs/live/*.log`) and normalises them       |
+| `analyzer-live`   | Watches `events.jsonl`, recalculates metrics every second   |
+| `ui-live`         | Streamlit dashboard at `http://localhost:8501` (auto-refresh)|
+
+The emulator uses the `demo_high_rate` profile with `--attack-rate 3`, which
+injects attacks every 3-45 seconds (≥ 1-3 incidents per minute).
+
+**Verification checklist** (open the dashboard and enable *Auto-refresh*):
+
+1. **Last refresh** timestamp updates every few seconds.
+2. **Results rows** / **Incident rows** counters grow over time.
+3. **results.csv mtime** and **incidents.csv mtime** advance.
+4. Availability / Downtime bar charts reflect new data.
+5. *Incidents per Minute* chart shows points after 1-2 minutes.
+6. Incident table gains new rows.
+
+To stop:
+
+```bash
+docker compose --profile live down
+```
+
 ### Local
 
 ```bash

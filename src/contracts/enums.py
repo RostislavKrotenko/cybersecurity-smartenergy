@@ -1,4 +1,4 @@
-"""Canonical enumerations for the Event Contract."""
+"""Перелічення для контрактів подій."""
 
 from __future__ import annotations
 

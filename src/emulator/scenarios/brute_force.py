@@ -1,4 +1,4 @@
-"""Scenario 1: Brute-Force Authentication Attack."""
+"""Сценарій: Брутфорс-атака автентифікації."""
 
 from __future__ import annotations
 

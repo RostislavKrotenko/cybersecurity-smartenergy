@@ -1,4 +1,4 @@
-"""Scenario 4: Unauthorized command execution."""
+"""Сценарій: Несанкціоноване виконання команд."""
 
 from __future__ import annotations
 

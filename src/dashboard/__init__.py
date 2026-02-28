@@ -1,1 +1,1 @@
-# SmartEnergy Dashboard — Streamlit UI
+"""Дашборд SmartEnergy на Streamlit."""
