@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,8 +31,6 @@ from src.analyzer.reporter import (
     write_report_txt,
     write_results_csv,
 )
-from datetime import datetime
-
 from src.contracts.event import Event
 from src.shared.config_loader import load_yaml
 

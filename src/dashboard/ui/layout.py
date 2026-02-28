@@ -8,7 +8,7 @@ title bar.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
@@ -126,7 +126,7 @@ def render_sidebar(
             else:
                 st.warning("Install streamlit-autorefresh:\npip install streamlit-autorefresh")
 
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        now_str = datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         st.markdown(
             f'<p class="refresh-timestamp">Last refresh: {now_str}</p>',
             unsafe_allow_html=True,
