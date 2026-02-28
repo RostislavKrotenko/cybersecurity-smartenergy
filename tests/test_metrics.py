@@ -199,6 +199,91 @@ class TestCompute:
         assert m.mean_mttr_min == round((120 + 240) / 2 / 60, 2)  # 3.0
 
 
+class TestDowntimeDefinition:
+    """Regression tests ensuring downtime = start_ts -> recover_ts (includes MTTD + MTTR).
+
+    These tests guard the canonical definition:
+        downtime interval = [start_ts, recover_ts]
+        downtime =/= [detect_ts, recover_ts]   (that would exclude MTTD)
+    Only severity >= high counts.  Overlapping intervals are merged.
+    """
+
+    def test_downtime_equals_start_to_recover(self):
+        """Downtime must equal recover_ts - start_ts, NOT detect_ts - recover_ts."""
+        inc = make_incident(
+            severity="critical",
+            start_ts="2026-02-26T10:00:00Z",
+            detect_ts="2026-02-26T10:05:00Z",   # MTTD = 300s
+            recover_ts="2026-02-26T10:20:00Z",   # MTTR = 900s
+            mttd_sec=300.0,
+            mttr_sec=900.0,
+        )
+        m = compute([inc], "baseline", horizon_sec=3600)
+        # Expected: 20 min = 1200s (start->recover), NOT 15 min = 900s (detect->recover)
+        expected_sec = 1200.0
+        assert m.total_downtime_hr == pytest.approx(expected_sec / 3600, abs=0.0001)
+
+    def test_downtime_excludes_low_medium(self):
+        """Low and medium incidents must not contribute to downtime."""
+        inc_low = make_incident(
+            severity="low",
+            start_ts="2026-02-26T10:00:00Z",
+            detect_ts="2026-02-26T10:01:00Z",
+            recover_ts="2026-02-26T10:30:00Z",
+            mttd_sec=60.0,
+            mttr_sec=1740.0,
+        )
+        inc_med = make_incident(
+            severity="medium",
+            start_ts="2026-02-26T11:00:00Z",
+            detect_ts="2026-02-26T11:02:00Z",
+            recover_ts="2026-02-26T11:30:00Z",
+            mttd_sec=120.0,
+            mttr_sec=1680.0,
+        )
+        m = compute([inc_low, inc_med], "baseline", horizon_sec=7200)
+        assert m.total_downtime_hr == 0.0
+        assert m.availability_pct == 100.0
+        assert m.incidents_total == 2
+
+    def test_overlapping_intervals_merged_correctly(self):
+        """Two overlapping high incidents should produce one merged downtime block."""
+        inc1 = make_incident(
+            severity="high",
+            start_ts="2026-02-26T10:00:00Z",
+            detect_ts="2026-02-26T10:01:00Z",
+            recover_ts="2026-02-26T10:20:00Z",
+            mttd_sec=60.0,
+            mttr_sec=1140.0,
+        )
+        inc2 = make_incident(
+            severity="critical",
+            start_ts="2026-02-26T10:10:00Z",
+            detect_ts="2026-02-26T10:12:00Z",
+            recover_ts="2026-02-26T10:25:00Z",
+            mttd_sec=120.0,
+            mttr_sec=780.0,
+        )
+        m = compute([inc1, inc2], "baseline", horizon_sec=7200)
+        # Merged: 10:00 -> 10:25 = 25 min = 1500s
+        assert m.total_downtime_hr == pytest.approx(1500 / 3600, abs=0.001)
+
+    def test_availability_uses_correct_downtime(self):
+        """Availability = (1 - downtime/horizon) * 100 where downtime = start->recover."""
+        inc = make_incident(
+            severity="high",
+            start_ts="2026-02-26T10:00:00Z",
+            detect_ts="2026-02-26T10:02:00Z",
+            recover_ts="2026-02-26T10:12:00Z",
+            mttd_sec=120.0,
+            mttr_sec=600.0,
+        )
+        horizon = 3600.0
+        m = compute([inc], "baseline", horizon_sec=horizon)
+        # Downtime = 12 min = 720s, availability = (1 - 720/3600) * 100 = 80%
+        assert m.availability_pct == pytest.approx(80.0, abs=0.1)
+
+
 class TestPolicyMetricsSerialization:
     def test_csv_header_matches_columns(self):
         header = PolicyMetrics.csv_header()

@@ -17,6 +17,8 @@ SmartEnergy Cyber-Resilience Analyzer — платформа для моделю
 
 Оцінювання проводиться по трьох політиках безпеки: **baseline**, **minimal**, **standard**.
 
+> **Примітка:** усі захисні контролі (MFA, RBAC, rate limiting, сегментація тощо) моделюються через параметри детекції та коефіцієнти впливу у `policies.yaml`. Реальна інтеграція з IAM/MFA-провайдером не виконується. Часові мітки зберігаються в UTC; дашборд конвертує їх у обрану timezone (за замовчуванням `Europe/Kyiv`) лише для відображення. Downtime розраховується як інтервал `start_ts -> recover_ts` (включає MTTD + MTTR) для інцидентів severity >= high з об'єднанням перекриттів.
+
 ## Вимоги
 
 - Python 3.11+
@@ -144,6 +146,7 @@ cut -d, -f3 out/incidents.csv | sort | uniq -c
 Очікуваний результат: credential_attack, availability_attack,
 integrity_attack, outage -- всі типи мають з'явитися протягом 50 секунд.
 Метрика "Incidents per Minute" на дашборді змінюється в реальному часі.
+Часова вісь на графіках відповідає timezone, обраній у sidebar (UTC / Europe/Kyiv).
 
 ### Як працює burst-ін'єкція
 

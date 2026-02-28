@@ -1,14 +1,23 @@
-"""Metrics Engine — compute resilience metrics from Incidents.
+"""Metrics Engine -- compute resilience metrics from Incidents.
+
+Downtime definition
+───────────────────
+    Downtime is the interval from ``start_ts`` (first malicious/anomalous
+    event) to ``recover_ts`` (full recovery), i.e. it **includes** both MTTD
+    and MTTR.  Only incidents with severity >= high are counted.  Overlapping
+    intervals are merged before summing.
+
+    ``total_downtime = SUM(recover_ts - start_ts)``  (after merge)
 
 Metrics computed per policy
 ───────────────────────────
   availability_pct
-      % of the analysis horizon where no critical/high incident was active.
-      Formula: ``(1 − total_downtime / horizon) × 100``
+      Percentage of the analysis horizon with no critical/high incident active.
+      Formula: ``(1 - total_downtime / horizon) * 100``
 
   total_downtime_hr
-      Sum of incident durations (recover_ts − start_ts) for severity ≥ high,
-      converted to hours.  Overlapping intervals are merged.
+      Sum of merged incident durations ``(recover_ts - start_ts)`` for
+      severity >= high, converted to hours.
 
   mean_mttd_min
       Average MTTD across all incidents, in minutes.
@@ -22,10 +31,17 @@ Metrics computed per policy
       Total number of incidents.
 
   incidents_by_severity
-      Dict mapping severity → count.
+      Dict mapping severity -> count.
 
   incidents_by_threat
-      Dict mapping threat_type → count.
+      Dict mapping threat_type -> count.
+
+Timestamps
+──────────
+    All timestamps in CSV/JSONL files are stored in **UTC** (ISO-8601 with
+    ``Z`` or ``+00:00`` suffix).  The dashboard converts them to the
+    user-selected display timezone (default ``Europe/Kyiv``) purely for
+    rendering; no computation uses local time.
 """
 
 from __future__ import annotations
