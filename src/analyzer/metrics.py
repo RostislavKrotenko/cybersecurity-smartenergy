@@ -2,12 +2,16 @@
 
 Downtime definition
 ───────────────────
-    Downtime is the interval from ``start_ts`` (first malicious/anomalous
-    event) to ``recover_ts`` (full recovery), i.e. it **includes** both MTTD
-    and MTTR.  Only incidents with severity >= high are counted.  Overlapping
+    Downtime is the interval from ``detect_ts`` (moment of detection) to
+    ``recover_ts`` (full recovery).  It equals MTTR and does **not** include
+    MTTD.  Only incidents with severity >= high are counted.  Overlapping
     intervals are merged before summing.
 
-    ``total_downtime = SUM(recover_ts - start_ts)``  (after merge)
+    ``total_downtime = SUM(recover_ts - detect_ts)``  (after merge)
+
+    Incidents that lack a valid ``detect_ts`` or ``recover_ts`` are skipped
+    in the downtime calculation (they still count towards incident totals
+    and MTTD/MTTR averages).
 
 Metrics computed per policy
 ───────────────────────────
@@ -16,7 +20,7 @@ Metrics computed per policy
       Formula: ``(1 - total_downtime / horizon) * 100``
 
   total_downtime_hr
-      Sum of merged incident durations ``(recover_ts - start_ts)`` for
+      Sum of merged incident durations ``(recover_ts - detect_ts)`` for
       severity >= high, converted to hours.
 
   mean_mttd_min
@@ -150,12 +154,21 @@ def compute(
     m.mean_mttr_min = round(sum(i.mttr_sec for i in incidents) / len(incidents) / 60, 2)
 
     # Downtime: merge overlapping intervals of severity >= high
+    # Downtime = detect_ts -> recover_ts (does NOT include MTTD)
     high_sev = {"high", "critical"}
     intervals: list[tuple[datetime, datetime]] = []
     for inc in incidents:
         if inc.severity in high_sev:
-            start = _ts(inc.start_ts)
+            if not inc.detect_ts or not inc.recover_ts:
+                log.warning(
+                    "Incident %s skipped for downtime: missing detect_ts or recover_ts",
+                    getattr(inc, "incident_id", "?"),
+                )
+                continue
+            start = _ts(inc.detect_ts)
             end = _ts(inc.recover_ts)
+            if end <= start:
+                continue
             intervals.append((start, end))
 
     merged = _merge_intervals(intervals)

@@ -110,7 +110,7 @@ services:
     restart: unless-stopped
     profiles: ["live"]
 
-  # ── 6. Live Normalizer — tail raw logs → normalised events ─────────────
+  # ── 6. Live Normalizer — tail raw logs → normalised JSONL ──────────────
   normalizer-live:
     <<: *common
     container_name: smartenergy-normalizer-live
@@ -118,7 +118,7 @@ services:
       python -m src.normalizer
         --inputs "logs/live/*.log"
         --mapping config/mapping.yaml
-        --out data/live/normalized.csv
+        --out data/live/normalized.jsonl
         --quarantine out/quarantine_live.csv
         --follow
         --poll-interval-ms 500
@@ -129,13 +129,13 @@ services:
     restart: unless-stopped
     profiles: ["live"]
 
-  # ── 7. Live Analyzer — watch mode, tail JSONL ──────────────────────────
+  # ── 7. Live Analyzer — watch mode, tail normalised JSONL ───────────────
   analyzer-live:
     <<: *common
     container_name: smartenergy-analyzer-live
     command: >-
       python -m src.analyzer
-        --input data/live/events.jsonl
+        --input data/live/normalized.jsonl
         --watch
         --poll-interval-ms 1000
         --out-dir out

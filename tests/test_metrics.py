@@ -108,8 +108,8 @@ class TestCompute:
         assert m.incidents_by_severity["high"] == 1
         assert m.mean_mttd_min == round(30.0 / 60, 2)
         assert m.mean_mttr_min == round(120.0 / 60, 2)
-        # Downtime = recover - start = 150s = 0.0417h
-        assert m.total_downtime_hr == pytest.approx(150 / 3600, abs=0.001)
+        # Downtime = recover - detect = 120s = 0.0333h
+        assert m.total_downtime_hr == pytest.approx(120 / 3600, abs=0.001)
         assert m.availability_pct < 100.0
 
     def test_critical_incident_counts_as_downtime(self):
@@ -122,10 +122,10 @@ class TestCompute:
             mttr_sec=1800.0,
         )
         m = compute([inc], "minimal", horizon_sec=7200)
-        # Downtime = 31 minutes = 1860 seconds
-        expected_dt_hr = 1860 / 3600
+        # Downtime = detect->recover = 30 minutes = 1800 seconds
+        expected_dt_hr = 1800 / 3600
         assert m.total_downtime_hr == pytest.approx(expected_dt_hr, abs=0.001)
-        expected_avail = (1 - 1860 / 7200) * 100
+        expected_avail = (1 - 1800 / 7200) * 100
         assert m.availability_pct == pytest.approx(expected_avail, abs=0.1)
 
     def test_low_severity_no_downtime(self):
@@ -170,8 +170,8 @@ class TestCompute:
             mttr_sec=570.0,
         )
         m = compute([inc1, inc2], "baseline", horizon_sec=7200)
-        # Merged interval: 10:00 → 10:15 = 900s = 0.25h
-        assert m.total_downtime_hr == pytest.approx(900 / 3600, abs=0.001)
+        # Merged detect intervals: 10:00:30 -> 10:15:00 = 870s
+        assert m.total_downtime_hr == pytest.approx(870 / 3600, abs=0.001)
         assert m.incidents_total == 2
 
     def test_zero_horizon_gives_100_pct(self):
@@ -200,27 +200,27 @@ class TestCompute:
 
 
 class TestDowntimeDefinition:
-    """Regression tests ensuring downtime = start_ts -> recover_ts (includes MTTD + MTTR).
+    """Regression tests ensuring downtime = detect_ts -> recover_ts (excludes MTTD).
 
     These tests guard the canonical definition:
-        downtime interval = [start_ts, recover_ts]
-        downtime =/= [detect_ts, recover_ts]   (that would exclude MTTD)
+        downtime interval = [detect_ts, recover_ts]
+        downtime =/= [start_ts, recover_ts]   (that would include MTTD)
     Only severity >= high counts.  Overlapping intervals are merged.
     """
 
-    def test_downtime_equals_start_to_recover(self):
-        """Downtime must equal recover_ts - start_ts, NOT detect_ts - recover_ts."""
+    def test_downtime_equals_detect_to_recover(self):
+        """Downtime must equal recover_ts - detect_ts, NOT start_ts - recover_ts."""
         inc = make_incident(
             severity="critical",
             start_ts="2026-02-26T10:00:00Z",
-            detect_ts="2026-02-26T10:05:00Z",   # MTTD = 300s
-            recover_ts="2026-02-26T10:20:00Z",   # MTTR = 900s
+            detect_ts="2026-02-26T10:05:00Z",  # MTTD = 300s
+            recover_ts="2026-02-26T10:20:00Z",  # MTTR = 900s
             mttd_sec=300.0,
             mttr_sec=900.0,
         )
         m = compute([inc], "baseline", horizon_sec=3600)
-        # Expected: 20 min = 1200s (start->recover), NOT 15 min = 900s (detect->recover)
-        expected_sec = 1200.0
+        # Expected: 15 min = 900s (detect->recover), NOT 20 min = 1200s (start->recover)
+        expected_sec = 900.0
         assert m.total_downtime_hr == pytest.approx(expected_sec / 3600, abs=0.0001)
 
     def test_downtime_excludes_low_medium(self):
@@ -265,11 +265,11 @@ class TestDowntimeDefinition:
             mttr_sec=780.0,
         )
         m = compute([inc1, inc2], "baseline", horizon_sec=7200)
-        # Merged: 10:00 -> 10:25 = 25 min = 1500s
-        assert m.total_downtime_hr == pytest.approx(1500 / 3600, abs=0.001)
+        # Merged detect intervals: 10:01 -> 10:25 = 24 min = 1440s
+        assert m.total_downtime_hr == pytest.approx(1440 / 3600, abs=0.001)
 
     def test_availability_uses_correct_downtime(self):
-        """Availability = (1 - downtime/horizon) * 100 where downtime = start->recover."""
+        """Availability = (1 - downtime/horizon) * 100 where downtime = detect->recover."""
         inc = make_incident(
             severity="high",
             start_ts="2026-02-26T10:00:00Z",
@@ -280,8 +280,40 @@ class TestDowntimeDefinition:
         )
         horizon = 3600.0
         m = compute([inc], "baseline", horizon_sec=horizon)
-        # Downtime = 12 min = 720s, availability = (1 - 720/3600) * 100 = 80%
-        assert m.availability_pct == pytest.approx(80.0, abs=0.1)
+        # Downtime = detect->recover = 10 min = 600s
+        # Availability = (1 - 600/3600) * 100 = 83.33%
+        assert m.availability_pct == pytest.approx(83.33, abs=0.1)
+
+    def test_missing_detect_ts_skipped(self):
+        """Incident with empty detect_ts is skipped in downtime calculation."""
+        inc = make_incident(
+            severity="high",
+            start_ts="2026-02-26T10:00:00Z",
+            detect_ts="",
+            recover_ts="2026-02-26T10:15:00Z",
+            mttd_sec=0.0,
+            mttr_sec=900.0,
+        )
+        m = compute([inc], "baseline", horizon_sec=3600)
+        # Missing detect_ts -> not counted for downtime
+        assert m.total_downtime_hr == 0.0
+        assert m.availability_pct == 100.0
+        # Still counted in totals
+        assert m.incidents_total == 1
+
+    def test_missing_recover_ts_skipped(self):
+        """Incident with empty recover_ts is skipped in downtime calculation."""
+        inc = make_incident(
+            severity="critical",
+            start_ts="2026-02-26T10:00:00Z",
+            detect_ts="2026-02-26T10:01:00Z",
+            recover_ts="",
+            mttd_sec=60.0,
+            mttr_sec=0.0,
+        )
+        m = compute([inc], "baseline", horizon_sec=3600)
+        assert m.total_downtime_hr == 0.0
+        assert m.incidents_total == 1
 
 
 class TestPolicyMetricsSerialization:
