@@ -1,0 +1,35 @@
+# ── Build artefacts & caches ──────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual-env ──────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── IDE / OS ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Git ──────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Docker (avoid recursive COPY) ───────────────────────────────────────
+Dockerfile
+docker-compose.yml
+docker-compose*.yml
+
+# ── Output & data (mounted as volumes, not baked in) ─────────────────────
+data/
+out/
+logs/

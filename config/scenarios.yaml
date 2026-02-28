@@ -1,0 +1,265 @@
+# =============================================================================
+# scenarios.yaml — Emulator: фоновий трафік + 5 сценаріїв атак
+# =============================================================================
+# Emulator seed фіксує генерацію: однаковий seed → однакові дані.
+# Кожен сценарій описує: що генерується, коли, на яких компонентах, з якою
+# інтенсивністю та тривалістю.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Глобальні параметри симуляції
+# -----------------------------------------------------------------------------
+simulation:
+  duration_sec: 3600             # загальна тривалість (модельний час)
+  time_step_ms: 100              # крок генератора
+  seed: 42                       # overridden через CLI --seed
+  start_time: "2026-02-26T10:00:00Z"
+
+# -----------------------------------------------------------------------------
+# Фоновий (нормальний) трафік — завжди генерується
+# -----------------------------------------------------------------------------
+background:
+  telemetry:
+    description: "Періодичні зчитування лічильників та інверторів"
+    sources: [meter-17, meter-22, inverter-01, inverter-02, inverter-03, collector-01, collector-02]
+    component: [edge, inverter, collector]
+    event: telemetry_read
+    interval_sec: [5, 15]           # рівномірний розподіл між зчитуваннями
+    keys:
+      - { key: voltage, range: [218.0, 242.0], unit: V }
+      - { key: power_kw, range: [0.0, 55.0], unit: kW }
+      - { key: frequency_hz, range: [49.8, 50.2], unit: Hz }
+      - { key: temperature_c, range: [20.0, 65.0], unit: "°C" }
+    severity: low
+    tags: ["telemetry", "periodic"]
+
+  access:
+    description: "Легітимні HTTP-запити до API та UI"
+    sources: [api-gw-01, ui-web-01]
+    component: [api, ui]
+    event: http_request
+    actors: [operator, admin, readonly]
+    interval_sec: [2, 10]
+    keys:
+      - { key: endpoint, values: ["/api/v1/meters", "/api/v1/inverters", "/api/v1/status", "/dashboard", "/api/v1/config"] }
+    severity: low
+    tags: ["access", "normal"]
+
+  auth:
+    description: "Успішні авторизації"
+    sources: [api-gw-01, gateway-01]
+    component: [api, edge]
+    event: auth_success
+    actors: [operator, admin]
+    interval_sec: [30, 120]
+    keys:
+      - { key: method, values: [password, mfa, certificate] }
+    severity: low
+    tags: ["auth", "success"]
+
+  system_health:
+    description: "Heartbeat та status-перевірки"
+    sources: [db-primary, db-replica, switch-core-01, firewall-01]
+    component: [db, network]
+    event: service_status
+    interval_sec: [30, 60]
+    keys:
+      - { key: status, values: [healthy, healthy, healthy, healthy, degraded] }   # 80% healthy
+    severity: low
+    tags: ["system", "health"]
+
+# -----------------------------------------------------------------------------
+# Сценарії атак
+# -----------------------------------------------------------------------------
+attacks:
+
+  # ===========================================================================
+  # 1. BRUTE FORCE — підбір паролів на IoT gateway / SCADA HMI
+  # ===========================================================================
+  brute_force:
+    enabled: true
+    description: "Brute-force атака на аутентифікацію edge-шлюзу"
+    threat_type: credential_attack
+    target_components: [edge, api]
+    target_sources: [gateway-01, scada-hmi-01]
+
+    schedule:
+      start_offset_sec: [300, 600]       # початок між 5-10 хв від старту
+      duration_sec: [60, 180]            # тривалість 1-3 хв
+
+    injection:
+      # Фаза 1: серія невдалих логінів
+      - event: auth_failure
+        actor: unknown
+        ip_pool: ["192.168.8.55", "192.168.8.56", "10.99.0.1"]
+        keys:
+          - { key: username, values: [admin, root, operator, test, guest] }
+        interval_ms: [200, 1500]          # висока частота
+        count: [15, 50]                   # кількість спроб
+        severity_progression:             # severity зростає з кількістю спроб
+          - { threshold: 0, severity: medium }
+          - { threshold: 10, severity: high }
+        tags: ["auth", "failure"]
+
+      # Фаза 2: (опційно) успішний вхід після підбору
+      - event: auth_success
+        actor: unknown
+        probability: 0.3                  # 30% шанс успішного підбору
+        delay_after_phase1_sec: [1, 5]
+        keys:
+          - { key: username, values: [admin] }
+          - { key: method, values: [password] }
+        severity: critical
+        tags: ["auth", "success", "suspicious"]
+
+    correlation_prefix: "COR-BF"
+
+  # ===========================================================================
+  # 2. DDoS / API ABUSE — флуд на REST API
+  # ===========================================================================
+  ddos_abuse:
+    enabled: true
+    description: "DDoS-флуд на API gateway — перевищення rate limit"
+    threat_type: availability_attack
+    target_components: [api]
+    target_sources: [api-gw-01]
+
+    schedule:
+      start_offset_sec: [900, 1200]      # 15-20 хв
+      duration_sec: [120, 300]           # 2-5 хв
+
+    injection:
+      - event: rate_exceeded
+        actor: unknown
+        ip_pool: ["203.0.113.10", "203.0.113.11", "203.0.113.12", "203.0.113.13",
+                  "198.51.100.5", "198.51.100.6", "198.51.100.7"]
+        keys:
+          - { key: requests_per_sec, range: [800, 5000], unit: "req/s" }
+        interval_ms: [50, 500]
+        count: [100, 500]
+        severity_progression:
+          - { threshold: 0, severity: high }
+          - { threshold: 50, severity: critical }
+        tags: ["network", "flood"]
+
+      # Побічний ефект: сервіс деградує
+      - event: service_status
+        delay_after_phase1_sec: [10, 30]
+        keys:
+          - { key: status, values: [degraded, degraded, down] }
+        severity: critical
+        tags: ["system", "overload"]
+
+    correlation_prefix: "COR-DDOS"
+
+  # ===========================================================================
+  # 3. TELEMETRY SPOOFING — підміна показань (MitM)
+  # ===========================================================================
+  telemetry_spoofing:
+    enabled: true
+    description: "Підміна телеметричних даних лічильника (фізично неможливі значення)"
+    threat_type: integrity_attack
+    target_components: [edge, inverter]
+    target_sources: [meter-17, inverter-03]
+
+    schedule:
+      start_offset_sec: [1500, 1800]     # 25-30 хв
+      duration_sec: [60, 120]
+
+    injection:
+      # Аномальні значення, що виходять за фізичні межі
+      - event: telemetry_read
+        actor: system                     # виглядає як легітимне зчитування
+        keys:
+          - { key: voltage, range: [500.0, 1200.0], unit: V }      # норма 220-240
+          - { key: power_kw, range: [-800.0, -200.0], unit: kW }   # від'ємні значення
+          - { key: frequency_hz, range: [30.0, 45.0], unit: Hz }   # норма 49.8-50.2
+        interval_ms: [500, 2000]
+        count: [10, 30]
+        severity: low                     # severity низький (виглядає як звичайна телеметрія!)
+        tags: ["telemetry", "periodic"]   # маскується під нормальні дані
+
+      # Детекція anomaly (якщо monitoring увімкнено) — генерується аналітиком
+      # Emulator НЕ видає "anomaly" тег — це завдання Analyzer/Detector
+
+    correlation_prefix: "COR-SPOOF"
+
+  # ===========================================================================
+  # 4. UNAUTHORIZED COMMAND — несанкціоноване управління
+  # ===========================================================================
+  unauthorized_command:
+    enabled: true
+    description: "Виконання критичних команд з ролі 'readonly' або 'unknown'"
+    threat_type: integrity_attack
+    target_components: [api]
+    target_sources: [scada-hmi-01]
+
+    schedule:
+      start_offset_sec: [2100, 2400]     # 35-40 хв
+      duration_sec: [15, 45]
+
+    injection:
+      - event: cmd_exec
+        actor_pool: [readonly, unknown, guest]     # немають прав на команди
+        ip_pool: ["10.0.5.88", "10.0.5.89"]
+        keys:
+          - { key: command, values: [breaker_open, breaker_close, set_voltage, emergency_shutdown, firmware_update] }
+        interval_ms: [2000, 10000]
+        count: [2, 8]
+        severity: critical
+        tags: ["command", "unauthorized"]
+
+    correlation_prefix: "COR-UCMD"
+
+  # ===========================================================================
+  # 5. OUTAGE / DB CORRUPTION — відмова сервісу або пошкодження БД
+  # ===========================================================================
+  outage_db_corruption:
+    enabled: true
+    description: "Каскадна відмова: DB corruption → service degradation → outage"
+    threat_type: outage
+    target_components: [db, api, collector]
+    target_sources: [db-primary, api-gw-01, collector-01]
+
+    schedule:
+      start_offset_sec: [2700, 3000]     # 45-50 хв
+      duration_sec: [120, 300]
+
+    injection:
+      # Фаза 1: DB errors
+      - event: db_error
+        source: db-primary
+        keys:
+          - { key: error_type, values: [integrity_violation, checksum_mismatch, wal_corruption] }
+          - { key: table, values: [device_config, telemetry_log, audit_trail] }
+        interval_ms: [1000, 5000]
+        count: [3, 8]
+        severity_progression:
+          - { threshold: 0, severity: high }
+          - { threshold: 3, severity: critical }
+        tags: ["system", "db", "corruption"]
+
+      # Фаза 2: service degradation (каскад)
+      - event: service_status
+        source_pool: [db-primary, api-gw-01, collector-01]
+        delay_after_phase1_sec: [5, 15]
+        keys:
+          - { key: status, values: [degraded, down] }
+        count: [3, 6]
+        interval_ms: [3000, 10000]
+        severity: critical
+        tags: ["system", "outage"]
+
+      # Фаза 3: (якщо backup є) — rollback
+      - event: service_status
+        source: db-primary
+        delay_after_phase2_sec: [30, 120]     # залежить від політики backup
+        probability: 1.0                       # завжди (але MTTR залежить від політики)
+        keys:
+          - { key: status, values: [recovering, healthy] }
+        count: 2
+        interval_ms: [5000, 10000]
+        severity: medium
+        tags: ["system", "recovery"]
+
+    correlation_prefix: "COR-OUT"

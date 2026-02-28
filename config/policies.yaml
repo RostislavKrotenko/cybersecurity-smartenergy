@@ -1,0 +1,254 @@
+# =============================================================================
+# policies.yaml — Три рівні безпекових політик
+# =============================================================================
+#
+# Кожна політика визначає:
+#   1. controls   — які захисні механізми увімкнені/вимкнені
+#   2. modifiers  — мультиплікатори для detection (MTTD) та response (MTTR)
+#                   по кожному threat_type
+#   3. impact     — ймовірність успіху атаки при даній політиці
+#
+# Analyzer/PolicyEngine завантажує активну політику і:
+#   - Модифікує thresholds у rules (threshold × threshold_multiplier)
+#   - Модифікує window у rules (window × window_multiplier)
+#   - Обчислює MTTD = base_mttd × mttd_multiplier
+#   - Обчислює MTTR = base_mttr × mttr_multiplier
+#   - Обчислює ймовірність impact = base_prob × prob_multiplier
+#
+# =============================================================================
+
+policies:
+
+  # ===========================================================================
+  # MINIMAL — мінімальний захист (тільки логування + базовий моніторинг)
+  # ===========================================================================
+  minimal:
+    name: "Minimal Security"
+    description: >
+      Мінімальний рівень: лише логування та базовий моніторинг.
+      Без MFA, rate limiting, сегментації, backup.
+      Найгірший сценарій для демонстрації вразливості.
+
+    controls:
+      mfa:
+        enabled: false
+      rbac:
+        enabled: false                  # всі користувачі мають однакові права
+      rate_limiting:
+        enabled: false
+      monitoring:
+        enabled: true
+        alert_latency_sec: 30           # повільне сповіщення (30с)
+        check_interval_sec: 60
+      logging:
+        enabled: true
+        audit_trail: false              # лише basic logging, без audit trail
+        retention_days: 7
+      backup:
+        enabled: false
+        rollback_available: false
+      segmentation:
+        enabled: false                  # flat network — все в одній зоні
+
+    # Мультиплікатори по threat_type
+    modifiers:
+      credential_attack:
+        prob_multiplier: 1.5            # висока ймовірність успіху (нема MFA)
+        impact_multiplier: 1.3          # нема RBAC → більший impact
+        mttd_multiplier: 2.5            # повільна детекція (нема realtime alert)
+        mttr_multiplier: 3.0            # довге відновлення (нема автоматичних блокувань)
+        threshold_multiplier: 2.0       # пороги x2 (менш чутливі правила)
+        window_multiplier: 0.5          # вужче вікно (менше часу для агрегації)
+
+      availability_attack:
+        prob_multiplier: 1.8            # DDoS майже завжди успішний (нема rate limit)
+        impact_multiplier: 1.5
+        mttd_multiplier: 2.0
+        mttr_multiplier: 2.5
+        threshold_multiplier: 2.0
+        window_multiplier: 0.5
+
+      integrity_attack:
+        prob_multiplier: 1.4
+        impact_multiplier: 1.6          # без RBAC → критичніші наслідки
+        mttd_multiplier: 3.0            # спуфінг важко виявити без monitoring
+        mttr_multiplier: 2.0
+        threshold_multiplier: 1.5
+        window_multiplier: 0.8
+
+      outage:
+        prob_multiplier: 1.2
+        impact_multiplier: 2.0          # нема backup → катастрофічний impact
+        mttd_multiplier: 1.5
+        mttr_multiplier: 5.0            # нема rollback → дуже довге відновлення
+        threshold_multiplier: 1.0
+        window_multiplier: 1.0
+
+  # ===========================================================================
+  # BASELINE — базовий захист (типовий для малих підприємств)
+  # ===========================================================================
+  baseline:
+    name: "Baseline Security"
+    description: >
+      Базовий рівень: є логування, моніторинг та MFA.
+      Rate limiting частковий, backup нерегулярний, сегментація часткова.
+
+    controls:
+      mfa:
+        enabled: true
+        max_attempts: 5                 # м'який поріг
+        lockout_sec: 120
+      rbac:
+        enabled: true
+        roles: [operator, admin, readonly]
+        strict_mode: false              # попередження замість блокування
+      rate_limiting:
+        enabled: true
+        requests_per_sec: 500           # м'який ліміт
+        burst: 1000
+        auto_block: false               # тільки логування при перевищенні
+      monitoring:
+        enabled: true
+        alert_latency_sec: 10
+        check_interval_sec: 30
+      logging:
+        enabled: true
+        audit_trail: true
+        retention_days: 30
+      backup:
+        enabled: true
+        interval_sec: 7200              # кожні 2 години
+        rollback_available: true
+        rollback_time_sec: 180          # 3 хв на rollback
+      segmentation:
+        enabled: true
+        zones: [scada, corporate]       # 2 зони (без окремої DMZ)
+        strict_firewall: false
+
+    modifiers:
+      credential_attack:
+        prob_multiplier: 1.0            # базовий рівень (MFA є, але поріг м'який)
+        impact_multiplier: 1.0
+        mttd_multiplier: 1.0            # Reference point
+        mttr_multiplier: 1.0
+        threshold_multiplier: 1.0
+        window_multiplier: 1.0
+
+      availability_attack:
+        prob_multiplier: 1.0
+        impact_multiplier: 1.0
+        mttd_multiplier: 1.0
+        mttr_multiplier: 1.0
+        threshold_multiplier: 1.0
+        window_multiplier: 1.0
+
+      integrity_attack:
+        prob_multiplier: 1.0
+        impact_multiplier: 1.0
+        mttd_multiplier: 1.0
+        mttr_multiplier: 1.0
+        threshold_multiplier: 1.0
+        window_multiplier: 1.0
+
+      outage:
+        prob_multiplier: 1.0
+        impact_multiplier: 1.0
+        mttd_multiplier: 1.0
+        mttr_multiplier: 1.0
+        threshold_multiplier: 1.0
+        window_multiplier: 1.0
+
+  # ===========================================================================
+  # STANDARD — повний захист (production-ready)
+  # ===========================================================================
+  standard:
+    name: "Standard Security"
+    description: >
+      Повний набір: MFA з жорсткими порогами, строгий RBAC, автоматичний
+      rate limiting з блокуванням, real-time monitoring, повний audit trail,
+      часті backup з швидким rollback, повна мережева сегментація.
+
+    controls:
+      mfa:
+        enabled: true
+        max_attempts: 3                 # жорсткий поріг
+        lockout_sec: 600                # 10 хв lockout
+      rbac:
+        enabled: true
+        roles: [operator, admin, readonly, auditor]
+        strict_mode: true               # блокування при порушенні
+      rate_limiting:
+        enabled: true
+        requests_per_sec: 100           # жорсткий ліміт
+        burst: 200
+        auto_block: true                # автоматичне блокування IP
+        block_duration_sec: 300
+      monitoring:
+        enabled: true
+        alert_latency_sec: 2            # near-realtime
+        check_interval_sec: 10
+      logging:
+        enabled: true
+        audit_trail: true
+        retention_days: 90
+        tamper_proof: true              # write-once logging
+      backup:
+        enabled: true
+        interval_sec: 900               # кожні 15 хвилин
+        rollback_available: true
+        rollback_time_sec: 30           # 30с на rollback (автоматичний)
+      segmentation:
+        enabled: true
+        zones: [scada, corporate, dmz]  # 3 зони з strict firewall
+        strict_firewall: true
+        micro_segmentation: true        # device-level isolation available
+
+    modifiers:
+      credential_attack:
+        prob_multiplier: 0.3            # низька ймовірність (MFA + lockout)
+        impact_multiplier: 0.5          # strict RBAC → обмежений blast radius
+        mttd_multiplier: 0.3            # швидка детекція (2с latency)
+        mttr_multiplier: 0.4            # автоматичне блокування
+        threshold_multiplier: 0.6       # чутливіші правила
+        window_multiplier: 1.5          # ширше вікно (більше контексту)
+
+      availability_attack:
+        prob_multiplier: 0.2            # DDoS блокується auto rate limit
+        impact_multiplier: 0.3
+        mttd_multiplier: 0.4
+        mttr_multiplier: 0.3
+        threshold_multiplier: 0.5
+        window_multiplier: 2.0
+
+      integrity_attack:
+        prob_multiplier: 0.4
+        impact_multiplier: 0.4
+        mttd_multiplier: 0.5
+        mttr_multiplier: 0.5
+        threshold_multiplier: 0.7
+        window_multiplier: 1.5
+
+      outage:
+        prob_multiplier: 0.5
+        impact_multiplier: 0.3          # швидкий rollback → мінімальний impact
+        mttd_multiplier: 0.4
+        mttr_multiplier: 0.2            # автоматичний rollback за 30с
+        threshold_multiplier: 0.8
+        window_multiplier: 1.2
+
+# =============================================================================
+# Як PolicyEngine використовує ці multipliers (псевдокод):
+# =============================================================================
+#
+#   policy = load("standard")
+#   rule = load("RULE-BF-001")  # window=60, threshold=5
+#   threat = rule.threat_type   # "credential_attack"
+#   mod = policy.modifiers[threat]
+#
+#   effective_window    = rule.window_sec * mod.window_multiplier      # 60 * 1.5 = 90
+#   effective_threshold = rule.threshold * mod.threshold_multiplier    # 5 * 0.6 = 3
+#   effective_mttd      = base_mttd * mod.mttd_multiplier
+#   effective_mttr      = base_mttr * mod.mttr_multiplier
+#   attack_prob         = base_prob * mod.prob_multiplier
+#
+# =============================================================================

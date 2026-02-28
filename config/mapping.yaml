@@ -1,0 +1,227 @@
+# =============================================================================
+# mapping.yaml — Normalizer: raw log lines → Event Contract
+# =============================================================================
+#
+# Кожен «profile» відповідає одному типу лог-файлу.
+# Normalizer вибирає profile за file_pattern (regex на ім'я файлу).
+#
+# Поля profile:
+#   file_pattern        — regex, що матчить ім'я файлу (case-insensitive)
+#   line_regex          — regex з named groups для одного рядка
+#   timestamp_format    — iso_space | iso_t | syslog
+#   year_default        — (тільки syslog) рік, якого нема в рядку
+#   source_field        — named group → Event.source
+#   level_field         — named group → severity lookup (null = не має)
+#   message_field       — named group → основний текст
+#   severity_map        — level text → severity enum
+#   severity_from_message — severity enum → [substring patterns]
+#   event_rules         — [{pattern, event, tags}] — перший match виграє
+#   component_rules     — [{pattern, component}] — перший match виграє
+#   ip_regex            — regex з group(1) для IP
+#   actor_regex         — regex з group(1) для actor/user
+#   kv_regex            — regex з 2 groups (key, value) — findall
+# =============================================================================
+
+# ── Defaults (коли поле не вдалося витягти) ──────────────────────────────
+defaults:
+  source: "unknown"
+  component: "unknown"
+  event: "raw_log"
+  severity: "low"
+  actor: ""
+  ip: ""
+  key: "message"
+  value: ""
+  unit: ""
+  tags: ""
+  correlation_id: ""
+
+# ── Pipeline settings ────────────────────────────────────────────────────
+normalizer:
+  dedup:
+    enabled: true
+    window_sec: 2       # events з однаковими (timestamp,source,event,key,value) у межах вікна → skip
+
+# ── Profiles ─────────────────────────────────────────────────────────────
+profiles:
+
+  # ========================================================================
+  # API gateway logs
+  # Format: YYYY-MM-DD HH:MM:SS LEVEL host message
+  # Example: 2026-09-10 12:31:02 INFO api-gw-01 GET /api/v1/telemetry 200
+  # ========================================================================
+  api:
+    file_pattern: "api"
+    line_regex: '^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(?P<level>\w+)\s+(?P<host>\S+)\s+(?P<msg>.+)$'
+    timestamp_format: iso_space
+    source_field: host
+    level_field: level
+    message_field: msg
+
+    severity_map:
+      debug: low
+      info: low
+      notice: low
+      warn: medium
+      warning: medium
+      error: high
+      err: high
+      crit: critical
+      critical: critical
+      fatal: critical
+
+    ip_regex: '(?:from |src[= ]|client[= ])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+    actor_regex: 'user[= ](\S+)'
+
+    event_rules:
+      - pattern: '(?:GET|POST|PUT|DELETE|PATCH|HEAD)\s+/'
+        event: http_request
+        tags: "api,http"
+      - pattern: '(?i)rate.?limit|throttl|too many'
+        event: rate_exceeded
+        tags: "api,flood"
+      - pattern: '(?i)timeout|connection.*(refused|reset|closed|lost)|unreachable'
+        event: service_status
+        tags: "api,connectivity"
+      - pattern: '(?i)(?:db|database).*(error|fail|corrupt|integrity)'
+        event: db_error
+        tags: "api,db"
+      - pattern: '(?i)degraded|response time'
+        event: service_status
+        tags: "api,health"
+      - pattern: '.*'
+        event: raw_log
+        tags: "api"
+
+    component_rules:
+      - pattern: 'api|hmi|scada'
+        component: api
+      - pattern: 'gateway|gw|meter|rtu'
+        component: edge
+      - pattern: 'db|postgres'
+        component: db
+      - pattern: 'ui|web|nginx'
+        component: ui
+      - pattern: 'collector'
+        component: collector
+      - pattern: 'inverter|pv'
+        component: inverter
+      - pattern: 'switch|firewall|fw'
+        component: network
+
+  # ========================================================================
+  # Authentication / syslog logs
+  # Format: Mon DD HH:MM:SS host program[pid]: message
+  # Example: Sep 10 12:31:02 gateway-01 sshd[4821]: Failed password ...
+  # ========================================================================
+  auth:
+    file_pattern: "auth"
+    line_regex: '^(?P<month>\w{3})\s+(?P<day>\d{1,2})\s+(?P<time>\d{2}:\d{2}:\d{2})\s+(?P<host>\S+)\s+(?P<prog>\S+?)(?:\[(?P<pid>\d+)\])?:\s+(?P<msg>.+)$'
+    timestamp_format: syslog
+    year_default: 2026
+    source_field: host
+    level_field: null
+    message_field: msg
+
+    severity_map: {}
+
+    # Severity визначається з тексту повідомлення (бо syslog не має рівня)
+    severity_from_message:
+      critical: ["EMERG", "CRIT", "fatal", "FATAL", "escalation"]
+      high: ["fail", "denied", "invalid", "reject", "error", "dropping"]
+      medium: ["warning", "refused", "timeout", "expired"]
+      low: ["accept", "success", "opened", "closed", "session", "change"]
+
+    ip_regex: '(?:from |addr[= ])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+    actor_regex: '(?:for |user[= ])(\w+)'
+
+    event_rules:
+      - pattern: '(?i)fail|denied|invalid|reject'
+        event: auth_failure
+        tags: "auth,failure"
+      - pattern: '(?i)accept|success|granted|opened|association.*from'
+        event: auth_success
+        tags: "auth,success"
+      - pattern: '(?i)command|cmd|exec'
+        event: cmd_exec
+        tags: "auth,command"
+      - pattern: '(?i)disconnect|closed|session'
+        event: service_status
+        tags: "auth,session"
+      - pattern: '(?i)escalat|privilege|role.*changed'
+        event: cmd_exec
+        tags: "auth,security"
+      - pattern: '.*'
+        event: raw_log
+        tags: "auth"
+
+    component_rules:
+      - pattern: 'api|hmi|scada'
+        component: api
+      - pattern: 'gateway|gw|meter|rtu'
+        component: edge
+      - pattern: 'db|postgres'
+        component: db
+      - pattern: 'collector'
+        component: collector
+      - pattern: 'inverter'
+        component: inverter
+      - pattern: 'switch|firewall|fw'
+        component: network
+
+  # ========================================================================
+  # Edge / IoT device logs
+  # Format: YYYY-MM-DDTHH:MM:SSZ host LEVEL key=val key=val ...
+  # Example: 2026-09-10T12:31:02Z meter-17 TELEMETRY voltage=231.4V
+  # ========================================================================
+  edge:
+    file_pattern: "edge"
+    line_regex: '^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+(?P<host>\S+)\s+(?P<level>\w+)\s+(?P<msg>.+)$'
+    timestamp_format: iso_t
+    source_field: host
+    level_field: level
+    message_field: msg
+
+    severity_map:
+      info: low
+      telemetry: low
+      debug: low
+      warn: medium
+      warning: medium
+      error: high
+      alert: critical
+      crit: critical
+
+    kv_regex: '(\w+)=(\S+)'
+
+    ip_regex: '(?:from |addr[= ])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+    actor_regex: 'user[= ](\S+)'
+
+    event_rules:
+      - pattern: '(?i)voltage|power|frequency|temperature|current|energy|irradiance'
+        event: telemetry_read
+        tags: "edge,telemetry"
+      - pattern: '(?i)command|cmd|exec|read_register|write_register|write_coil'
+        event: cmd_exec
+        tags: "edge,command"
+      - pattern: '(?i)fail|error|fault|offline'
+        event: service_status
+        tags: "edge,fault"
+      - pattern: '(?i)connect|disconnect|online'
+        event: service_status
+        tags: "edge,connectivity"
+      - pattern: '.*'
+        event: raw_log
+        tags: "edge"
+
+    component_rules:
+      - pattern: 'gateway|gw'
+        component: edge
+      - pattern: 'meter'
+        component: edge
+      - pattern: 'rtu'
+        component: edge
+      - pattern: 'inverter|pv'
+        component: inverter
+      - pattern: 'collector'
+        component: collector

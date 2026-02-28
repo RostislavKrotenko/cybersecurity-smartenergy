@@ -1,0 +1,10 @@
+Feb 26 10:00:01 gateway-01 sshd[4821]: Accepted publickey for operator from 10.0.5.100 port 22 ssh2
+Feb 26 10:00:05 gateway-01 sshd[4822]: Failed password for admin from 10.0.5.55 port 22 ssh2
+Feb 26 10:00:08 gateway-01 sshd[4823]: Failed password for admin from 10.0.5.55 port 22 ssh2
+Feb 26 10:00:12 gateway-01 sshd[4824]: Failed password for admin from 10.0.5.55 port 22 ssh2
+Feb 26 10:00:15 auth-server sshd[1001]: Accepted password for operator from 10.0.5.100 port 443
+Feb 26 10:00:20 gateway-01 sshd[4825]: Failed password for root from 10.0.5.55 port 22 ssh2
+Feb 26 10:00:25 gateway-01 sshd[4826]: Failed password for root from 10.0.5.55 port 22 ssh2
+Feb 26 10:00:30 auth-server sshd[1002]: Accepted publickey for monitor from 10.0.5.10 port 443 ssh2
+Feb 26 10:00:35 gateway-01 sshd[4827]: Connection closed by 10.0.5.55 port 22
+Feb 26 10:00:40 auth-server sshd[1003]: Accepted mfa for admin from 10.0.5.200 port 443

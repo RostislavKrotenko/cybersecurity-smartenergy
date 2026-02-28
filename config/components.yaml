@@ -1,0 +1,163 @@
+# =============================================================================
+# components.yaml — SmartEnergy Infrastructure Components
+# =============================================================================
+# Кожен компонент визначає:
+#   type         — функціональна роль у інфраструктурі
+#   criticality  — high | medium | low (вплив відмови на систему)
+#   zone         — мережева зона (scada / corporate / dmz)
+#   instances     — список конкретних хостів/пристроїв
+#   depends_on   — залежності (які компоненти потрібні для роботи)
+#   ports        — основні порти/протоколи
+# =============================================================================
+
+components:
+
+  # ---------------------------------------------------------------------------
+  # EDGE — IoT-шлюзи, лічильники, RTU (периметр SCADA)
+  # ---------------------------------------------------------------------------
+  edge:
+    type: iot_gateway
+    criticality: high
+    zone: scada
+    description: "IoT gateways, smart meters, RTU — збір телеметрії на периметрі"
+    instances:
+      - id: gateway-01
+        ip: 10.0.1.1
+        protocols: [modbus-tcp, mqtt]
+      - id: meter-17
+        ip: 10.0.1.17
+        protocols: [dlms-cosem, mqtt]
+      - id: meter-22
+        ip: 10.0.1.22
+        protocols: [dlms-cosem, mqtt]
+      - id: rtu-05
+        ip: 10.0.1.50
+        protocols: [dnp3, modbus-tcp]
+    depends_on: [network]
+    ports: [502, 1883, 4059]
+
+  # ---------------------------------------------------------------------------
+  # API — REST API gateway, SCADA HMI backend
+  # ---------------------------------------------------------------------------
+  api:
+    type: application_server
+    criticality: high
+    zone: dmz
+    description: "REST API та SCADA HMI — точка управління і моніторингу"
+    instances:
+      - id: api-gw-01
+        ip: 10.0.5.1
+        protocols: [https, wss]
+      - id: scada-hmi-01
+        ip: 10.0.5.10
+        protocols: [https]
+    depends_on: [db, network, edge]
+    ports: [443, 8443]
+
+  # ---------------------------------------------------------------------------
+  # DB — база даних конфігурацій і телеметрії
+  # ---------------------------------------------------------------------------
+  db:
+    type: database
+    criticality: high
+    zone: corporate
+    description: "Primary PostgreSQL — конфігурації, телеметрія, журнал аудиту"
+    instances:
+      - id: db-primary
+        ip: 10.0.3.1
+        protocols: [postgresql]
+      - id: db-replica
+        ip: 10.0.3.2
+        protocols: [postgresql]
+    depends_on: [network]
+    ports: [5432]
+
+  # ---------------------------------------------------------------------------
+  # UI — веб-інтерфейс оператора
+  # ---------------------------------------------------------------------------
+  ui:
+    type: web_frontend
+    criticality: medium
+    zone: dmz
+    description: "Оператор / адмін веб-дашборд"
+    instances:
+      - id: ui-web-01
+        ip: 10.0.5.200
+        protocols: [https]
+    depends_on: [api]
+    ports: [443]
+
+  # ---------------------------------------------------------------------------
+  # COLLECTOR — агрегатор телеметрії (ETL-шар)
+  # ---------------------------------------------------------------------------
+  collector:
+    type: data_collector
+    criticality: medium
+    zone: corporate
+    description: "Збір, агрегація та нормалізація телеметрії від edge-пристроїв"
+    instances:
+      - id: collector-01
+        ip: 10.0.4.1
+        protocols: [mqtt, kafka]
+      - id: collector-02
+        ip: 10.0.4.2
+        protocols: [mqtt, kafka]
+    depends_on: [edge, db, network]
+    ports: [1883, 9092]
+
+  # ---------------------------------------------------------------------------
+  # INVERTER — сонячні інвертори / контролери батарей
+  # ---------------------------------------------------------------------------
+  inverter:
+    type: power_device
+    criticality: high
+    zone: scada
+    description: "Інвертори (PV), контролери батарей — управління потужністю"
+    instances:
+      - id: inverter-01
+        ip: 10.0.2.1
+        protocols: [sunspec-modbus, mqtt]
+      - id: inverter-02
+        ip: 10.0.2.2
+        protocols: [sunspec-modbus, mqtt]
+      - id: inverter-03
+        ip: 10.0.2.3
+        protocols: [sunspec-modbus, mqtt]
+    depends_on: [network, collector]
+    ports: [502, 1883]
+
+  # ---------------------------------------------------------------------------
+  # NETWORK — мережеве обладнання (switches, firewall)
+  # ---------------------------------------------------------------------------
+  network:
+    type: network_infrastructure
+    criticality: high
+    zone: corporate
+    description: "Core switches, firewall, VLAN segmentation"
+    instances:
+      - id: switch-core-01
+        ip: 10.0.6.1
+        protocols: [snmp, ssh]
+      - id: firewall-01
+        ip: 10.0.6.254
+        protocols: [syslog, ssh]
+    depends_on: []          # кореневий компонент, без залежностей
+    ports: [161, 22, 514]
+
+# =============================================================================
+# Зони мережі та дозволена комунікація
+# =============================================================================
+zones:
+  scada:
+    description: "OT-мережа: edge, inverter, RTU"
+    allowed_to: [corporate]      # через firewall
+    blocked_from: [dmz]          # прямий доступ заборонено
+
+  corporate:
+    description: "IT-мережа: db, collector, network mgmt"
+    allowed_to: [dmz, scada]
+
+  dmz:
+    description: "Демілітаризована зона: api, ui (зовнішній доступ)"
+    allowed_to: [corporate]
+    blocked_from: [scada]

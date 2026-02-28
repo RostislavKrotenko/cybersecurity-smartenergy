@@ -1,0 +1,220 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   SmartEnergy Security Dashboard — Dark Theme Design System
+   ════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+    /* Surface */
+    --bg-primary:       #0d1117;
+    --bg-surface:       #161b22;
+    --bg-surface-hover: #1c2333;
+    --bg-card:          #1c2333;
+    --border:           rgba(128, 128, 128, 0.15);
+    --border-strong:    rgba(128, 128, 128, 0.30);
+
+    /* Text */
+    --text-primary:     #e6edf3;
+    --text-secondary:   #8b949e;
+    --text-muted:       #6e7681;
+
+    /* Policy accents */
+    --accent-baseline:  #f59e0b;
+    --accent-minimal:   #ef4444;
+    --accent-standard:  #22c55e;
+
+    /* Spacing tokens */
+    --sp-4:   4px;
+    --sp-8:   8px;
+    --sp-12:  12px;
+    --sp-16:  16px;
+    --sp-24:  24px;
+
+    /* Radius */
+    --radius-sm:  6px;
+    --radius-md:  10px;
+    --radius-lg:  14px;
+
+    /* Typography */
+    --font-body: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+}
+
+/* ── Global resets ─────────────────────────────────────────────────────────── */
+
+.block-container {
+    padding-top: 24px !important;
+    padding-bottom: 16px !important;
+    max-width: 1280px;
+}
+
+/* Remove excess vertical gaps Streamlit injects */
+div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"],
+div[data-testid="stVerticalBlock"] > div[style] {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+div[data-testid="stHorizontalBlock"] {
+    gap: 16px !important;
+}
+
+/* ── Page header ───────────────────────────────────────────────────────────── */
+
+.page-title {
+    font-family: var(--font-body);
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 4px 0;
+    line-height: 1.3;
+}
+
+.page-subtitle {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    margin: 0 0 24px 0;
+    line-height: 1.4;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────────────── */
+
+section[data-testid="stSidebar"] > div:first-child {
+    padding-top: 16px;
+}
+section[data-testid="stSidebar"] .stDivider {
+    margin: 12px 0;
+}
+
+.sidebar-brand {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0;
+    letter-spacing: 0.01em;
+}
+
+/* Sidebar dropdowns z-index fix */
+section[data-testid="stSidebar"] [data-baseweb="popover"],
+[data-baseweb="popover"] {
+    z-index: 9999 !important;
+}
+
+.refresh-timestamp {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-top: var(--sp-8);
+}
+
+/* ── Policy KPI cards ──────────────────────────────────────────────────────── */
+
+.policy-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 0;
+    overflow: hidden;
+    min-height: 120px;
+}
+
+.policy-card-header {
+    padding: var(--sp-8) var(--sp-16);
+    font-size: 0.82rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: #fff;
+}
+
+.card-accent-baseline .policy-card-header {
+    background: var(--accent-baseline);
+    color: #1a1a1a;
+}
+.card-accent-minimal .policy-card-header {
+    background: var(--accent-minimal);
+}
+.card-accent-standard .policy-card-header {
+    background: var(--accent-standard);
+}
+
+.policy-card-body {
+    padding: var(--sp-12) var(--sp-16) var(--sp-16);
+}
+
+.policy-metric-main {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.2;
+    margin-bottom: var(--sp-4);
+}
+
+.policy-metric-label {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--sp-8);
+}
+
+.policy-metric-row {
+    display: flex;
+    gap: var(--sp-16);
+    margin-top: var(--sp-4);
+}
+
+.policy-metric-item {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+/* ── Section spacing ───────────────────────────────────────────────────────── */
+
+.section-gap {
+    margin-top: var(--sp-24);
+}
+
+.section-label {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 var(--sp-8) 0;
+    padding-bottom: var(--sp-4);
+    border-bottom: 1px solid var(--border);
+}
+
+/* ── DataFrames ────────────────────────────────────────────────────────────── */
+
+div[data-testid="stDataFrame"] {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+
+/* ── Charts (Plotly) ───────────────────────────────────────────────────────── */
+
+.js-plotly-plot .modebar { display: none !important; }
+.js-plotly-plot:hover .modebar { display: flex !important; }
+
+/* ── No-data message ───────────────────────────────────────────────────────── */
+
+.no-data-box {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 48px 24px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    margin: 48px auto;
+    max-width: 480px;
+}
+
+.no-data-box strong {
+    display: block;
+    font-size: 1.05rem;
+    color: var(--text-primary);
+    margin-bottom: var(--sp-8);
+}
+
+/* ── Tabs ──────────────────────────────────────────────────────────────────── */
+
+div[data-testid="stTabs"] button[data-baseweb="tab"] {
+    font-size: 0.92rem;
+    font-weight: 500;
+    padding: 8px 16px;
+}

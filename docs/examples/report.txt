@@ -1,0 +1,46 @@
+============================================================
+  SmartEnergy Cyber-Resilience Report
+============================================================
+
+--- Policy: minimal ---
+  Availability:     95.39%
+  Downtime:         1.1058 hr
+  Mean MTTD:        1.83 min
+  Mean MTTR:        13.04 min
+  Incidents total:  13
+  By severity:      critical=3, high=4, medium=6
+  By threat type:   availability_attack=1, credential_attack=1, integrity_attack=7, outage=4
+
+--- Policy: baseline ---
+  Availability:     98.37%
+  Downtime:         0.3906 hr
+  Mean MTTD:        0.69 min
+  Mean MTTR:        4.07 min
+  Incidents total:  15
+  By severity:      critical=3, high=4, medium=8
+  By threat type:   availability_attack=1, credential_attack=1, integrity_attack=9, outage=4
+
+--- Policy: standard ---
+  Availability:     99.39%
+  Downtime:         0.1453 hr
+  Mean MTTD:        0.32 min
+  Mean MTTR:        1.55 min
+  Incidents total:  14
+  By severity:      critical=3, high=4, medium=7
+  By threat type:   availability_attack=1, credential_attack=1, integrity_attack=8, outage=4
+
+--- Comparison ---
+  Best availability:  standard (99.39%)
+  Worst availability: minimal (95.39%)
+  Best MTTR:          standard (1.55 min)
+  Worst MTTR:         minimal (13.04 min)
+
+--- Top 3 Most Effective Control Sets ---
+  1. standard (effectiveness=0.625, MTTD×0.40, MTTR×0.35)
+     Controls: mfa, rbac, rate_limiting, monitoring, logging, backup, segmentation
+  2. baseline (effectiveness=0.000, MTTD×1.00, MTTR×1.00)
+     Controls: mfa, rbac, rate_limiting, monitoring, logging, backup, segmentation
+  3. minimal (effectiveness=-1.688, MTTD×2.25, MTTR×3.12)
+     Controls: monitoring, logging
+
+============================================================

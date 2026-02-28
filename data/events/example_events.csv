@@ -1,0 +1,26 @@
+timestamp,source,component,event,actor,ip,key,value,unit,severity,tags,correlation_id
+2026-02-26T10:00:00Z,meter-17,edge,telemetry_read,system,10.0.1.17,voltage,230.1,V,low,telemetry;periodic,
+2026-02-26T10:00:01Z,meter-22,edge,telemetry_read,system,10.0.1.22,voltage,229.8,V,low,telemetry;periodic,
+2026-02-26T10:00:02Z,inverter-03,inverter,power_output,system,10.0.2.3,power_kw,48.7,kW,low,telemetry;periodic,
+2026-02-26T10:00:05Z,api-gw-01,api,http_request,operator,10.0.5.100,endpoint,/api/v1/meters,, low,access;normal,
+2026-02-26T10:00:10Z,api-gw-01,api,auth_success,operator,10.0.5.100,method,password,,low,auth;success,
+2026-02-26T10:00:15Z,gateway-01,edge,auth_failure,unknown,192.168.8.55,username,admin,,medium,auth;failure,COR-BF-001
+2026-02-26T10:00:16Z,gateway-01,edge,auth_failure,unknown,192.168.8.55,username,admin,,medium,auth;failure,COR-BF-001
+2026-02-26T10:00:17Z,gateway-01,edge,auth_failure,unknown,192.168.8.55,username,root,,medium,auth;failure,COR-BF-001
+2026-02-26T10:00:18Z,gateway-01,edge,auth_failure,unknown,192.168.8.55,username,admin,,medium,auth;failure,COR-BF-001
+2026-02-26T10:00:19Z,gateway-01,edge,auth_failure,unknown,192.168.8.55,username,operator,,high,auth;failure;escalated,COR-BF-001
+2026-02-26T10:00:30Z,api-gw-01,api,rate_exceeded,unknown,203.0.113.10,requests_per_sec,1850,req/s,high,network;flood,COR-DDOS-001
+2026-02-26T10:00:31Z,api-gw-01,api,rate_exceeded,unknown,203.0.113.11,requests_per_sec,2100,req/s,high,network;flood,COR-DDOS-001
+2026-02-26T10:00:32Z,api-gw-01,api,rate_exceeded,unknown,203.0.113.12,requests_per_sec,1940,req/s,critical,network;flood;escalated,COR-DDOS-001
+2026-02-26T10:00:45Z,meter-17,edge,telemetry_read,system,10.0.1.17,voltage,998.3,V,low,telemetry;periodic,COR-SPOOF-001
+2026-02-26T10:00:46Z,meter-17,edge,telemetry_read,system,10.0.1.17,voltage,1002.7,V,low,telemetry;periodic,COR-SPOOF-001
+2026-02-26T10:00:47Z,meter-17,edge,telemetry_read,system,10.0.1.17,power_kw,-500.0,kW,medium,telemetry;anomaly,COR-SPOOF-001
+2026-02-26T10:01:00Z,scada-hmi-01,api,cmd_exec,readonly,10.0.5.88,command,breaker_open,,critical,command;unauthorized,COR-UCMD-001
+2026-02-26T10:01:01Z,scada-hmi-01,api,cmd_exec,readonly,10.0.5.88,command,set_voltage,,critical,command;unauthorized,COR-UCMD-001
+2026-02-26T10:01:15Z,db-primary,db,service_status,system,10.0.3.1,status,degraded,,high,system;health,COR-OUT-001
+2026-02-26T10:01:20Z,db-primary,db,db_error,system,10.0.3.1,error_type,integrity_violation,,critical,system;db;corruption,COR-OUT-001
+2026-02-26T10:01:25Z,db-primary,db,service_status,system,10.0.3.1,status,down,,critical,system;outage,COR-OUT-001
+2026-02-26T10:01:30Z,collector-02,collector,telemetry_read,system,10.0.4.2,power_kw,51.2,kW,low,telemetry;periodic,
+2026-02-26T10:01:35Z,ui-web-01,ui,http_request,admin,10.0.5.200,endpoint,/dashboard,,low,access;normal,
+2026-02-26T10:01:40Z,switch-core-01,network,port_status,system,10.0.6.1,port,ge-0/0/1,,low,network;topology,
+2026-02-26T10:01:45Z,inverter-03,inverter,power_output,system,10.0.2.3,power_kw,49.1,kW,low,telemetry;periodic,

@@ -1,0 +1,4 @@
+policy,availability_pct,total_downtime_hr,mean_mttd_min,mean_mttr_min,incidents_total,incidents_critical,incidents_high,incidents_medium,incidents_low,by_credential_attack,by_availability_attack,by_integrity_attack,by_outage
+minimal,95.39,1.1058,1.83,13.04,13,3,4,6,0,1,1,7,4
+baseline,98.37,0.3906,0.69,4.07,15,3,4,8,0,1,1,9,4
+standard,99.39,0.1453,0.32,1.55,14,3,4,7,0,1,1,8,4

@@ -1,0 +1,10 @@
+2026-02-26 10:00:01 INFO api-gw-01 GET /api/v1/telemetry 200 user=readonly from 10.0.5.1
+2026-02-26 10:00:05 INFO api-gw-01 GET /api/v1/inverters 200 user=operator from 10.0.5.100
+2026-02-26 10:00:10 WARN api-gw-01 POST /api/v1/control 403 Forbidden user=unknown from 10.0.5.55
+2026-02-26 10:00:12 INFO api-gw-01 GET /api/v1/meters 200 user=readonly from 10.0.5.1
+2026-02-26 10:00:15 ERROR api-gw-01 GET /api/v1/telemetry 500 Internal Server Error from 10.0.5.1
+2026-02-26 10:00:20 INFO api-gw-01 GET /api/v1/health 200 user=monitor from 10.0.5.10
+2026-02-26 10:00:25 WARN api-gw-01 Rate limit exceeded for 10.0.5.55 on /api/v1/control
+2026-02-26 10:00:30 INFO api-gw-01 GET /api/v1/inverters 200 user=operator from 10.0.5.100
+2026-02-26 10:00:35 INFO api-gw-01 DELETE /api/v1/sessions/old 204 user=admin from 10.0.5.200
+2026-02-26 10:00:40 INFO api-gw-01 GET /api/v1/telemetry 200 user=readonly from 10.0.5.1

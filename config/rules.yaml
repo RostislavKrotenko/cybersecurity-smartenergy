@@ -1,0 +1,259 @@
+# =============================================================================
+# rules.yaml — Detection Rules (Analyzer → Detector)
+# =============================================================================
+# Кожне правило:
+#   id             — унікальний ідентифікатор
+#   name           — людська назва
+#   threat_type    — credential_attack | availability_attack | integrity_attack | outage
+#   description    — що детектується
+#   match          — умови спрацьовування (event type, поля, порогові значення)
+#   window_sec     — вікно часу для агрегації подій
+#   threshold      — мінімальна кількість подій у вікні для спрацьовування
+#   severity       — severity алерту при спрацьовуванні
+#   confidence     — базова впевненість правила (0.0 — 1.0)
+#   response_hint  — рекомендована дія (використовує Responder)
+#
+# Policy Engine може модифікувати window/threshold/severity залежно від
+# політики (baseline/minimal/standard).
+# =============================================================================
+
+rules:
+
+  # ===========================================================================
+  # RULE 1: Brute-Force Detection
+  # ===========================================================================
+  - id: RULE-BF-001
+    name: "Brute-Force Authentication"
+    threat_type: credential_attack
+    description: >
+      Детекція серії невдалих аутентифікацій від одного IP до одного source
+      за обмежений час. Порогові значення параметризовані.
+    enabled: true
+
+    match:
+      event: auth_failure
+      group_by: [ip, source]            # групування: один IP → один target
+
+    window_sec: 60                       # вікно: 60 секунд
+    threshold: 5                         # ≥ 5 невдач за вікно → алерт
+
+    severity: high
+    confidence: 0.85
+
+    # Додаткові підправила
+    sub_rules:
+      - id: RULE-BF-002
+        name: "Brute-Force Success After Failures"
+        description: "Успішний логін після серії невдач — можливий компроміс"
+        match:
+          event: auth_success
+          precondition: "RULE-BF-001 triggered within 300 sec for same ip"
+        severity: critical
+        confidence: 0.95
+        response_hint: block_ip_and_revoke_session
+
+    response_hint: block_ip
+
+  # ===========================================================================
+  # RULE 2: DDoS / API Flood
+  # ===========================================================================
+  - id: RULE-DDOS-001
+    name: "DDoS / API Rate Flood"
+    threat_type: availability_attack
+    description: >
+      Масивне перевищення rate limit від кількох IP-адрес.
+      Агрегація по target source.
+    enabled: true
+
+    match:
+      event: rate_exceeded
+      group_by: [source]                 # агрегація по цільовому сервісу
+
+    window_sec: 30
+    threshold: 10                        # ≥ 10 rate_exceeded подій за 30с
+
+    severity: critical
+    confidence: 0.90
+
+    # Ескалація: якщо сервіс деградував
+    sub_rules:
+      - id: RULE-DDOS-002
+        name: "DDoS with Service Impact"
+        description: "Rate flood + service degradation/down — confirmed DDoS"
+        match:
+          event: service_status
+          key: status
+          values: [degraded, down]
+          precondition: "RULE-DDOS-001 triggered within 120 sec for same source"
+        severity: critical
+        confidence: 0.98
+        response_hint: activate_ddos_mitigation
+
+    response_hint: rate_limit_ip_range
+
+  # ===========================================================================
+  # RULE 3: Telemetry Spoofing / Anomaly
+  # ===========================================================================
+  - id: RULE-SPOOF-001
+    name: "Telemetry Value Anomaly"
+    threat_type: integrity_attack
+    description: >
+      Значення телеметрії виходять за фізично допустимі межі або
+      демонструють різкий стрибок (delta) порівняно з попереднім зчитуванням.
+    enabled: true
+
+    match:
+      event: telemetry_read
+      group_by: [source, key]
+
+    # Статичні межі (фізичні обмеження)
+    bounds:
+      voltage:
+        min: 180.0
+        max: 280.0
+        unit: V
+      power_kw:
+        min: -10.0                       # мінімальне (невелика зворотна подача)
+        max: 100.0
+        unit: kW
+      frequency_hz:
+        min: 47.0
+        max: 53.0
+        unit: Hz
+      temperature_c:
+        min: -20.0
+        max: 120.0
+        unit: "°C"
+
+    # Динамічні межі (delta від попереднього значення)
+    delta:
+      voltage: 50.0                      # стрибок > 50V — аномалія
+      power_kw: 30.0                     # стрибок > 30kW
+      frequency_hz: 1.0                  # стрибок > 1Hz
+      temperature_c: 15.0               # стрибок > 15°C
+
+    window_sec: 60
+    threshold: 3                         # ≥ 3 аномальних зчитувань за 60с
+
+    severity: medium
+    confidence: 0.75
+
+    sub_rules:
+      - id: RULE-SPOOF-002
+        name: "Sustained Telemetry Spoofing"
+        description: "Тривала аномалія (> 5 подій) — підтверджений спуфінг"
+        match:
+          precondition: "RULE-SPOOF-001 count >= 5 within 120 sec"
+        severity: high
+        confidence: 0.90
+        response_hint: isolate_device
+
+    response_hint: flag_for_review
+
+  # ===========================================================================
+  # RULE 4: Unauthorized Command Execution
+  # ===========================================================================
+  - id: RULE-UCMD-001
+    name: "Unauthorized Command Execution"
+    threat_type: integrity_attack
+    description: >
+      Команда управління (cmd_exec) виконана актором, який не має прав:
+      роль ∉ allowed_roles або actor = unknown/guest.
+    enabled: true
+
+    match:
+      event: cmd_exec
+      actor_not_in: [operator, admin]    # тільки operator і admin мають права
+      group_by: [source, ip]
+
+    window_sec: 120
+    threshold: 1                         # навіть 1 несанкціонована команда = алерт
+
+    severity: critical
+    confidence: 0.95
+
+    # Критичні команди мають підвищений пріоритет
+    critical_commands:
+      - breaker_open
+      - breaker_close
+      - emergency_shutdown
+      - firmware_update
+      - set_voltage
+
+    sub_rules:
+      - id: RULE-UCMD-002
+        name: "Multiple Unauthorized Commands"
+        description: "Кілька несанкціонованих команд — ймовірна APT"
+        match:
+          precondition: "RULE-UCMD-001 count >= 3 within 300 sec"
+        severity: critical
+        confidence: 0.99
+        response_hint: isolate_network_segment
+
+    response_hint: block_actor_and_alert
+
+  # ===========================================================================
+  # RULE 5: Service Outage / DB Corruption
+  # ===========================================================================
+  - id: RULE-OUT-001
+    name: "Service Outage Detection"
+    threat_type: outage
+    description: >
+      Сервіс перейшов у стан degraded або down (heartbeat / service_status).
+    enabled: true
+
+    match:
+      event: service_status
+      key: status
+      values: [degraded, down]
+      group_by: [source]
+
+    window_sec: 60
+    threshold: 1                         # будь-який down = алерт
+
+    severity: high                       # ескалюється до critical при status=down
+    severity_override:
+      - { value: down, severity: critical }
+
+    confidence: 0.90
+
+    response_hint: notify_oncall
+
+  - id: RULE-OUT-002
+    name: "Database Corruption Detection"
+    threat_type: outage
+    description: >
+      Помилки цілісності БД (integrity_violation, checksum_mismatch, wal_corruption).
+    enabled: true
+
+    match:
+      event: db_error
+      key: error_type
+      values: [integrity_violation, checksum_mismatch, wal_corruption]
+      group_by: [source]
+
+    window_sec: 120
+    threshold: 2                         # ≥ 2 db_error за 2 хв
+
+    severity: critical
+    confidence: 0.92
+
+    sub_rules:
+      - id: RULE-OUT-003
+        name: "Cascading Outage (DB → Services)"
+        description: "DB corruption followed by service outage — каскадна відмова"
+        match:
+          precondition: "RULE-OUT-002 triggered AND RULE-OUT-001 triggered within 120 sec"
+        severity: critical
+        confidence: 0.98
+        response_hint: initiate_rollback_and_failover
+
+    response_hint: initiate_backup_rollback
+
+# =============================================================================
+# Глобальні параметри детектора
+# =============================================================================
+detector_defaults:
+  max_alerts_per_minute: 100             # throttling
+  dedup_window_sec: 10                   # дедуплікація однакових алертів
+  min_confidence: 0.5                    # ігнорувати алерти з confidence < 0.5

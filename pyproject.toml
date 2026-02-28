@@ -1,0 +1,91 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smartenergy-cyber"
+version = "0.1.0"
+description = "SmartEnergy Cyber-Resilience Analyzer — master's thesis prototype"
+requires-python = ">=3.11"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+analyzer = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+    "jinja2>=3.1",
+]
+dashboard = [
+    "streamlit>=1.30",
+    "plotly>=5.18",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+smartenergy-emulator = "src.emulator.cli:main"
+smartenergy-analyzer = "src.analyzer.cli:main"
+smartenergy-normalizer = "src.normalizer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",   # line-length
+    "SIM108", # ternary
+    "RUF012", # mutable class default
+    "B008",   # default arg in argparse
+    "UP007",  # X | Y union syntax
+    "RUF001", # ambiguous unicode in string (intentional: ×, →, etc.)
+    "RUF002", # ambiguous unicode in docstring
+    "B905",   # zip-without-strict (Python 3.11 compat)
+    "B007",   # unused loop variable
+    "UP042",  # replace-str-enum
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "-ra",
+]
+markers = [
+    "slow: marks tests that need the full emulator run (deselect with -m 'not slow')",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

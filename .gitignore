@@ -1,0 +1,58 @@
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# ── Virtual environments ─────────────────────────────────────────────────
+.venv/
+venv/
+ENV/
+
+# ── Testing / Linting caches ─────────────────────────────────────────────
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ── OS artefacts ──────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE / Editor ──────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Secrets / Environment ────────────────────────────────────────────────
+.env
+seed.env
+*.pem
+*.key
+
+# ── Generated output (reproducible via `make analyze`) ───────────────────
+out/
+!out/.gitkeep
+
+# ── Generated / large data (reproducible via `make generate`) ────────────
+data/events.csv
+data/events_live.jsonl
+data/_uploaded_events.jsonl
+data/events_normalized.csv
+data/live/
+
+# ── Logs (generated at runtime) ──────────────────────────────────────────
+logs/live/
+!logs/sample_*.log
+!logs/.gitkeep
+
+# ── Docker ────────────────────────────────────────────────────────────────
+*.tar
+docker-compose.override.yml

@@ -1,0 +1,10 @@
+2026-02-26T10:00:01Z meter-22 voltage=241.82V severity=low telemetry_read from 10.0.1.22
+2026-02-26T10:00:05Z meter-17 voltage=230.10V severity=low telemetry_read from 10.0.1.17
+2026-02-26T10:00:10Z inverter-02 temperature_c=42.03C severity=low telemetry_read from 10.0.2.2
+2026-02-26T10:00:15Z meter-22 voltage=242.50V severity=low telemetry_read from 10.0.1.22
+2026-02-26T10:00:20Z inverter-03 power_kw=48.70kW severity=low power_output from 10.0.2.3
+2026-02-26T10:00:25Z meter-17 voltage=229.80V severity=low telemetry_read from 10.0.1.17
+2026-02-26T10:00:30Z inverter-02 temperature_c=43.10C severity=low telemetry_read from 10.0.2.2
+2026-02-26T10:00:35Z meter-22 voltage=240.00V severity=low telemetry_read from 10.0.1.22
+2026-02-26T10:00:40Z inverter-03 power_kw=49.20kW severity=low power_output from 10.0.2.3
+2026-02-26T10:00:45Z meter-17 voltage=231.00V severity=low telemetry_read from 10.0.1.17

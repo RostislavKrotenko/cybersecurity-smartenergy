@@ -1,0 +1,148 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  SmartEnergy Cyber-Resilience Analyzer — Docker Compose
+# ─────────────────────────────────────────────────────────────────────────────
+#  Profiles:
+#    demo   — one-shot: emulator → analyzer → UI  (batch CSV)
+#    live   — continuous: emulator-live + analyzer-live + UI (JSONL streaming)
+#
+#  Quick start (live):
+#    docker compose --profile live up --build
+#
+#  Quick start (batch demo):
+#    make demo
+# ─────────────────────────────────────────────────────────────────────────────
+
+x-common: &common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  volumes:
+    - ./data:/work/data
+    - ./out:/work/out
+    - ./config:/work/config
+    - ./logs:/work/logs
+  env_file: []
+
+services:
+  # ── 1. Emulator — generate synthetic events.csv (batch) ─────────────────
+  emulator:
+    <<: *common
+    container_name: smartenergy-emulator
+    command: >-
+      python -m src.emulator
+        --seed 42
+        --out data/events.csv
+        --log-level INFO
+    profiles: ["generate", "demo"]
+
+  # ── 2. Normalizer — raw logs → normalised events.csv ────────────────────
+  normalizer:
+    <<: *common
+    container_name: smartenergy-normalizer
+    command: >-
+      python -m src.normalizer
+        --inputs "logs/*.log"
+        --mapping config/mapping.yaml
+        --out data/events.csv
+        --quarantine out/quarantine.csv
+        --log-level INFO
+    profiles: ["normalize"]
+
+  # ── 3. Analyzer — events.csv → results, incidents, plots (batch) ────────
+  analyzer:
+    <<: *common
+    container_name: smartenergy-analyzer
+    command: >-
+      python -m src.analyzer
+        --input data/events.csv
+        --out-dir out
+        --policies all
+        --horizon-days 1
+        --log-level INFO
+    depends_on:
+      emulator:
+        condition: service_completed_successfully
+        required: false
+    profiles: ["analyze", "demo"]
+
+  # ── 4. UI — Streamlit dashboard ─────────────────────────────────────────
+  ui:
+    <<: *common
+    container_name: smartenergy-ui
+    command: >-
+      streamlit run src/dashboard/app.py
+        --server.headless true
+        --server.port 8501
+        --server.address 0.0.0.0
+        --browser.gatherUsageStats false
+    ports:
+      - "8501:8501"
+    depends_on:
+      analyzer:
+        condition: service_completed_successfully
+        required: false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    profiles: ["ui", "demo"]
+
+  # ── 5. Live Emulator — infinite JSONL stream + raw logs ─────────────────
+  emulator-live:
+    <<: *common
+    container_name: smartenergy-emulator-live
+    command: >-
+      python -m src.emulator
+        --live
+        --live-interval-ms 500
+        --out data/live/events.jsonl
+        --raw-log-dir logs/live
+        --seed 42
+        --log-level INFO
+    restart: unless-stopped
+    profiles: ["live"]
+
+  # ── 6. Live Analyzer — watch mode, tail JSONL ──────────────────────────
+  analyzer-live:
+    <<: *common
+    container_name: smartenergy-analyzer-live
+    command: >-
+      python -m src.analyzer
+        --input data/live/events.jsonl
+        --watch
+        --poll-interval-ms 1000
+        --out-dir out
+        --policies all
+        --log-level INFO
+    depends_on:
+      emulator-live:
+        condition: service_started
+    restart: unless-stopped
+    profiles: ["live"]
+
+  # ── 7. Live UI — live-only dashboard ───────────────────────────────────
+  ui-live:
+    <<: *common
+    container_name: smartenergy-ui-live
+    command: >-
+      streamlit run src/dashboard/app.py
+        --server.headless true
+        --server.port 8501
+        --server.address 0.0.0.0
+        --browser.gatherUsageStats false
+    ports:
+      - "8501:8501"
+    depends_on:
+      analyzer-live:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    profiles: ["live"]
