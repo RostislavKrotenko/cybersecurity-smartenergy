@@ -42,6 +42,7 @@ def _diff_sec(a: str, b: str) -> float:
 #  Public API
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def detect(
     events: list[Event],
     rules_cfg: dict[str, Any],
@@ -82,9 +83,7 @@ def detect(
         # Apply policy multipliers to window and threshold
         mod = pm.get(threat, {})
         window = rule.get("window_sec", 60) * mod.get("window_multiplier", 1.0)
-        threshold = max(1, round(
-            rule.get("threshold", 1) * mod.get("threshold_multiplier", 1.0)
-        ))
+        threshold = max(1, round(rule.get("threshold", 1) * mod.get("threshold_multiplier", 1.0)))
 
         matched = [e for e in events if e.event == match_event]
 
@@ -114,6 +113,7 @@ def detect(
 #  Rule implementations
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _detect_brute_force(
     auth_failures: list[Event],
     rule: dict,
@@ -137,26 +137,26 @@ def _detect_brute_force(
             buf.append(e)
             if len(buf) >= threshold:
                 counter += 1
-                alerts.append(Alert(
-                    alert_id=f"ALR-{counter:04d}",
-                    rule_id=rule["id"],
-                    rule_name=rule["name"],
-                    threat_type=rule["threat_type"],
-                    severity=rule.get("severity", "high"),
-                    confidence=rule.get("confidence", 0.85),
-                    timestamp=buf[0].timestamp,
-                    component=evts[0].component,
-                    source=source,
-                    description=(
-                        f"Brute-force: {len(buf)} auth failures from {ip} "
-                        f"to {source} within {window:.0f}s"
-                    ),
-                    event_count=len(buf),
-                    event_ids=";".join(
-                        e.correlation_id or e.timestamp for e in buf
-                    ),
-                    response_hint=rule.get("response_hint", ""),
-                ))
+                alerts.append(
+                    Alert(
+                        alert_id=f"ALR-{counter:04d}",
+                        rule_id=rule["id"],
+                        rule_name=rule["name"],
+                        threat_type=rule["threat_type"],
+                        severity=rule.get("severity", "high"),
+                        confidence=rule.get("confidence", 0.85),
+                        timestamp=buf[0].timestamp,
+                        component=evts[0].component,
+                        source=source,
+                        description=(
+                            f"Brute-force: {len(buf)} auth failures from {ip} "
+                            f"to {source} within {window:.0f}s"
+                        ),
+                        event_count=len(buf),
+                        event_ids=";".join(e.correlation_id or e.timestamp for e in buf),
+                        response_hint=rule.get("response_hint", ""),
+                    )
+                )
                 buf.clear()
                 break  # one alert per group
 
@@ -187,7 +187,8 @@ def _detect_ddos(
                 # Check for service degradation within 120s (sub-rule escalation)
                 sev = rule.get("severity", "critical")
                 svc_impact = [
-                    s for s in all_events
+                    s
+                    for s in all_events
                     if s.event == "service_status"
                     and s.source == source
                     and s.key == "status"
@@ -198,27 +199,26 @@ def _detect_ddos(
                     sev = "critical"
 
                 counter += 1
-                alerts.append(Alert(
-                    alert_id=f"ALR-{counter:04d}",
-                    rule_id=rule["id"],
-                    rule_name=rule["name"],
-                    threat_type=rule["threat_type"],
-                    severity=sev,
-                    confidence=0.98 if svc_impact else rule.get("confidence", 0.90),
-                    timestamp=buf[0].timestamp,
-                    component=evts[0].component,
-                    source=source,
-                    description=(
-                        f"DDoS flood: {len(buf)} rate_exceeded on {source} "
-                        f"within {window:.0f}s"
-                        + (" + service impact" if svc_impact else "")
-                    ),
-                    event_count=len(buf),
-                    event_ids=";".join(
-                        e.correlation_id or e.timestamp for e in buf
-                    ),
-                    response_hint=rule.get("response_hint", ""),
-                ))
+                alerts.append(
+                    Alert(
+                        alert_id=f"ALR-{counter:04d}",
+                        rule_id=rule["id"],
+                        rule_name=rule["name"],
+                        threat_type=rule["threat_type"],
+                        severity=sev,
+                        confidence=0.98 if svc_impact else rule.get("confidence", 0.90),
+                        timestamp=buf[0].timestamp,
+                        component=evts[0].component,
+                        source=source,
+                        description=(
+                            f"DDoS flood: {len(buf)} rate_exceeded on {source} "
+                            f"within {window:.0f}s" + (" + service impact" if svc_impact else "")
+                        ),
+                        event_count=len(buf),
+                        event_ids=";".join(e.correlation_id or e.timestamp for e in buf),
+                        response_hint=rule.get("response_hint", ""),
+                    )
+                )
                 buf.clear()
                 break
 
@@ -278,26 +278,26 @@ def _detect_telemetry_spoof(
                 if len(buf) >= threshold:
                     sev = "high" if len(buf) >= 5 else rule.get("severity", "medium")
                     counter += 1
-                    alerts.append(Alert(
-                        alert_id=f"ALR-{counter:04d}",
-                        rule_id=rule["id"],
-                        rule_name=rule["name"],
-                        threat_type=rule["threat_type"],
-                        severity=sev,
-                        confidence=0.90 if len(buf) >= 5 else rule.get("confidence", 0.75),
-                        timestamp=buf[0].timestamp,
-                        component=anomalies[0].component,
-                        source=source,
-                        description=(
-                            f"Telemetry anomaly: {len(buf)} out-of-range values "
-                            f"for {key} on {source} within {window:.0f}s"
-                        ),
-                        event_count=len(buf),
-                        event_ids=";".join(
-                            e.correlation_id or e.timestamp for e in buf
-                        ),
-                        response_hint=rule.get("response_hint", ""),
-                    ))
+                    alerts.append(
+                        Alert(
+                            alert_id=f"ALR-{counter:04d}",
+                            rule_id=rule["id"],
+                            rule_name=rule["name"],
+                            threat_type=rule["threat_type"],
+                            severity=sev,
+                            confidence=0.90 if len(buf) >= 5 else rule.get("confidence", 0.75),
+                            timestamp=buf[0].timestamp,
+                            component=anomalies[0].component,
+                            source=source,
+                            description=(
+                                f"Telemetry anomaly: {len(buf)} out-of-range values "
+                                f"for {key} on {source} within {window:.0f}s"
+                            ),
+                            event_count=len(buf),
+                            event_ids=";".join(e.correlation_id or e.timestamp for e in buf),
+                            response_hint=rule.get("response_hint", ""),
+                        )
+                    )
                     buf.clear()
                     break
 
@@ -324,26 +324,26 @@ def _detect_unauthorized_cmd(
     if unauth:
         sev = "critical"
         counter += 1
-        alerts.append(Alert(
-            alert_id=f"ALR-{counter:04d}",
-            rule_id=rule["id"],
-            rule_name=rule["name"],
-            threat_type=rule["threat_type"],
-            severity=sev,
-            confidence=0.99 if len(unauth) >= 3 else rule.get("confidence", 0.95),
-            timestamp=unauth[0].timestamp,
-            component=unauth[0].component,
-            source=unauth[0].source,
-            description=(
-                f"Unauthorized command: {len(unauth)} cmd_exec by "
-                f"non-allowed actor(s) on {unauth[0].source}"
-            ),
-            event_count=len(unauth),
-            event_ids=";".join(
-                e.correlation_id or e.timestamp for e in unauth
-            ),
-            response_hint=rule.get("response_hint", ""),
-        ))
+        alerts.append(
+            Alert(
+                alert_id=f"ALR-{counter:04d}",
+                rule_id=rule["id"],
+                rule_name=rule["name"],
+                threat_type=rule["threat_type"],
+                severity=sev,
+                confidence=0.99 if len(unauth) >= 3 else rule.get("confidence", 0.95),
+                timestamp=unauth[0].timestamp,
+                component=unauth[0].component,
+                source=unauth[0].source,
+                description=(
+                    f"Unauthorized command: {len(unauth)} cmd_exec by "
+                    f"non-allowed actor(s) on {unauth[0].source}"
+                ),
+                event_count=len(unauth),
+                event_ids=";".join(e.correlation_id or e.timestamp for e in unauth),
+                response_hint=rule.get("response_hint", ""),
+            )
+        )
 
     return alerts
 
@@ -385,26 +385,26 @@ def _detect_outage(
                         break
 
                 counter += 1
-                alerts.append(Alert(
-                    alert_id=f"ALR-{counter:04d}",
-                    rule_id=rule["id"],
-                    rule_name=rule["name"],
-                    threat_type=rule["threat_type"],
-                    severity=sev,
-                    confidence=rule.get("confidence", 0.90),
-                    timestamp=buf[0].timestamp,
-                    component=evts[0].component,
-                    source=source,
-                    description=(
-                        f"Outage: {len(buf)} {evts[0].event} events on "
-                        f"{source} (values: {', '.join(e.value for e in buf)})"
-                    ),
-                    event_count=len(buf),
-                    event_ids=";".join(
-                        e.correlation_id or e.timestamp for e in buf
-                    ),
-                    response_hint=rule.get("response_hint", ""),
-                ))
+                alerts.append(
+                    Alert(
+                        alert_id=f"ALR-{counter:04d}",
+                        rule_id=rule["id"],
+                        rule_name=rule["name"],
+                        threat_type=rule["threat_type"],
+                        severity=sev,
+                        confidence=rule.get("confidence", 0.90),
+                        timestamp=buf[0].timestamp,
+                        component=evts[0].component,
+                        source=source,
+                        description=(
+                            f"Outage: {len(buf)} {evts[0].event} events on "
+                            f"{source} (values: {', '.join(e.value for e in buf)})"
+                        ),
+                        event_count=len(buf),
+                        event_ids=";".join(e.correlation_id or e.timestamp for e in buf),
+                        response_hint=rule.get("response_hint", ""),
+                    )
+                )
                 buf.clear()
                 break
 

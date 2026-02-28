@@ -12,9 +12,10 @@ log = logging.getLogger(__name__)
 @dataclass(slots=True)
 class Device:
     """One infrastructure instance (meter, gateway, DB server …)."""
+
     id: str
     ip: str
-    component: str          # edge | api | db | …
+    component: str  # edge | api | db | …
     protocols: list[str]
 
 
@@ -31,6 +32,5 @@ def build_device_index(components_cfg: dict[str, Any]) -> dict[str, Device]:
                 protocols=inst.get("protocols", []),
             )
             index[dev.id] = dev
-    log.info("Device index built: %d devices across %d components",
-             len(index), len(comps))
+    log.info("Device index built: %d devices across %d components", len(index), len(comps))
     return index

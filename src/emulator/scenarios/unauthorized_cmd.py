@@ -48,26 +48,32 @@ class UnauthorizedCmdScenario(BaseScenario):
                 actor = _pick(self.rng, actor_pool)
                 ip = _pick(self.rng, ip_pool)
 
-                key_spec = _pick(self.rng, keys_list) if keys_list else {"key": "command", "values": ["unknown_cmd"]}
+                key_spec = (
+                    _pick(self.rng, keys_list)
+                    if keys_list
+                    else {"key": "command", "values": ["unknown_cmd"]}
+                )
                 k = key_spec.get("key", "command")
                 v = _pick(self.rng, key_spec.get("values", ["unknown"]))
 
-                events.append(Event(
-                    timestamp=_ts(t),
-                    source=target,
-                    component=comp,
-                    event=ev_type,
-                    key=k,
-                    value=str(v),
-                    severity=static_severity,
-                    actor=actor,
-                    ip=ip,
-                    tags=tags_str,
-                    correlation_id=cor_id,
-                ))
-                t = t + timedelta(milliseconds=self.rng.uniform(
-                    interval_ms[0], interval_ms[1]))
+                events.append(
+                    Event(
+                        timestamp=_ts(t),
+                        source=target,
+                        component=comp,
+                        event=ev_type,
+                        key=k,
+                        value=str(v),
+                        severity=static_severity,
+                        actor=actor,
+                        ip=ip,
+                        tags=tags_str,
+                        correlation_id=cor_id,
+                    )
+                )
+                t = t + timedelta(milliseconds=self.rng.uniform(interval_ms[0], interval_ms[1]))
 
-        log.info("unauthorized_command: generated %d events, offset=%ds",
-                 len(events), self.start_offset)
+        log.info(
+            "unauthorized_command: generated %d events, offset=%ds", len(events), self.start_offset
+        )
         return events

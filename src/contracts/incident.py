@@ -42,18 +42,18 @@ class Incident:
       impact_score ∈ [0..1] = severity_weight × confidence × impact_multiplier
     """
 
-    incident_id: str            # e.g. "INC-001"
-    policy: str                 # which policy was applied
-    threat_type: str            # credential_attack | availability_attack | integrity_attack | outage
-    severity: str               # escalated severity
-    component: str              # affected component(s), semicolon-separated
+    incident_id: str  # e.g. "INC-001"
+    policy: str  # which policy was applied
+    threat_type: str  # credential_attack | availability_attack | integrity_attack | outage
+    severity: str  # escalated severity
+    component: str  # affected component(s), semicolon-separated
     event_count: int
-    start_ts: str               # ISO-8601
-    detect_ts: str              # ISO-8601
-    recover_ts: str             # ISO-8601
-    mttd_sec: float             # seconds
-    mttr_sec: float             # seconds
-    impact_score: float         # 0.0 — 1.0
+    start_ts: str  # ISO-8601
+    detect_ts: str  # ISO-8601
+    recover_ts: str  # ISO-8601
+    mttd_sec: float  # seconds
+    mttr_sec: float  # seconds
+    impact_score: float  # 0.0 — 1.0
     description: str
     response_action: str
 

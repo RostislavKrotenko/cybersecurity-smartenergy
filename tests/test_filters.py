@@ -9,6 +9,7 @@ from tests.conftest import make_event, ts_offset
 #  deduplicate
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestDeduplicate:
     def test_empty_list(self):
         assert deduplicate([]) == []
@@ -101,6 +102,7 @@ class TestDeduplicate:
 # ═══════════════════════════════════════════════════════════════════════════
 #  validate_event
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestValidateEvent:
     def test_valid_event_no_warnings(self):

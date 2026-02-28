@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _pick(rng: _random_mod.Random, seq: list[Any]) -> Any:
     return seq[rng.randint(0, len(seq) - 1)]
 
@@ -37,11 +38,13 @@ def _ts(dt: datetime) -> str:
 # Telemetry generator
 # ---------------------------------------------------------------------------
 
+
 class TelemetryGenerator:
     """Periodic telemetry readings from edge/inverter/collector devices."""
 
-    def __init__(self, cfg: dict[str, Any], devices: dict[str, Device],
-                 rng: _random_mod.Random) -> None:
+    def __init__(
+        self, cfg: dict[str, Any], devices: dict[str, Device], rng: _random_mod.Random
+    ) -> None:
         self.rng = rng
         self.sources = cfg.get("sources", [])
         self.components = cfg.get("component", [])
@@ -61,8 +64,7 @@ class TelemetryGenerator:
             if offset_sec < self._next_fire[src]:
                 continue
             # schedule next
-            self._next_fire[src] = offset_sec + self.rng.uniform(
-                self.interval[0], self.interval[1])
+            self._next_fire[src] = offset_sec + self.rng.uniform(self.interval[0], self.interval[1])
             key_spec = _pick(self.rng, self.keys)
             k = key_spec["key"]
             dev = self.devices.get(src)
@@ -72,19 +74,21 @@ class TelemetryGenerator:
                 v = str(_uniform(self.rng, key_spec["range"][0], key_spec["range"][1]))
             else:
                 v = str(_pick(self.rng, key_spec.get("values", [""])))
-            events.append(Event(
-                timestamp=_ts(t),
-                source=src,
-                component=comp,
-                event="telemetry_read",
-                key=k,
-                value=v,
-                severity=self.severity,
-                actor="system",
-                ip=ip,
-                unit=key_spec.get("unit", ""),
-                tags=self.tags,
-            ))
+            events.append(
+                Event(
+                    timestamp=_ts(t),
+                    source=src,
+                    component=comp,
+                    event="telemetry_read",
+                    key=k,
+                    value=v,
+                    severity=self.severity,
+                    actor="system",
+                    ip=ip,
+                    unit=key_spec.get("unit", ""),
+                    tags=self.tags,
+                )
+            )
         return events
 
 
@@ -92,9 +96,11 @@ class TelemetryGenerator:
 # Access (HTTP) generator
 # ---------------------------------------------------------------------------
 
+
 class AccessGenerator:
-    def __init__(self, cfg: dict[str, Any], devices: dict[str, Device],
-                 rng: _random_mod.Random) -> None:
+    def __init__(
+        self, cfg: dict[str, Any], devices: dict[str, Device], rng: _random_mod.Random
+    ) -> None:
         self.rng = rng
         self.sources = cfg.get("sources", [])
         self.components = cfg.get("component", [])
@@ -113,25 +119,26 @@ class AccessGenerator:
         for src in self.sources:
             if offset_sec < self._next_fire[src]:
                 continue
-            self._next_fire[src] = offset_sec + self.rng.uniform(
-                self.interval[0], self.interval[1])
+            self._next_fire[src] = offset_sec + self.rng.uniform(self.interval[0], self.interval[1])
             key_spec = _pick(self.rng, self.keys)
             dev = self.devices.get(src)
             comp = dev.component if dev else _pick(self.rng, self.components)
             actor = _pick(self.rng, self.actors)
             v = _pick(self.rng, key_spec.get("values", [""]))
-            events.append(Event(
-                timestamp=_ts(t),
-                source=src,
-                component=comp,
-                event="http_request",
-                key=key_spec.get("key", "endpoint"),
-                value=str(v),
-                severity=self.severity,
-                actor=actor,
-                ip=dev.ip if dev else "",
-                tags=self.tags,
-            ))
+            events.append(
+                Event(
+                    timestamp=_ts(t),
+                    source=src,
+                    component=comp,
+                    event="http_request",
+                    key=key_spec.get("key", "endpoint"),
+                    value=str(v),
+                    severity=self.severity,
+                    actor=actor,
+                    ip=dev.ip if dev else "",
+                    tags=self.tags,
+                )
+            )
         return events
 
 
@@ -139,9 +146,11 @@ class AccessGenerator:
 # Auth (successful login) generator
 # ---------------------------------------------------------------------------
 
+
 class AuthGenerator:
-    def __init__(self, cfg: dict[str, Any], devices: dict[str, Device],
-                 rng: _random_mod.Random) -> None:
+    def __init__(
+        self, cfg: dict[str, Any], devices: dict[str, Device], rng: _random_mod.Random
+    ) -> None:
         self.rng = rng
         self.sources = cfg.get("sources", [])
         self.components = cfg.get("component", [])
@@ -160,25 +169,26 @@ class AuthGenerator:
         for src in self.sources:
             if offset_sec < self._next_fire[src]:
                 continue
-            self._next_fire[src] = offset_sec + self.rng.uniform(
-                self.interval[0], self.interval[1])
+            self._next_fire[src] = offset_sec + self.rng.uniform(self.interval[0], self.interval[1])
             key_spec = _pick(self.rng, self.keys)
             dev = self.devices.get(src)
             comp = dev.component if dev else _pick(self.rng, self.components)
             actor = _pick(self.rng, self.actors)
             v = _pick(self.rng, key_spec.get("values", ["password"]))
-            events.append(Event(
-                timestamp=_ts(t),
-                source=src,
-                component=comp,
-                event="auth_success",
-                key=key_spec.get("key", "method"),
-                value=str(v),
-                severity=self.severity,
-                actor=actor,
-                ip=dev.ip if dev else "",
-                tags=self.tags,
-            ))
+            events.append(
+                Event(
+                    timestamp=_ts(t),
+                    source=src,
+                    component=comp,
+                    event="auth_success",
+                    key=key_spec.get("key", "method"),
+                    value=str(v),
+                    severity=self.severity,
+                    actor=actor,
+                    ip=dev.ip if dev else "",
+                    tags=self.tags,
+                )
+            )
         return events
 
 
@@ -186,9 +196,11 @@ class AuthGenerator:
 # System health generator
 # ---------------------------------------------------------------------------
 
+
 class SystemHealthGenerator:
-    def __init__(self, cfg: dict[str, Any], devices: dict[str, Device],
-                 rng: _random_mod.Random) -> None:
+    def __init__(
+        self, cfg: dict[str, Any], devices: dict[str, Device], rng: _random_mod.Random
+    ) -> None:
         self.rng = rng
         self.sources = cfg.get("sources", [])
         self.components = cfg.get("component", [])
@@ -206,22 +218,23 @@ class SystemHealthGenerator:
         for src in self.sources:
             if offset_sec < self._next_fire[src]:
                 continue
-            self._next_fire[src] = offset_sec + self.rng.uniform(
-                self.interval[0], self.interval[1])
+            self._next_fire[src] = offset_sec + self.rng.uniform(self.interval[0], self.interval[1])
             key_spec = _pick(self.rng, self.keys)
             dev = self.devices.get(src)
             comp = dev.component if dev else _pick(self.rng, self.components)
             v = _pick(self.rng, key_spec.get("values", ["healthy"]))
-            events.append(Event(
-                timestamp=_ts(t),
-                source=src,
-                component=comp,
-                event="service_status",
-                key=key_spec.get("key", "status"),
-                value=str(v),
-                severity=self.severity,
-                actor="system",
-                ip=dev.ip if dev else "",
-                tags=self.tags,
-            ))
+            events.append(
+                Event(
+                    timestamp=_ts(t),
+                    source=src,
+                    component=comp,
+                    event="service_status",
+                    key=key_spec.get("key", "status"),
+                    value=str(v),
+                    severity=self.severity,
+                    actor="system",
+                    ip=dev.ip if dev else "",
+                    tags=self.tags,
+                )
+            )
         return events

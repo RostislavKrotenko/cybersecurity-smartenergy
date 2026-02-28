@@ -87,8 +87,9 @@ class BaseScenario(abc.ABC):
     def _cor_id(self, seq: int) -> str:
         return f"{self.correlation_prefix}-{seq:03d}"
 
-    def _severity_for_index(self, idx: int, progression: list[dict[str, Any]] | None,
-                            fallback: str = "medium") -> str:
+    def _severity_for_index(
+        self, idx: int, progression: list[dict[str, Any]] | None, fallback: str = "medium"
+    ) -> str:
         if not progression:
             return fallback
         sev = fallback

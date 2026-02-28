@@ -17,12 +17,13 @@ from src.emulator.engine import SCENARIO_REGISTRY, EmulatorEngine, write_csv, wr
 
 ROOT = Path(__file__).resolve().parent.parent
 COMPONENTS_PATH = ROOT / "config" / "components.yaml"
-SCENARIOS_PATH  = ROOT / "config" / "scenarios.yaml"
+SCENARIOS_PATH = ROOT / "config" / "scenarios.yaml"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  build_device_index
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestBuildDeviceIndex:
     def test_basic_index(self):
@@ -60,6 +61,7 @@ class TestBuildDeviceIndex:
 # ═══════════════════════════════════════════════════════════════════════════
 #  EmulatorEngine init
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestEmulatorEngineInit:
     @pytest.fixture
@@ -109,6 +111,7 @@ class TestEmulatorEngineInit:
 #  EmulatorEngine.run — minimal smoke test
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestEmulatorEngineRun:
     def test_run_no_background_no_attacks(self):
         """Engine with no bg generators and no attacks returns empty list."""
@@ -142,6 +145,7 @@ class TestEmulatorEngineRun:
 #  SCENARIO_REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestScenarioRegistry:
     def test_all_expected_scenarios_registered(self):
         expected = {
@@ -161,6 +165,7 @@ class TestScenarioRegistry:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Writers
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestWriters:
     def test_write_csv(self, tmp_path):
@@ -202,6 +207,7 @@ class TestWriters:
 
         assert path.exists()
         import json
+
         with open(path) as f:
             data = json.loads(f.readline())
         assert data["source"] == "inv-01"
@@ -216,6 +222,7 @@ class TestWriters:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Seed reproducibility (full emulator run)
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _load_real_configs() -> tuple[dict, dict]:
     with open(COMPONENTS_PATH) as f:

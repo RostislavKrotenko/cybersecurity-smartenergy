@@ -46,6 +46,7 @@ def _ts(iso: str) -> datetime:
 #  Event loaders
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _parse_event(row: dict[str, str]) -> Event:
     """Build an Event from a dict (row from CSV DictReader or JSON object)."""
     return Event(
@@ -103,6 +104,7 @@ def load_events(path: str) -> list[Event]:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Pipeline core
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def run_pipeline(
     input_path: str,
@@ -169,7 +171,9 @@ def run_pipeline(
         m = compute(incidents, pname, horizon_sec=horizon_sec)
         log.info(
             "Policy %-10s  availability=%.2f%%  downtime=%.4f h",
-            pname, m.availability_pct, m.total_downtime_hr,
+            pname,
+            m.availability_pct,
+            m.total_downtime_hr,
         )
 
         results["alerts"][pname] = alerts
@@ -199,6 +203,7 @@ def run_pipeline(
 # ═══════════════════════════════════════════════════════════════════════════
 #  Watch mode (tail JSONL)
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def watch_pipeline(
     input_path: str,
@@ -261,7 +266,9 @@ def watch_pipeline(
                 iteration += 1
                 log.info(
                     "Watch iteration %d: +%d new, %d total events",
-                    iteration, len(new_events), len(accumulated_events),
+                    iteration,
+                    len(new_events),
+                    len(accumulated_events),
                 )
 
                 # Re-run full analysis on accumulated state

@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--input",
         default="data/events.csv",
         help="Input file (CSV or JSONL). Format auto-detected by extension. "
-             "Default: data/events.csv",
+        "Default: data/events.csv",
     )
     p.add_argument(
         "--out-dir",
@@ -39,10 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--policies",
         default="all",
-        help=(
-            "Comma-separated policy names to analyse. "
-            "Use 'all' for all available. Default: all"
-        ),
+        help=("Comma-separated policy names to analyse. Use 'all' for all available. Default: all"),
     )
     p.add_argument(
         "--config-dir",
@@ -91,9 +88,7 @@ def main(argv: list[str] | None = None) -> None:
     setup_logging(args.log_level)
 
     policy_list = (
-        [p.strip() for p in args.policies.split(",")]
-        if args.policies != "all"
-        else ["all"]
+        [p.strip() for p in args.policies.split(",")] if args.policies != "all" else ["all"]
     )
 
     if args.watch:

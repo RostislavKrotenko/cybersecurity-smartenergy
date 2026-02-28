@@ -29,13 +29,13 @@ class Event:
     """One normalised event in the SmartEnergy pipeline."""
 
     # ── mandatory ──
-    timestamp: str          # ISO-8601 UTC  e.g. "2026-02-26T10:00:00Z"
-    source: str             # device / service id
-    component: str          # edge | api | db | ui | collector | inverter | network
-    event: str              # event type (auth_failure, telemetry_read …)
-    key: str                # metric / parameter name
-    value: str              # always string
-    severity: str           # low | medium | high | critical
+    timestamp: str  # ISO-8601 UTC  e.g. "2026-02-26T10:00:00Z"
+    source: str  # device / service id
+    component: str  # edge | api | db | ui | collector | inverter | network
+    event: str  # event type (auth_failure, telemetry_read …)
+    key: str  # metric / parameter name
+    value: str  # always string
+    severity: str  # low | medium | high | critical
 
     # ── optional ──
     actor: str = ""

@@ -81,7 +81,10 @@ class EmulatorEngine:
 
         log.info(
             "Engine init: duration=%ds, start=%s, seed=%d, scenarios=%s",
-            self.duration_sec, self.sim_start.isoformat(), seed, scenario_set,
+            self.duration_sec,
+            self.sim_start.isoformat(),
+            seed,
+            scenario_set,
         )
 
     # ------------------------------------------------------------------
@@ -166,14 +169,16 @@ class EmulatorEngine:
         all_events = bg_events + attack_events
         all_events.sort(key=lambda e: e.timestamp)
 
-        log.info("Total events: %d (bg=%d + atk=%d)",
-                 len(all_events), len(bg_events), len(attack_events))
+        log.info(
+            "Total events: %d (bg=%d + atk=%d)", len(all_events), len(bg_events), len(attack_events)
+        )
         return all_events
 
 
 # ------------------------------------------------------------------
 # Writers
 # ------------------------------------------------------------------
+
 
 def write_csv(events: list[Event], path: Path) -> None:
     """Write events to a CSV file with header."""
@@ -197,6 +202,7 @@ def write_jsonl(events: list[Event], path: Path) -> None:
 # ------------------------------------------------------------------
 # Live streaming writer
 # ------------------------------------------------------------------
+
 
 def stream_jsonl(
     engine: EmulatorEngine,
@@ -228,8 +234,9 @@ def stream_jsonl(
         all_events = all_events[:max_events]
 
     all_events.sort(key=lambda e: e.timestamp)
-    log.info("Live mode: streaming %d events to %s (interval=%.3fs)",
-             len(all_events), path, interval_sec)
+    log.info(
+        "Live mode: streaming %d events to %s (interval=%.3fs)", len(all_events), path, interval_sec
+    )
 
     count = 0
     with path.open("a", encoding="utf-8") as fh:
@@ -284,9 +291,7 @@ def stream_jsonl_infinite(
         with path.open("a", encoding="utf-8") as fh:
             for ev in events:
                 # Re-stamp to real wall-clock time
-                ev.timestamp = datetime.now(tz=datetime.UTC).strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
-                )
+                ev.timestamp = datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
                 fh.write(ev.to_json() + "\n")
                 fh.flush()
@@ -297,8 +302,7 @@ def stream_jsonl_infinite(
                     _write_raw_log(raw_log_dir, ev)
 
                 if total_count % 100 == 0:
-                    log.info("  total streamed: %d events (cycle %d)",
-                             total_count, cycle)
+                    log.info("  total streamed: %d events (cycle %d)", total_count, cycle)
                 time.sleep(interval_sec)
 
 
@@ -307,18 +311,23 @@ def stream_jsonl_infinite(
 # ------------------------------------------------------------------
 
 _RAW_LOG_MAP: dict[str, str] = {
-    "api":       "api.log",
-    "ui":        "api.log",
-    "edge":      "edge.log",
-    "inverter":  "edge.log",
+    "api": "api.log",
+    "ui": "api.log",
+    "edge": "edge.log",
+    "inverter": "edge.log",
     "collector": "edge.log",
-    "db":        "api.log",
-    "network":   "edge.log",
+    "db": "api.log",
+    "network": "edge.log",
 }
 
-_AUTH_EVENTS = frozenset({
-    "auth_success", "auth_failure", "login_attempt", "brute_force_attempt",
-})
+_AUTH_EVENTS = frozenset(
+    {
+        "auth_success",
+        "auth_failure",
+        "login_attempt",
+        "brute_force_attempt",
+    }
+)
 
 
 def _write_raw_log(log_dir: Path, ev: Event) -> None:

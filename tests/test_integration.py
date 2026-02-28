@@ -99,29 +99,40 @@ class TestDetectorToCorrelatorToMetrics:
         events = []
         # Brute force: 6 auth failures
         for i in range(6):
-            events.append(make_event(
-                event="auth_failure",
-                timestamp=ts_offset(seconds=i * 5),
-                ip="10.0.0.1", source="api-gw-01", component="api",
-                correlation_id=f"COR-BF-{i}",
-            ))
+            events.append(
+                make_event(
+                    event="auth_failure",
+                    timestamp=ts_offset(seconds=i * 5),
+                    ip="10.0.0.1",
+                    source="api-gw-01",
+                    component="api",
+                    correlation_id=f"COR-BF-{i}",
+                )
+            )
         # DDoS: 12 rate_exceeded
         for i in range(12):
-            events.append(make_event(
-                event="rate_exceeded",
-                timestamp=ts_offset(seconds=100 + i * 2),
-                source="api-gw-01", component="api",
-                correlation_id=f"COR-DD-{i}",
-            ))
+            events.append(
+                make_event(
+                    event="rate_exceeded",
+                    timestamp=ts_offset(seconds=100 + i * 2),
+                    source="api-gw-01",
+                    component="api",
+                    correlation_id=f"COR-DD-{i}",
+                )
+            )
         # Spoof: 4 out-of-range voltage readings
         for i in range(4):
-            events.append(make_event(
-                event="telemetry_read",
-                timestamp=ts_offset(seconds=200 + i * 10),
-                source="inv-01", component="edge", key="voltage",
-                value=str(350 + i * 10),
-                correlation_id=f"COR-SP-{i}",
-            ))
+            events.append(
+                make_event(
+                    event="telemetry_read",
+                    timestamp=ts_offset(seconds=200 + i * 10),
+                    source="inv-01",
+                    component="edge",
+                    key="voltage",
+                    value=str(350 + i * 10),
+                    correlation_id=f"COR-SP-{i}",
+                )
+            )
 
         events.sort(key=lambda e: e.timestamp)
 
@@ -141,15 +152,23 @@ class TestDetectorToCorrelatorToMetrics:
     def test_policy_comparison_e2e(self, brute_force_events, full_rules_cfg):
         """Standard policy should yield better metrics than minimal."""
         # Minimal — higher multipliers = slower detection
-        minimal_mods = {"credential_attack": {
-            "mttd_multiplier": 1.5, "mttr_multiplier": 1.5,
-            "threshold_multiplier": 1.0, "impact_multiplier": 1.2,
-        }}
+        minimal_mods = {
+            "credential_attack": {
+                "mttd_multiplier": 1.5,
+                "mttr_multiplier": 1.5,
+                "threshold_multiplier": 1.0,
+                "impact_multiplier": 1.2,
+            }
+        }
         # Standard — lower multipliers = faster detection
-        standard_mods = {"credential_attack": {
-            "mttd_multiplier": 0.5, "mttr_multiplier": 0.5,
-            "threshold_multiplier": 1.0, "impact_multiplier": 0.6,
-        }}
+        standard_mods = {
+            "credential_attack": {
+                "mttd_multiplier": 0.5,
+                "mttr_multiplier": 0.5,
+                "threshold_multiplier": 1.0,
+                "impact_multiplier": 0.6,
+            }
+        }
 
         alerts_min = detect(brute_force_events, full_rules_cfg, policy_modifiers=minimal_mods)
         alerts_std = detect(brute_force_events, full_rules_cfg, policy_modifiers=standard_mods)

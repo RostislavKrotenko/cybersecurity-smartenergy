@@ -72,31 +72,37 @@ class OutageScenario(BaseScenario):
                 comp = self._resolve_component(target)
                 ip = self._resolve_ip(target)
 
-                key_spec = _pick(self.rng, keys_list) if keys_list else {"key": "status", "values": ["down"]}
+                key_spec = (
+                    _pick(self.rng, keys_list)
+                    if keys_list
+                    else {"key": "status", "values": ["down"]}
+                )
                 k = key_spec.get("key", "status")
                 if "range" in key_spec:
                     v = str(_uniform(self.rng, key_spec["range"][0], key_spec["range"][1]))
                 else:
                     v = str(_pick(self.rng, key_spec.get("values", ["error"])))
 
-                events.append(Event(
-                    timestamp=_ts(t),
-                    source=target,
-                    component=comp,
-                    event=ev_type,
-                    key=k,
-                    value=v,
-                    severity=sev,
-                    actor="system",
-                    ip=ip,
-                    tags=tags_str,
-                    correlation_id=cor_id,
-                ))
-                t = t + timedelta(milliseconds=self.rng.uniform(
-                    interval_ms[0], interval_ms[1]))
+                events.append(
+                    Event(
+                        timestamp=_ts(t),
+                        source=target,
+                        component=comp,
+                        event=ev_type,
+                        key=k,
+                        value=v,
+                        severity=sev,
+                        actor="system",
+                        ip=ip,
+                        tags=tags_str,
+                        correlation_id=cor_id,
+                    )
+                )
+                t = t + timedelta(milliseconds=self.rng.uniform(interval_ms[0], interval_ms[1]))
 
             phase_end_times.append(t.timestamp())
 
-        log.info("outage_db_corruption: generated %d events, offset=%ds",
-                 len(events), self.start_offset)
+        log.info(
+            "outage_db_corruption: generated %d events, offset=%ds", len(events), self.start_offset
+        )
         return events

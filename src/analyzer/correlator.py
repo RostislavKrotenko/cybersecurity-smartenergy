@@ -99,8 +99,12 @@ def correlate(
         incidents.append(inc)
 
     incidents.sort(key=lambda i: i.start_ts)
-    log.info("Correlator produced %d incidents from %d alerts (policy=%s)",
-             len(incidents), len(alerts), policy_name)
+    log.info(
+        "Correlator produced %d incidents from %d alerts (policy=%s)",
+        len(incidents),
+        len(alerts),
+        policy_name,
+    )
     return incidents
 
 
@@ -109,10 +113,10 @@ def correlate(
 # Base timing constants (seconds) per threat_type — these represent
 # the "baseline" detection and recovery times before policy multipliers.
 _BASE_TIMING: dict[str, dict[str, float]] = {
-    "credential_attack":   {"mttd": 30.0,  "mttr": 120.0},
-    "availability_attack": {"mttd": 15.0,  "mttr": 180.0},
-    "integrity_attack":    {"mttd": 60.0,  "mttr": 240.0},
-    "outage":              {"mttd": 10.0,  "mttr": 300.0},
+    "credential_attack": {"mttd": 30.0, "mttr": 120.0},
+    "availability_attack": {"mttd": 15.0, "mttr": 180.0},
+    "integrity_attack": {"mttd": 60.0, "mttr": 240.0},
+    "outage": {"mttd": 10.0, "mttr": 300.0},
 }
 
 _SEV_IMPACT = {"low": 0.2, "medium": 0.4, "high": 0.7, "critical": 1.0}
@@ -153,9 +157,7 @@ def _build_incident(
 
     avg_conf = sum(a.confidence for a in group) / len(group)
     impact_mult = mod.get("impact_multiplier", 1.0)
-    impact_score = round(
-        _SEV_IMPACT.get(sev, 0.5) * avg_conf * impact_mult, 4
-    )
+    impact_score = round(_SEV_IMPACT.get(sev, 0.5) * avg_conf * impact_mult, 4)
     impact_score = min(impact_score, 1.0)
 
     components = sorted({a.component for a in group})

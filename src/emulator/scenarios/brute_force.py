@@ -70,25 +70,35 @@ class BruteForceScenario(BaseScenario):
                 if sev_prog and i >= 10 and "escalated" not in ev_tags:
                     ev_tags = ev_tags + ";escalated"
 
-                key_spec = _pick(self.rng, keys_list) if keys_list else {"key": "username", "values": ["admin"]}
+                key_spec = (
+                    _pick(self.rng, keys_list)
+                    if keys_list
+                    else {"key": "username", "values": ["admin"]}
+                )
                 k = key_spec.get("key", "username")
                 v = _pick(self.rng, key_spec.get("values", ["admin"]))
 
-                events.append(Event(
-                    timestamp=_ts(t),
-                    source=target,
-                    component=comp,
-                    event=ev_type,
-                    key=k,
-                    value=str(v),
-                    severity=sev,
-                    actor=actor,
-                    ip=ip,
-                    tags=ev_tags,
-                    correlation_id=cor_id,
-                ))
+                events.append(
+                    Event(
+                        timestamp=_ts(t),
+                        source=target,
+                        component=comp,
+                        event=ev_type,
+                        key=k,
+                        value=str(v),
+                        severity=sev,
+                        actor=actor,
+                        ip=ip,
+                        tags=ev_tags,
+                        correlation_id=cor_id,
+                    )
+                )
                 t = t + timedelta(milliseconds=self.rng.uniform(interval_ms[0], interval_ms[1]))
 
-        log.info("brute_force: generated %d events, offset=%ds, dur=%ds",
-                 len(events), self.start_offset, self.duration)
+        log.info(
+            "brute_force: generated %d events, offset=%ds, dur=%ds",
+            len(events),
+            self.start_offset,
+            self.duration,
+        )
         return events

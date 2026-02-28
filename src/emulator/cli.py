@@ -38,59 +38,86 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Generate synthetic SmartEnergy events (batch or live mode).",
     )
     p.add_argument(
-        "--days", type=int, default=None,
+        "--days",
+        type=int,
+        default=None,
         help="Simulation length in days. Overrides scenarios.yaml duration_sec. "
-             "If omitted the YAML value is used (default 3600 s = 1 h).",
+        "If omitted the YAML value is used (default 3600 s = 1 h).",
     )
     p.add_argument(
-        "--seed", type=int, default=42,
+        "--seed",
+        type=int,
+        default=42,
         help="Random seed for deterministic output (default: 42).",
     )
     p.add_argument(
-        "--out", type=str, default="data/events.csv",
+        "--out",
+        type=str,
+        default="data/events.csv",
         help="Output file path (default: data/events.csv).",
     )
     p.add_argument(
-        "--format", type=str, choices=["csv", "jsonl"], default="csv",
+        "--format",
+        type=str,
+        choices=["csv", "jsonl"],
+        default="csv",
         help="Output format: csv (default) or jsonl.",
     )
     p.add_argument(
-        "--scenario_set", type=str, default="all",
+        "--scenario_set",
+        type=str,
+        default="all",
         help="Comma-separated scenario names to inject, or 'all' (default: all).",
     )
     p.add_argument(
-        "--start_time", type=str, default=None,
+        "--start_time",
+        type=str,
+        default=None,
         help="Simulation start time in ISO-8601 (e.g. 2026-02-26T10:00:00Z). "
-             "Defaults to value in scenarios.yaml.",
+        "Defaults to value in scenarios.yaml.",
     )
     p.add_argument(
-        "--components", type=str, default="config/components.yaml",
+        "--components",
+        type=str,
+        default="config/components.yaml",
         help="Path to components.yaml (default: config/components.yaml).",
     )
     p.add_argument(
-        "--scenarios", type=str, default="config/scenarios.yaml",
+        "--scenarios",
+        type=str,
+        default="config/scenarios.yaml",
         help="Path to scenarios.yaml (default: config/scenarios.yaml).",
     )
     # Live mode flags
     p.add_argument(
-        "--live", action="store_true", default=False,
+        "--live",
+        action="store_true",
+        default=False,
         help="Enable live streaming mode (events written to JSONL with delays).",
     )
     p.add_argument(
-        "--live-interval-ms", type=int, default=1000,
+        "--live-interval-ms",
+        type=int,
+        default=1000,
         help="Interval between event writes in live mode, ms (default: 1000).",
     )
     p.add_argument(
-        "--max-events", type=int, default=None,
+        "--max-events",
+        type=int,
+        default=None,
         help="Maximum number of events to generate (optional cap).",
     )
     p.add_argument(
-        "--raw-log-dir", type=str, default=None,
+        "--raw-log-dir",
+        type=str,
+        default=None,
         help="Directory for raw syslog-style log files (api.log, auth.log, edge.log). "
-             "Only used in --live mode.",
+        "Only used in --live mode.",
     )
     p.add_argument(
-        "--log-level", type=str, default="INFO",
+        "--log-level",
+        type=str,
+        default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level (default: INFO).",
     )
@@ -126,7 +153,9 @@ def main(argv: list[str] | None = None) -> None:
         interval_sec = args.live_interval_ms / 1000.0
         raw_log_dir = Path(args.raw_log_dir) if args.raw_log_dir else None
         print(f"Emulator live mode -> {out_path}")
-        print(f"  interval: {args.live_interval_ms} ms, max_events: {args.max_events or 'infinite'}")
+        print(
+            f"  interval: {args.live_interval_ms} ms, max_events: {args.max_events or 'infinite'}"
+        )
         if raw_log_dir:
             print(f"  raw logs -> {raw_log_dir}/")
         print("  Press Ctrl+C to stop.")
@@ -154,7 +183,7 @@ def main(argv: list[str] | None = None) -> None:
         # ---- Batch mode: generate all then write ----
         events = engine.run()
         if args.max_events and len(events) > args.max_events:
-            events = events[:args.max_events]
+            events = events[: args.max_events]
 
         if args.format == "jsonl":
             if out_path.suffix not in (".jsonl", ".ndjson", ".json"):

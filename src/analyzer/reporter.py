@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 #  CSV writers
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def write_results_csv(
     metrics_list: list[PolicyMetrics],
     path: str,
@@ -55,6 +56,7 @@ def write_incidents_csv(
 #  TXT report
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def write_report_txt(
     metrics_list: list[PolicyMetrics],
     all_incidents: list[Incident],
@@ -77,13 +79,9 @@ def write_report_txt(
         lines.append(f"  Mean MTTD:        {m.mean_mttd_min:.2f} min")
         lines.append(f"  Mean MTTR:        {m.mean_mttr_min:.2f} min")
         lines.append(f"  Incidents total:  {m.incidents_total}")
-        sev_str = ", ".join(
-            f"{k}={v}" for k, v in sorted(m.incidents_by_severity.items())
-        )
+        sev_str = ", ".join(f"{k}={v}" for k, v in sorted(m.incidents_by_severity.items()))
         lines.append(f"  By severity:      {sev_str}")
-        thr_str = ", ".join(
-            f"{k}={v}" for k, v in sorted(m.incidents_by_threat.items())
-        )
+        thr_str = ", ".join(f"{k}={v}" for k, v in sorted(m.incidents_by_threat.items()))
         lines.append(f"  By threat type:   {thr_str}")
         lines.append("")
 
@@ -92,15 +90,23 @@ def write_report_txt(
     if metrics_list:
         best_avail = max(metrics_list, key=lambda m: m.availability_pct)
         worst_avail = min(metrics_list, key=lambda m: m.availability_pct)
-        lines.append(f"  Best availability:  {best_avail.policy} ({best_avail.availability_pct:.2f}%)")
-        lines.append(f"  Worst availability: {worst_avail.policy} ({worst_avail.availability_pct:.2f}%)")
+        lines.append(
+            f"  Best availability:  {best_avail.policy} ({best_avail.availability_pct:.2f}%)"
+        )
+        lines.append(
+            f"  Worst availability: {worst_avail.policy} ({worst_avail.availability_pct:.2f}%)"
+        )
 
         if any(m.mean_mttr_min > 0 for m in metrics_list):
             candidates = [m for m in metrics_list if m.mean_mttr_min > 0]
             best_mttr = min(candidates, key=lambda m: m.mean_mttr_min)
             worst_mttr = max(metrics_list, key=lambda m: m.mean_mttr_min)
-            lines.append(f"  Best MTTR:          {best_mttr.policy} ({best_mttr.mean_mttr_min:.2f} min)")
-            lines.append(f"  Worst MTTR:         {worst_mttr.policy} ({worst_mttr.mean_mttr_min:.2f} min)")
+            lines.append(
+                f"  Best MTTR:          {best_mttr.policy} ({best_mttr.mean_mttr_min:.2f} min)"
+            )
+            lines.append(
+                f"  Worst MTTR:         {worst_mttr.policy} ({worst_mttr.mean_mttr_min:.2f} min)"
+            )
     lines.append("")
 
     # Top-3 effective controls
@@ -123,6 +129,7 @@ def write_report_txt(
 # ═══════════════════════════════════════════════════════════════════════════
 #  HTML report (optional)
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def write_report_html(
     metrics_list: list[PolicyMetrics],
@@ -203,6 +210,7 @@ def write_report_html(
 #  Plots (matplotlib)
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def write_plots(
     metrics_list: list[PolicyMetrics],
     out_dir: str,
@@ -210,6 +218,7 @@ def write_plots(
     """Generate PNG charts into out_dir/plots/."""
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
@@ -220,15 +229,21 @@ def write_plots(
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     policies = [m.policy for m in metrics_list]
-    colors = ["#e74c3c", "#f39c12", "#27ae60"][:len(policies)]
+    colors = ["#e74c3c", "#f39c12", "#27ae60"][: len(policies)]
 
     # ── 1. Availability bar chart ────────────────────────────────────
     fig, ax = plt.subplots(figsize=(8, 5))
     avail = [m.availability_pct for m in metrics_list]
     bars = ax.bar(policies, avail, color=colors, edgecolor="black", linewidth=0.5)
     for bar, v in zip(bars, avail):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.1,
-                f"{v:.2f}%", ha="center", va="bottom", fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.1,
+            f"{v:.2f}%",
+            ha="center",
+            va="bottom",
+            fontweight="bold",
+        )
     ax.set_ylabel("Availability (%)")
     ax.set_title("System Availability by Policy")
     ax.set_ylim(min(avail) - 2 if min(avail) > 2 else 0, 101)
@@ -242,8 +257,14 @@ def write_plots(
     dt = [m.total_downtime_hr for m in metrics_list]
     bars = ax.bar(policies, dt, color=colors, edgecolor="black", linewidth=0.5)
     for bar, v in zip(bars, dt):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.001,
-                f"{v:.4f}h", ha="center", va="bottom", fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.001,
+            f"{v:.4f}h",
+            ha="center",
+            va="bottom",
+            fontweight="bold",
+        )
     ax.set_ylabel("Total Downtime (hours)")
     ax.set_title("Total Downtime by Policy")
     fig.tight_layout()
@@ -257,16 +278,42 @@ def write_plots(
     w = 0.35
     mttd = [m.mean_mttd_min for m in metrics_list]
     mttr = [m.mean_mttr_min for m in metrics_list]
-    bars1 = ax.bar([i - w / 2 for i in x], mttd, w, label="MTTD (min)",
-                   color="#3498db", edgecolor="black", linewidth=0.5)
-    bars2 = ax.bar([i + w / 2 for i in x], mttr, w, label="MTTR (min)",
-                   color="#e67e22", edgecolor="black", linewidth=0.5)
+    bars1 = ax.bar(
+        [i - w / 2 for i in x],
+        mttd,
+        w,
+        label="MTTD (min)",
+        color="#3498db",
+        edgecolor="black",
+        linewidth=0.5,
+    )
+    bars2 = ax.bar(
+        [i + w / 2 for i in x],
+        mttr,
+        w,
+        label="MTTR (min)",
+        color="#e67e22",
+        edgecolor="black",
+        linewidth=0.5,
+    )
     for bar, v in zip(bars1, mttd):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05,
-                f"{v:.1f}", ha="center", va="bottom", fontsize=9)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.05,
+            f"{v:.1f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
     for bar, v in zip(bars2, mttr):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05,
-                f"{v:.1f}", ha="center", va="bottom", fontsize=9)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.05,
+            f"{v:.1f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
     ax.set_xticks(list(x))
     ax.set_xticklabels(policies)
     ax.set_ylabel("Minutes")

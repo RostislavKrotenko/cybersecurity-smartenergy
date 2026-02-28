@@ -41,6 +41,7 @@ def auth_profile(profiles):
 #  Parsing: successful lines
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestParserSuccess:
     """Raw log lines that should parse into Events."""
 
@@ -70,6 +71,7 @@ class TestParserSuccess:
 #  Parsing: quarantine (unparseable lines)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestParserQuarantine:
     """Lines that should fail parsing and go to quarantine."""
 
@@ -93,9 +95,11 @@ class TestParserQuarantine:
 #  Filters: dedup + validate
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestDedup:
     def test_removes_within_window(self):
         from tests.conftest import make_event, ts_offset
+
         base = "2026-02-26T10:00:00Z"
         e1 = make_event(timestamp=base, source="m1", event="x", key="k", value="v")
         e2 = make_event(timestamp=ts_offset(base, 1), source="m1", event="x", key="k", value="v")
@@ -104,6 +108,7 @@ class TestDedup:
 
     def test_keeps_beyond_window(self):
         from tests.conftest import make_event, ts_offset
+
         base = "2026-02-26T10:00:00Z"
         e1 = make_event(timestamp=base, source="m1", event="x", key="k", value="v")
         e2 = make_event(timestamp=ts_offset(base, 5), source="m1", event="x", key="k", value="v")
@@ -112,6 +117,7 @@ class TestDedup:
 
     def test_different_fingerprint_kept(self):
         from tests.conftest import make_event
+
         e1 = make_event(source="m1", event="a", key="k", value="v")
         e2 = make_event(source="m2", event="a", key="k", value="v")
         result = deduplicate([e1, e2], window_sec=2)
@@ -121,23 +127,27 @@ class TestDedup:
 class TestValidateEvent:
     def test_valid_event(self):
         from tests.conftest import make_event
+
         ev = make_event(severity="low", component="edge")
         assert validate_event(ev) == []
 
     def test_unknown_severity(self):
         from tests.conftest import make_event
+
         ev = make_event(severity="unknown_sev")
         warnings = validate_event(ev)
         assert any("severity" in w for w in warnings)
 
     def test_unknown_component(self):
         from tests.conftest import make_event
+
         ev = make_event(component="satellite")
         warnings = validate_event(ev)
         assert any("component" in w for w in warnings)
 
     def test_empty_timestamp(self):
         from tests.conftest import make_event
+
         ev = make_event(timestamp="")
         warnings = validate_event(ev)
         assert any("timestamp" in w for w in warnings)

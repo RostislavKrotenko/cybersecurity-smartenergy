@@ -15,6 +15,7 @@ from src.normalizer.pipeline import NormalizerPipeline, _resolve_tz
 #  _resolve_tz
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestResolveTz:
     def test_utc(self):
         tz = _resolve_tz("UTC")
@@ -28,6 +29,7 @@ class TestResolveTz:
 # ═══════════════════════════════════════════════════════════════════════════
 #  NormalizerPipeline — integration tests with real file I/O
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestNormalizerPipeline:
     """Integration tests that run the pipeline over temporary files."""
@@ -57,7 +59,7 @@ class TestNormalizerPipeline:
             "profiles": {
                 "api": {
                     "file_pattern": "api",
-                    "line_regex": r'^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(?P<level>\w+)\s+(?P<host>\S+)\s+(?P<msg>.+)$',
+                    "line_regex": r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(?P<level>\w+)\s+(?P<host>\S+)\s+(?P<msg>.+)$",
                     "timestamp_format": "iso_space",
                     "source_field": "host",
                     "level_field": "level",
@@ -73,6 +75,7 @@ class TestNormalizerPipeline:
             },
         }
         import yaml
+
         path = tmp_path / "mapping.yaml"
         with open(path, "w") as f:
             yaml.dump(mapping, f)
@@ -155,12 +158,17 @@ class TestNormalizerPipeline:
         import yaml
 
         mapping = {
-            "defaults": {"severity": "low", "source": "unknown", "component": "unknown", "event": "raw_log"},
+            "defaults": {
+                "severity": "low",
+                "source": "unknown",
+                "component": "unknown",
+                "event": "raw_log",
+            },
             "normalizer": {"dedup": {"enabled": True, "window_sec": 5}},
             "profiles": {
                 "api": {
                     "file_pattern": "api",
-                    "line_regex": r'^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(?P<level>\w+)\s+(?P<host>\S+)\s+(?P<msg>.+)$',
+                    "line_regex": r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(?P<level>\w+)\s+(?P<host>\S+)\s+(?P<msg>.+)$",
                     "timestamp_format": "iso_space",
                     "source_field": "host",
                     "level_field": "level",

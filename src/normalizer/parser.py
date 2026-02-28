@@ -23,12 +23,13 @@ log = logging.getLogger(__name__)
 # ── Timestamp strptime patterns ──────────────────────────────────────────────
 _TS_PATTERNS: dict[str, str] = {
     "iso_space": "%Y-%m-%d %H:%M:%S",
-    "iso_t":     "%Y-%m-%dT%H:%M:%SZ",
-    "syslog":    "%b %d %H:%M:%S",
+    "iso_t": "%Y-%m-%dT%H:%M:%SZ",
+    "syslog": "%b %d %H:%M:%S",
 }
 
 
 # ── Compiled profile ─────────────────────────────────────────────────────────
+
 
 @dataclass(slots=True)
 class Profile:
@@ -54,6 +55,7 @@ class Profile:
 
 # ── Build helpers ────────────────────────────────────────────────────────────
 
+
 def build_profiles(mapping: dict[str, Any]) -> list[Profile]:
     """Compile all profiles from the mapping config dict."""
     defaults = mapping.get("defaults", {})
@@ -64,53 +66,56 @@ def build_profiles(mapping: dict[str, Any]) -> list[Profile]:
         actor_rx = re.compile(cfg["actor_regex"]) if cfg.get("actor_regex") else None
         kv_rx = re.compile(cfg["kv_regex"]) if cfg.get("kv_regex") else None
 
-        sev_map: dict[str, str] = {
-            k.lower(): v for k, v in cfg.get("severity_map", {}).items()
-        }
+        sev_map: dict[str, str] = {k.lower(): v for k, v in cfg.get("severity_map", {}).items()}
         sev_msg: dict[str, list[str]] = {}
         for sev, patterns in cfg.get("severity_from_message", {}).items():
             sev_msg[sev] = [p.lower() for p in patterns]
 
         event_rules: list[tuple[re.Pattern[str], str, str]] = []
         for r in cfg.get("event_rules", []):
-            event_rules.append((
-                re.compile(r["pattern"]),
-                r["event"],
-                r.get("tags", ""),
-            ))
+            event_rules.append(
+                (
+                    re.compile(r["pattern"]),
+                    r["event"],
+                    r.get("tags", ""),
+                )
+            )
 
         comp_rules: list[tuple[re.Pattern[str], str]] = []
         for r in cfg.get("component_rules", []):
-            comp_rules.append((
-                re.compile(r["pattern"], re.IGNORECASE),
-                r["component"],
-            ))
+            comp_rules.append(
+                (
+                    re.compile(r["pattern"], re.IGNORECASE),
+                    r["component"],
+                )
+            )
 
         level_field = cfg.get("level_field")
         # YAML null → Python None — keep it None
         if level_field is None or str(level_field).lower() == "null":
             level_field = None
 
-        result.append(Profile(
-            name=name,
-            file_pattern=re.compile(cfg["file_pattern"], re.IGNORECASE),
-            line_regex=re.compile(cfg["line_regex"]),
-            timestamp_format=cfg.get("timestamp_format", "iso_space"),
-            year_default=cfg.get("year_default"),
-            source_field=cfg.get("source_field", "host"),
-            level_field=level_field,
-            message_field=cfg.get("message_field", "msg"),
-            severity_map=sev_map,
-            severity_from_message=sev_msg,
-            event_rules=event_rules,
-            component_rules=comp_rules,
-            ip_regex=ip_rx,
-            actor_regex=actor_rx,
-            kv_regex=kv_rx,
-            defaults=defaults,
-        ))
-        log.debug("Compiled profile '%s' (regex groups: %s)", name,
-                  cfg.get("line_regex", "")[:60])
+        result.append(
+            Profile(
+                name=name,
+                file_pattern=re.compile(cfg["file_pattern"], re.IGNORECASE),
+                line_regex=re.compile(cfg["line_regex"]),
+                timestamp_format=cfg.get("timestamp_format", "iso_space"),
+                year_default=cfg.get("year_default"),
+                source_field=cfg.get("source_field", "host"),
+                level_field=level_field,
+                message_field=cfg.get("message_field", "msg"),
+                severity_map=sev_map,
+                severity_from_message=sev_msg,
+                event_rules=event_rules,
+                component_rules=comp_rules,
+                ip_regex=ip_rx,
+                actor_regex=actor_rx,
+                kv_regex=kv_rx,
+                defaults=defaults,
+            )
+        )
+        log.debug("Compiled profile '%s' (regex groups: %s)", name, cfg.get("line_regex", "")[:60])
 
     return result
 
@@ -124,6 +129,7 @@ def select_profile(profiles: list[Profile], filename: str) -> Profile | None:
 
 
 # ── Timestamp parsing ────────────────────────────────────────────────────────
+
 
 def _parse_timestamp(
     groups: dict[str, str],
@@ -160,6 +166,7 @@ def _parse_timestamp(
 
 
 # ── Field extraction helpers ─────────────────────────────────────────────────
+
 
 def _detect_severity(
     groups: dict[str, str],
@@ -232,7 +239,7 @@ def _extract_kv(message: str, profile: Profile) -> tuple[str, str, str]:
         if matches:
             key, raw_value = matches[0]
             # Separate numeric part from unit: "231.4V" → ("231.4", "V")
-            m = re.match(r'^([+-]?\d+\.?\d*)\s*([a-zA-Z/%]*)$', raw_value)
+            m = re.match(r"^([+-]?\d+\.?\d*)\s*([a-zA-Z/%]*)$", raw_value)
             if m:
                 return key, m.group(1), m.group(2)
             return key, raw_value, ""
@@ -240,6 +247,7 @@ def _extract_kv(message: str, profile: Profile) -> tuple[str, str, str]:
 
 
 # ── Main parse function ──────────────────────────────────────────────────────
+
 
 def parse_line(
     line: str,
@@ -271,8 +279,7 @@ def parse_line(
         return (line, "no_timestamp")
 
     # ── Source ──
-    source = groups.get(profile.source_field,
-                        profile.defaults.get("source", "unknown"))
+    source = groups.get(profile.source_field, profile.defaults.get("source", "unknown"))
 
     # ── Message ──
     message = groups.get(profile.message_field, "")

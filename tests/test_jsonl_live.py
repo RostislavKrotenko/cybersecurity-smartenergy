@@ -26,6 +26,7 @@ from src.emulator.engine import EmulatorEngine, stream_jsonl, write_csv, write_j
 #  _parse_event
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestParseEvent:
     def test_full_dict(self):
         row = {
@@ -72,16 +73,29 @@ class TestParseEvent:
 #  load_events_jsonl
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestLoadEventsJsonl:
     def test_basic_load(self, tmp_path):
         path = tmp_path / "test.jsonl"
         rows = [
-            {"timestamp": "2026-02-26T10:00:00Z", "source": "inv-01",
-             "component": "edge", "event": "telemetry_read", "key": "voltage",
-             "value": "220.5", "severity": "low"},
-            {"timestamp": "2026-02-26T10:00:01Z", "source": "inv-02",
-             "component": "edge", "event": "telemetry_read", "key": "current",
-             "value": "5.3", "severity": "low"},
+            {
+                "timestamp": "2026-02-26T10:00:00Z",
+                "source": "inv-01",
+                "component": "edge",
+                "event": "telemetry_read",
+                "key": "voltage",
+                "value": "220.5",
+                "severity": "low",
+            },
+            {
+                "timestamp": "2026-02-26T10:00:01Z",
+                "source": "inv-02",
+                "component": "edge",
+                "event": "telemetry_read",
+                "key": "current",
+                "value": "5.3",
+                "severity": "low",
+            },
         ]
         path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
         events = load_events_jsonl(str(path))
@@ -121,6 +135,7 @@ class TestLoadEventsJsonl:
 #  load_events auto-detect
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestLoadEventsAutoDetect:
     def test_csv_detected(self, tmp_path):
         path = tmp_path / "events.csv"
@@ -137,11 +152,18 @@ class TestLoadEventsAutoDetect:
     def test_jsonl_detected(self, tmp_path):
         path = tmp_path / "events.jsonl"
         path.write_text(
-            json.dumps({
-                "timestamp": "2026-02-26T10:00:00Z", "source": "inv-01",
-                "component": "edge", "event": "telemetry_read",
-                "key": "voltage", "value": "220.5", "severity": "low",
-            }) + "\n"
+            json.dumps(
+                {
+                    "timestamp": "2026-02-26T10:00:00Z",
+                    "source": "inv-01",
+                    "component": "edge",
+                    "event": "telemetry_read",
+                    "key": "voltage",
+                    "value": "220.5",
+                    "severity": "low",
+                }
+            )
+            + "\n"
         )
         events = load_events(str(path))
         assert len(events) == 1
@@ -151,6 +173,7 @@ class TestLoadEventsAutoDetect:
 # ═══════════════════════════════════════════════════════════════════════════
 #  CSV ↔ JSONL parity
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestCsvJsonlParity:
     """Events written via write_csv vs write_jsonl must reload identically."""
@@ -215,16 +238,13 @@ class TestCsvJsonlParity:
 #  stream_jsonl
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestStreamJsonl:
     @pytest.fixture
     def tiny_engine(self):
         comp = {
             "components": {
-                "edge": {
-                    "instances": [
-                        {"id": "inv-01", "ip": "10.0.0.1", "protocols": ["modbus"]}
-                    ]
-                }
+                "edge": {"instances": [{"id": "inv-01", "ip": "10.0.0.1", "protocols": ["modbus"]}]}
             }
         }
         scen = {

@@ -16,6 +16,7 @@ from tests.conftest import make_alert, ts_offset
 #  Helper functions
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestHelpers:
     def test_extract_cor_ids_single(self):
         ids = _extract_cor_ids("COR-001")
@@ -46,6 +47,7 @@ class TestHelpers:
 # ═══════════════════════════════════════════════════════════════════════════
 #  correlate() — grouping logic
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestCorrelate:
     def test_empty_alerts_returns_empty(self):
@@ -161,19 +163,22 @@ class TestCorrelate:
 #  _build_incident
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestBuildIncident:
     def test_basic_incident_fields(self):
-        group = [make_alert(
-            alert_id="ALR-0001",
-            threat_type="credential_attack",
-            severity="high",
-            confidence=0.85,
-            timestamp="2026-02-26T10:00:00Z",
-            component="api",
-            event_count=5,
-            description="test brute force",
-            response_hint="block_ip",
-        )]
+        group = [
+            make_alert(
+                alert_id="ALR-0001",
+                threat_type="credential_attack",
+                severity="high",
+                confidence=0.85,
+                timestamp="2026-02-26T10:00:00Z",
+                component="api",
+                event_count=5,
+                description="test brute force",
+                response_hint="block_ip",
+            )
+        ]
         inc = _build_incident(group, idx=1, policy="baseline", pm={})
         assert inc.incident_id == "INC-001"
         assert inc.policy == "baseline"
@@ -192,33 +197,39 @@ class TestBuildIncident:
         assert inc.severity == "critical"
 
     def test_impact_score_formula(self):
-        group = [make_alert(
-            severity="critical",
-            confidence=0.90,
-            threat_type="credential_attack",
-        )]
+        group = [
+            make_alert(
+                severity="critical",
+                confidence=0.90,
+                threat_type="credential_attack",
+            )
+        ]
         # impact = SEV_IMPACT["critical"] * avg_confidence * impact_multiplier
         # = 1.0 * 0.90 * 1.0 = 0.90
         inc = _build_incident(group, idx=1, policy="test", pm={})
         assert inc.impact_score == pytest.approx(0.90, abs=0.01)
 
     def test_impact_score_with_policy_modifier(self):
-        group = [make_alert(
-            severity="high",
-            confidence=0.80,
-            threat_type="credential_attack",
-        )]
+        group = [
+            make_alert(
+                severity="high",
+                confidence=0.80,
+                threat_type="credential_attack",
+            )
+        ]
         pm = {"credential_attack": {"impact_multiplier": 0.5}}
         # impact = 0.7 * 0.80 * 0.5 = 0.28
         inc = _build_incident(group, idx=1, policy="test", pm=pm)
         assert inc.impact_score == pytest.approx(0.28, abs=0.01)
 
     def test_impact_score_capped_at_one(self):
-        group = [make_alert(
-            severity="critical",
-            confidence=1.0,
-            threat_type="credential_attack",
-        )]
+        group = [
+            make_alert(
+                severity="critical",
+                confidence=1.0,
+                threat_type="credential_attack",
+            )
+        ]
         pm = {"credential_attack": {"impact_multiplier": 5.0}}
         inc = _build_incident(group, idx=1, policy="test", pm=pm)
         assert inc.impact_score <= 1.0
@@ -228,14 +239,16 @@ class TestBuildIncident:
         # Base: mttd=15, mttr=180
         pm = {"availability_attack": {"mttd_multiplier": 2.0, "mttr_multiplier": 0.5}}
         inc = _build_incident(group, idx=1, policy="test", pm=pm)
-        assert inc.mttd_sec == 30.0   # 15 * 2
-        assert inc.mttr_sec == 90.0   # 180 * 0.5
+        assert inc.mttd_sec == 30.0  # 15 * 2
+        assert inc.mttr_sec == 90.0  # 180 * 0.5
 
     def test_detect_and_recover_timestamps(self):
-        group = [make_alert(
-            timestamp="2026-02-26T10:00:00Z",
-            threat_type="credential_attack",
-        )]
+        group = [
+            make_alert(
+                timestamp="2026-02-26T10:00:00Z",
+                threat_type="credential_attack",
+            )
+        ]
         # mttd=30, mttr=120
         inc = _build_incident(group, idx=1, policy="test", pm={})
         assert inc.detect_ts == "2026-02-26T10:00:30Z"

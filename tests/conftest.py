@@ -12,6 +12,7 @@ from src.contracts.incident import Incident
 
 # ── Helper: create Event with sensible defaults ─────────────────────────
 
+
 def make_event(
     *,
     timestamp: str = "2026-02-26T10:00:00Z",
@@ -113,6 +114,7 @@ def make_incident(
 
 # ── Timestamp helpers ────────────────────────────────────────────────────
 
+
 def ts_offset(base: str = "2026-02-26T10:00:00Z", seconds: int = 0) -> str:
     """Return an ISO-8601 timestamp offset from *base* by *seconds*."""
     dt = datetime.fromisoformat(base.replace("Z", "+00:00"))
@@ -121,6 +123,7 @@ def ts_offset(base: str = "2026-02-26T10:00:00Z", seconds: int = 0) -> str:
 
 
 # ── Rules config fixtures ───────────────────────────────────────────────
+
 
 @pytest.fixture
 def brute_force_rule() -> dict:

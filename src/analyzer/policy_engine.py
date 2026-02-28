@@ -87,16 +87,19 @@ def rank_controls(
         avg_mttd = sum(mttd_vals) / len(mttd_vals) if mttd_vals else 1.0
         avg_mttr = sum(mttr_vals) / len(mttr_vals) if mttr_vals else 1.0
 
-        enabled_controls = [c for c, v in controls.items()
-                            if isinstance(v, dict) and v.get("enabled")]
+        enabled_controls = [
+            c for c, v in controls.items() if isinstance(v, dict) and v.get("enabled")
+        ]
 
-        results.append({
-            "policy": pname,
-            "enabled_controls": enabled_controls,
-            "avg_mttd_mult": round(avg_mttd, 3),
-            "avg_mttr_mult": round(avg_mttr, 3),
-            "effectiveness": round(1.0 - (avg_mttd + avg_mttr) / 2, 3),
-        })
+        results.append(
+            {
+                "policy": pname,
+                "enabled_controls": enabled_controls,
+                "avg_mttd_mult": round(avg_mttd, 3),
+                "avg_mttr_mult": round(avg_mttr, 3),
+                "effectiveness": round(1.0 - (avg_mttd + avg_mttr) / 2, 3),
+            }
+        )
 
     results.sort(key=lambda r: r["effectiveness"], reverse=True)
     return results

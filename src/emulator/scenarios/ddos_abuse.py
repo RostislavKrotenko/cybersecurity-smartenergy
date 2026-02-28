@@ -65,29 +65,34 @@ class DDoSAbuseScenario(BaseScenario):
                 comp = self._resolve_component(target)
                 ip = _pick(self.rng, ip_pool) if ip_pool else ""
 
-                key_spec = _pick(self.rng, keys_list) if keys_list else {"key": "status", "values": ["degraded"]}
+                key_spec = (
+                    _pick(self.rng, keys_list)
+                    if keys_list
+                    else {"key": "status", "values": ["degraded"]}
+                )
                 k = key_spec.get("key", "status")
                 if "range" in key_spec:
                     v = str(_uniform(self.rng, key_spec["range"][0], key_spec["range"][1]))
                 else:
                     v = str(_pick(self.rng, key_spec.get("values", [""])))
 
-                events.append(Event(
-                    timestamp=_ts(t),
-                    source=target,
-                    component=comp,
-                    event=ev_type,
-                    key=k,
-                    value=v,
-                    severity=sev,
-                    actor=actor,
-                    ip=ip,
-                    unit=key_spec.get("unit", ""),
-                    tags=ev_tags,
-                    correlation_id=cor_id,
-                ))
-                t = t + timedelta(milliseconds=self.rng.uniform(
-                    interval_ms[0], interval_ms[1]))
+                events.append(
+                    Event(
+                        timestamp=_ts(t),
+                        source=target,
+                        component=comp,
+                        event=ev_type,
+                        key=k,
+                        value=v,
+                        severity=sev,
+                        actor=actor,
+                        ip=ip,
+                        unit=key_spec.get("unit", ""),
+                        tags=ev_tags,
+                        correlation_id=cor_id,
+                    )
+                )
+                t = t + timedelta(milliseconds=self.rng.uniform(interval_ms[0], interval_ms[1]))
 
         log.info("ddos_abuse: generated %d events, offset=%ds", len(events), self.start_offset)
         return events

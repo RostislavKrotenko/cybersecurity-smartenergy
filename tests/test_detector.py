@@ -22,6 +22,7 @@ from tests.conftest import make_event, ts_offset
 #  Utility function tests
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestTimestampUtils:
     def test_ts_parses_iso_with_z(self):
         dt = _ts("2026-02-26T10:00:00Z")
@@ -51,6 +52,7 @@ class TestTimestampUtils:
 # ═══════════════════════════════════════════════════════════════════════════
 #  detect() — top-level dispatcher
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestDetect:
     def test_empty_events_returns_empty(self, brute_force_rule):
@@ -144,6 +146,7 @@ class TestDetect:
 #  Brute-force detection
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestDetectBruteForce:
     @pytest.fixture
     def rule(self):
@@ -190,18 +193,22 @@ class TestDetectBruteForce:
         # 3 events from IP-A, 3 from IP-B — neither hits threshold=5
         events = []
         for i in range(3):
-            events.append(make_event(
-                event="auth_failure",
-                timestamp=ts_offset(seconds=i),
-                ip="10.0.0.1",
-                source="api-gw-01",
-            ))
-            events.append(make_event(
-                event="auth_failure",
-                timestamp=ts_offset(seconds=i),
-                ip="10.0.0.2",
-                source="api-gw-01",
-            ))
+            events.append(
+                make_event(
+                    event="auth_failure",
+                    timestamp=ts_offset(seconds=i),
+                    ip="10.0.0.1",
+                    source="api-gw-01",
+                )
+            )
+            events.append(
+                make_event(
+                    event="auth_failure",
+                    timestamp=ts_offset(seconds=i),
+                    ip="10.0.0.2",
+                    source="api-gw-01",
+                )
+            )
         alerts = _detect_brute_force(events, rule, window=60, threshold=5, counter=0)
         assert len(alerts) == 0
 
@@ -251,6 +258,7 @@ class TestDetectBruteForce:
 #  DDoS detection
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestDetectDDoS:
     @pytest.fixture
     def rule(self):
@@ -274,8 +282,7 @@ class TestDetectDDoS:
             )
             for i in range(12)
         ]
-        alerts = _detect_ddos(events, rule, window=30, threshold=10,
-                              all_events=events, counter=0)
+        alerts = _detect_ddos(events, rule, window=30, threshold=10, all_events=events, counter=0)
         assert len(alerts) == 1
         assert alerts[0].event_count >= 10
 
@@ -288,8 +295,7 @@ class TestDetectDDoS:
             )
             for i in range(5)
         ]
-        alerts = _detect_ddos(events, rule, window=30, threshold=10,
-                              all_events=events, counter=0)
+        alerts = _detect_ddos(events, rule, window=30, threshold=10, all_events=events, counter=0)
         assert alerts == []
 
     def test_escalates_on_service_impact(self, rule):
@@ -311,8 +317,9 @@ class TestDetectDDoS:
             value="degraded",
         )
         all_events = [*rate_events, status_event]
-        alerts = _detect_ddos(rate_events, rule, window=30, threshold=10,
-                              all_events=all_events, counter=0)
+        alerts = _detect_ddos(
+            rate_events, rule, window=30, threshold=10, all_events=all_events, counter=0
+        )
         assert len(alerts) == 1
         assert alerts[0].severity == "critical"
         assert alerts[0].confidence == 0.98
@@ -322,6 +329,7 @@ class TestDetectDDoS:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Telemetry spoof detection
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestDetectTelemetrySpoof:
     @pytest.fixture
@@ -449,6 +457,7 @@ class TestDetectTelemetrySpoof:
 #  Unauthorized command detection
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestDetectUnauthorizedCmd:
     @pytest.fixture
     def rule(self):
@@ -494,8 +503,14 @@ class TestDetectUnauthorizedCmd:
     def test_confidence_escalation_on_multiple(self, rule):
         """>=3 unauthorized commands → confidence 0.99."""
         events = [
-            make_event(event="cmd_exec", actor="hacker", timestamp=ts_offset(seconds=i),
-                       source="inv-01", component="edge", correlation_id=f"COR-{i}")
+            make_event(
+                event="cmd_exec",
+                actor="hacker",
+                timestamp=ts_offset(seconds=i),
+                source="inv-01",
+                component="edge",
+                correlation_id=f"COR-{i}",
+            )
             for i in range(4)
         ]
         alerts = _detect_unauthorized_cmd(events, rule, counter=0)
@@ -506,6 +521,7 @@ class TestDetectUnauthorizedCmd:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Outage detection
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestDetectOutage:
     @pytest.fixture
@@ -527,44 +543,65 @@ class TestDetectOutage:
 
     def test_fires_on_degraded_status(self, rule):
         events = [
-            make_event(event="service_status", key="status", value="degraded",
-                       source="db-01", component="db", correlation_id="COR-1"),
+            make_event(
+                event="service_status",
+                key="status",
+                value="degraded",
+                source="db-01",
+                component="db",
+                correlation_id="COR-1",
+            ),
         ]
-        alerts = _detect_outage(events, rule, window=60, threshold=1,
-                                all_events=events, counter=0)
+        alerts = _detect_outage(events, rule, window=60, threshold=1, all_events=events, counter=0)
         assert len(alerts) == 1
         assert alerts[0].severity == "high"  # no severity_override for "degraded"
 
     def test_severity_override_for_down(self, rule):
         events = [
-            make_event(event="service_status", key="status", value="down",
-                       source="db-01", component="db", correlation_id="COR-1"),
+            make_event(
+                event="service_status",
+                key="status",
+                value="down",
+                source="db-01",
+                component="db",
+                correlation_id="COR-1",
+            ),
         ]
-        alerts = _detect_outage(events, rule, window=60, threshold=1,
-                                all_events=events, counter=0)
+        alerts = _detect_outage(events, rule, window=60, threshold=1, all_events=events, counter=0)
         assert len(alerts) == 1
         assert alerts[0].severity == "critical"
 
     def test_no_alert_for_healthy_status(self, rule):
         events = [
-            make_event(event="service_status", key="status", value="ok",
-                       source="db-01", component="db"),
+            make_event(
+                event="service_status", key="status", value="ok", source="db-01", component="db"
+            ),
         ]
-        alerts = _detect_outage(events, rule, window=60, threshold=1,
-                                all_events=events, counter=0)
+        alerts = _detect_outage(events, rule, window=60, threshold=1, all_events=events, counter=0)
         assert len(alerts) == 0
 
     def test_groups_by_source(self, rule):
         events = [
-            make_event(event="service_status", key="status", value="down",
-                       source="db-01", component="db",
-                       timestamp=ts_offset(seconds=0), correlation_id="COR-A"),
-            make_event(event="service_status", key="status", value="degraded",
-                       source="db-02", component="db",
-                       timestamp=ts_offset(seconds=5), correlation_id="COR-B"),
+            make_event(
+                event="service_status",
+                key="status",
+                value="down",
+                source="db-01",
+                component="db",
+                timestamp=ts_offset(seconds=0),
+                correlation_id="COR-A",
+            ),
+            make_event(
+                event="service_status",
+                key="status",
+                value="degraded",
+                source="db-02",
+                component="db",
+                timestamp=ts_offset(seconds=5),
+                correlation_id="COR-B",
+            ),
         ]
-        alerts = _detect_outage(events, rule, window=60, threshold=1,
-                                all_events=events, counter=0)
+        alerts = _detect_outage(events, rule, window=60, threshold=1, all_events=events, counter=0)
         assert len(alerts) == 2
         sources = {a.source for a in alerts}
         assert sources == {"db-01", "db-02"}

@@ -28,7 +28,9 @@ _LAYOUT: dict = dict(
     margin=dict(l=48, r=16, t=44, b=36),
     font=_FONT,
     title=dict(font=dict(size=14, color="#e6edf3"), x=0, xanchor="left", y=0.98, yanchor="top"),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)),
+    legend=dict(
+        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11)
+    ),
     bargap=0.35,
     height=340,
 )
@@ -65,23 +67,27 @@ def availability_bar(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     for _, row in df.iterrows():
         p = row["policy"]
-        fig.add_trace(go.Bar(
-            x=[p.capitalize()],
-            y=[row["availability_pct"]],
-            marker_color=_color(p),
-            marker_line_width=0,
-            showlegend=False,
-            hovertemplate="%{x}: %{y:.2f}%<extra></extra>",
-            text=[f"{row['availability_pct']:.2f}%"],
-            textposition="outside",
-            textfont=dict(size=12, color="#e6edf3"),
-        ))
+        fig.add_trace(
+            go.Bar(
+                x=[p.capitalize()],
+                y=[row["availability_pct"]],
+                marker_color=_color(p),
+                marker_line_width=0,
+                showlegend=False,
+                hovertemplate="%{x}: %{y:.2f}%<extra></extra>",
+                text=[f"{row['availability_pct']:.2f}%"],
+                textposition="outside",
+                textfont=dict(size=12, color="#e6edf3"),
+            )
+        )
     y_min = max(0, df["availability_pct"].min() - 5)
-    fig.update_layout(**_base(
-        title=dict(text="Availability by Security Policy"),
-        yaxis=dict(range=[y_min, 102], title="", gridcolor=_GRID_COLOR, zeroline=False),
-        xaxis=dict(title=""),
-    ))
+    fig.update_layout(
+        **_base(
+            title=dict(text="Availability by Security Policy"),
+            yaxis=dict(range=[y_min, 102], title="", gridcolor=_GRID_COLOR, zeroline=False),
+            xaxis=dict(title=""),
+        )
+    )
     return fig
 
 
@@ -93,20 +99,24 @@ def downtime_bar(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     for _, row in df.iterrows():
         p = row["policy"]
-        fig.add_trace(go.Bar(
-            x=[p.capitalize()],
-            y=[row["total_downtime_hr"]],
-            marker_color=_color(p),
-            marker_line_width=0,
-            showlegend=False,
-            hovertemplate="%{x}: %{y:.2f} h<extra></extra>",
-            text=[f"{row['total_downtime_hr']:.2f}"],
-            textposition="outside",
-            textfont=dict(size=12, color="#e6edf3"),
-        ))
-    fig.update_layout(**_base(
-        title=dict(text="Downtime Comparison"),
-        yaxis=dict(title="", gridcolor=_GRID_COLOR, zeroline=False),
-        xaxis=dict(title=""),
-    ))
+        fig.add_trace(
+            go.Bar(
+                x=[p.capitalize()],
+                y=[row["total_downtime_hr"]],
+                marker_color=_color(p),
+                marker_line_width=0,
+                showlegend=False,
+                hovertemplate="%{x}: %{y:.2f} h<extra></extra>",
+                text=[f"{row['total_downtime_hr']:.2f}"],
+                textposition="outside",
+                textfont=dict(size=12, color="#e6edf3"),
+            )
+        )
+    fig.update_layout(
+        **_base(
+            title=dict(text="Downtime Comparison"),
+            yaxis=dict(title="", gridcolor=_GRID_COLOR, zeroline=False),
+            xaxis=dict(title=""),
+        )
+    )
     return fig

@@ -25,6 +25,7 @@ from src.normalizer.parser import (
 #  Fixtures — minimal API-like profile
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @pytest.fixture
 def api_profile() -> Profile:
     """A minimal profile matching API gateway logs."""
@@ -32,8 +33,8 @@ def api_profile() -> Profile:
         name="api",
         file_pattern=re.compile(r"api", re.IGNORECASE),
         line_regex=re.compile(
-            r'^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+'
-            r'(?P<level>\w+)\s+(?P<host>\S+)\s+(?P<msg>.+)$'
+            r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+"
+            r"(?P<level>\w+)\s+(?P<host>\S+)\s+(?P<msg>.+)$"
         ),
         timestamp_format="iso_space",
         year_default=None,
@@ -41,26 +42,30 @@ def api_profile() -> Profile:
         level_field="level",
         message_field="msg",
         severity_map={
-            "debug": "low", "info": "low", "warn": "medium",
-            "warning": "medium", "error": "high", "critical": "critical",
+            "debug": "low",
+            "info": "low",
+            "warn": "medium",
+            "warning": "medium",
+            "error": "high",
+            "critical": "critical",
         },
         severity_from_message={
             "critical": ["fatal", "panic"],
             "high": ["denied", "refused"],
         },
         event_rules=[
-            (re.compile(r'(?:GET|POST|PUT|DELETE)\s+/'), "http_request", "api,http"),
-            (re.compile(r'(?i)rate.?limit|throttl'), "rate_exceeded", "api,rate"),
-            (re.compile(r'(?i)auth.*fail|login.*fail'), "auth_failure", "auth"),
-            (re.compile(r'(?i)auth.*success|login.*success'), "auth_success", "auth"),
+            (re.compile(r"(?:GET|POST|PUT|DELETE)\s+/"), "http_request", "api,http"),
+            (re.compile(r"(?i)rate.?limit|throttl"), "rate_exceeded", "api,rate"),
+            (re.compile(r"(?i)auth.*fail|login.*fail"), "auth_failure", "auth"),
+            (re.compile(r"(?i)auth.*success|login.*success"), "auth_success", "auth"),
         ],
         component_rules=[
-            (re.compile(r'api', re.IGNORECASE), "api"),
-            (re.compile(r'db', re.IGNORECASE), "db"),
+            (re.compile(r"api", re.IGNORECASE), "api"),
+            (re.compile(r"db", re.IGNORECASE), "db"),
         ],
-        ip_regex=re.compile(r'(?:from |src[= ]|client[= ])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'),
-        actor_regex=re.compile(r'user[= ](\S+)'),
-        kv_regex=re.compile(r'(\w+)[= ]([^\s,]+)'),
+        ip_regex=re.compile(r"(?:from |src[= ]|client[= ])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"),
+        actor_regex=re.compile(r"user[= ](\S+)"),
+        kv_regex=re.compile(r"(\w+)[= ]([^\s,]+)"),
         defaults={
             "source": "unknown",
             "component": "unknown",
@@ -77,8 +82,8 @@ def syslog_profile() -> Profile:
         name="syslog",
         file_pattern=re.compile(r"syslog|messages", re.IGNORECASE),
         line_regex=re.compile(
-            r'^(?P<month>\w{3})\s+(?P<day>\d{1,2})\s+(?P<time>\d{2}:\d{2}:\d{2})\s+'
-            r'(?P<host>\S+)\s+(?P<msg>.+)$'
+            r"^(?P<month>\w{3})\s+(?P<day>\d{1,2})\s+(?P<time>\d{2}:\d{2}:\d{2})\s+"
+            r"(?P<host>\S+)\s+(?P<msg>.+)$"
         ),
         timestamp_format="syslog",
         year_default=2026,
@@ -92,10 +97,10 @@ def syslog_profile() -> Profile:
             "medium": ["warning"],
         },
         event_rules=[
-            (re.compile(r'error|failure', re.IGNORECASE), "system_error", "system"),
+            (re.compile(r"error|failure", re.IGNORECASE), "system_error", "system"),
         ],
         component_rules=[
-            (re.compile(r'switch', re.IGNORECASE), "network"),
+            (re.compile(r"switch", re.IGNORECASE), "network"),
         ],
         ip_regex=None,
         actor_regex=None,
@@ -113,6 +118,7 @@ def syslog_profile() -> Profile:
 #  build_profiles / select_profile
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestBuildAndSelectProfile:
     def test_build_profiles_from_config(self):
         cfg = {
@@ -120,7 +126,7 @@ class TestBuildAndSelectProfile:
             "profiles": {
                 "test_api": {
                     "file_pattern": "api",
-                    "line_regex": r'^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(?P<level>\w+)\s+(?P<host>\S+)\s+(?P<msg>.+)$',
+                    "line_regex": r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(?P<level>\w+)\s+(?P<host>\S+)\s+(?P<msg>.+)$",
                     "timestamp_format": "iso_space",
                     "source_field": "host",
                     "level_field": "level",
@@ -149,6 +155,7 @@ class TestBuildAndSelectProfile:
 # ═══════════════════════════════════════════════════════════════════════════
 #  parse_line
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestParseLine:
     def test_successful_api_line(self, api_profile):
@@ -224,6 +231,7 @@ class TestParseLine:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Field extraction helpers
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestDetectSeverity:
     def test_from_level_field(self, api_profile):

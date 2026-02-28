@@ -18,6 +18,7 @@ from tests.conftest import make_incident
 #  _merge_intervals
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestMergeIntervals:
     def _dt(self, minutes: int) -> datetime:
         return datetime(2026, 2, 26, 10, minutes, 0, tzinfo=UTC)
@@ -92,6 +93,7 @@ class TestMergeIntervals:
 # ═══════════════════════════════════════════════════════════════════════════
 #  compute()
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestCompute:
     def test_no_incidents_100_percent_availability(self):
@@ -187,8 +189,12 @@ class TestCompute:
         assert m.availability_pct == 100.0
 
     def test_incidents_by_threat_counted(self):
-        inc1 = make_incident(threat_type="credential_attack", severity="low", mttd_sec=10, mttr_sec=10)
-        inc2 = make_incident(threat_type="credential_attack", severity="low", mttd_sec=20, mttr_sec=20)
+        inc1 = make_incident(
+            threat_type="credential_attack", severity="low", mttd_sec=10, mttr_sec=10
+        )
+        inc2 = make_incident(
+            threat_type="credential_attack", severity="low", mttd_sec=20, mttr_sec=20
+        )
         inc3 = make_incident(threat_type="outage", severity="low", mttd_sec=30, mttr_sec=30)
         m = compute([inc1, inc2, inc3], "baseline", horizon_sec=3600)
         assert m.incidents_by_threat["credential_attack"] == 2
@@ -205,6 +211,7 @@ class TestCompute:
 # ═══════════════════════════════════════════════════════════════════════════
 #  PolicyMetrics serialisation
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestPolicyMetricsSerialization:
     def test_csv_header_matches_columns(self):
@@ -234,6 +241,6 @@ class TestPolicyMetricsSerialization:
         parts = row.split(",")
         assert parts[0] == "standard"
         assert parts[1] == "95.50"
-        assert parts[6] == "1"   # critical
-        assert parts[7] == "2"   # high
+        assert parts[6] == "1"  # critical
+        assert parts[7] == "2"  # high
         assert parts[10] == "2"  # credential_attack (index 10 per RESULTS_CSV_COLUMNS)

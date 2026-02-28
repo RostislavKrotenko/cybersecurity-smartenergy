@@ -60,6 +60,7 @@ RESULTS_CSV_COLUMNS = [
 @dataclass
 class PolicyMetrics:
     """Aggregated resilience metrics for one policy."""
+
     policy: str
     availability_pct: float = 100.0
     total_downtime_hr: float = 0.0
@@ -127,20 +128,12 @@ def compute(
 
     # Count by severity and threat_type
     for inc in incidents:
-        m.incidents_by_severity[inc.severity] = (
-            m.incidents_by_severity.get(inc.severity, 0) + 1
-        )
-        m.incidents_by_threat[inc.threat_type] = (
-            m.incidents_by_threat.get(inc.threat_type, 0) + 1
-        )
+        m.incidents_by_severity[inc.severity] = m.incidents_by_severity.get(inc.severity, 0) + 1
+        m.incidents_by_threat[inc.threat_type] = m.incidents_by_threat.get(inc.threat_type, 0) + 1
 
     # MTTD and MTTR averages
-    m.mean_mttd_min = round(
-        sum(i.mttd_sec for i in incidents) / len(incidents) / 60, 2
-    )
-    m.mean_mttr_min = round(
-        sum(i.mttr_sec for i in incidents) / len(incidents) / 60, 2
-    )
+    m.mean_mttd_min = round(sum(i.mttd_sec for i in incidents) / len(incidents) / 60, 2)
+    m.mean_mttr_min = round(sum(i.mttr_sec for i in incidents) / len(incidents) / 60, 2)
 
     # Downtime: merge overlapping intervals of severity >= high
     high_sev = {"high", "critical"}
@@ -157,17 +150,18 @@ def compute(
 
     # Availability
     if horizon_sec > 0:
-        m.availability_pct = round(
-            (1 - total_dt_sec / horizon_sec) * 100, 2
-        )
+        m.availability_pct = round((1 - total_dt_sec / horizon_sec) * 100, 2)
     else:
         m.availability_pct = 100.0
 
     log.info(
-        "Metrics [%s]: availability=%.2f%%, downtime=%.4fh, mttd=%.2fm, "
-        "mttr=%.2fm, incidents=%d",
-        policy_name, m.availability_pct, m.total_downtime_hr,
-        m.mean_mttd_min, m.mean_mttr_min, m.incidents_total,
+        "Metrics [%s]: availability=%.2f%%, downtime=%.4fh, mttd=%.2fm, mttr=%.2fm, incidents=%d",
+        policy_name,
+        m.availability_pct,
+        m.total_downtime_hr,
+        m.mean_mttd_min,
+        m.mean_mttr_min,
+        m.incidents_total,
     )
 
     return m

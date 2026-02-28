@@ -15,6 +15,7 @@ import streamlit as st
 
 try:
     from streamlit_autorefresh import st_autorefresh  # type: ignore[import-untyped]
+
     _HAS_AUTOREFRESH = True
 except ImportError:
     _HAS_AUTOREFRESH = False
@@ -23,6 +24,7 @@ except ImportError:
 @dataclass
 class SidebarState:
     """Values collected from sidebar controls."""
+
     policies: list[str]
     severities: list[str]
     threat_types: list[str]
@@ -72,11 +74,16 @@ def render_sidebar(
 
         # severity
         sev_options = (
-            sorted(incidents_df["severity"].dropna().unique(), key=lambda s: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(s, 9))
+            sorted(
+                incidents_df["severity"].dropna().unique(),
+                key=lambda s: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(s, 9),
+            )
             if incidents_df is not None and "severity" in incidents_df.columns
             else []
         )
-        severities = st.multiselect("Severity", options=sev_options, default=sev_options, label_visibility="visible")
+        severities = st.multiselect(
+            "Severity", options=sev_options, default=sev_options, label_visibility="visible"
+        )
 
         # threat type
         type_options = (
@@ -84,7 +91,9 @@ def render_sidebar(
             if incidents_df is not None and "threat_type" in incidents_df.columns
             else []
         )
-        threat_types = st.multiselect("Threat type", options=type_options, default=type_options, label_visibility="visible")
+        threat_types = st.multiselect(
+            "Threat type", options=type_options, default=type_options, label_visibility="visible"
+        )
 
         # component
         comp_options = (
@@ -92,7 +101,9 @@ def render_sidebar(
             if incidents_df is not None and "component" in incidents_df.columns
             else []
         )
-        components = st.multiselect("Component", options=comp_options, default=comp_options, label_visibility="visible")
+        components = st.multiselect(
+            "Component", options=comp_options, default=comp_options, label_visibility="visible"
+        )
 
         # horizon
         horizon_days = st.number_input(
@@ -121,6 +132,7 @@ def render_sidebar(
         if auto_refresh:
             if _HAS_AUTOREFRESH:
                 from src.dashboard.data_access import clear_caches
+
                 clear_caches()
                 st_autorefresh(interval=refresh_interval * 1000, key="live_refresh")
             else:

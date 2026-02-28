@@ -11,19 +11,19 @@ from __future__ import annotations
 
 POLICY_COLORS: dict[str, str] = {
     "baseline": "#f59e0b",
-    "minimal":  "#ef4444",
+    "minimal": "#ef4444",
     "standard": "#22c55e",
 }
 
 POLICY_DISPLAY: dict[str, str] = {
     "baseline": "Baseline Policy",
-    "minimal":  "Minimal Security",
+    "minimal": "Minimal Security",
     "standard": "Standard Security",
 }
 
 POLICY_ACCENT_CLASS: dict[str, str] = {
     "baseline": "card-accent-baseline",
-    "minimal":  "card-accent-minimal",
+    "minimal": "card-accent-minimal",
     "standard": "card-accent-standard",
 }
 
@@ -46,11 +46,11 @@ def policy_kpi_card(
         f'    <div class="policy-metric-label">Availability</div>'
         f'    <div class="policy-metric-row">'
         f'      <span class="policy-metric-item">Downtime: {downtime_hr:.2f} h</span>'
-        f'    </div>'
+        f"    </div>"
         f'    <div class="policy-metric-row">'
         f'      <span class="policy-metric-item">Mean MTTD: {mttd_min:.0f} min</span>'
         f'      <span class="policy-metric-item">Mean MTTR: {mttr_min:.0f} min</span>'
-        f'    </div>'
-        f'  </div>'
-        f'</div>'
+        f"    </div>"
+        f"  </div>"
+        f"</div>"
     )

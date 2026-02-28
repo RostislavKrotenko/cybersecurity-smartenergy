@@ -17,6 +17,7 @@ from src.contracts.incident import INCIDENT_CSV_COLUMNS, Incident
 #  Event
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestEvent:
     @pytest.fixture
     def sample_event(self):
@@ -45,8 +46,8 @@ class TestEvent:
         values = next(reader)
         assert len(values) == len(CSV_COLUMNS)
         assert values[0] == "2026-02-26T10:00:00Z"  # timestamp
-        assert values[1] == "inv-01"                  # source
-        assert values[7] == "220.5"                   # value (index 7 per CSV_COLUMNS)
+        assert values[1] == "inv-01"  # source
+        assert values[7] == "220.5"  # value (index 7 per CSV_COLUMNS)
 
     def test_to_json(self, sample_event):
         j = sample_event.to_json()
@@ -83,6 +84,7 @@ class TestEvent:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Alert
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestAlert:
     def test_alert_fields(self):
@@ -127,6 +129,7 @@ class TestAlert:
 #  Incident
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestIncident:
     @pytest.fixture
     def sample_incident(self):
@@ -169,6 +172,7 @@ class TestIncident:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Enums
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestEnums:
     def test_severity_values(self):

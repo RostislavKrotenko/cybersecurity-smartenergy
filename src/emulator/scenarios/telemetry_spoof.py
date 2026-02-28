@@ -47,30 +47,36 @@ class TelemetrySpoofScenario(BaseScenario):
                 comp = self._resolve_component(target)
                 ip = self._resolve_ip(target)
 
-                key_spec = _pick(self.rng, keys_list) if keys_list else {"key": "voltage", "range": [500, 1200], "unit": "V"}
+                key_spec = (
+                    _pick(self.rng, keys_list)
+                    if keys_list
+                    else {"key": "voltage", "range": [500, 1200], "unit": "V"}
+                )
                 k = key_spec["key"]
                 if "range" in key_spec:
                     v = str(_uniform(self.rng, key_spec["range"][0], key_spec["range"][1]))
                 else:
                     v = str(_pick(self.rng, key_spec.get("values", ["0"])))
 
-                events.append(Event(
-                    timestamp=_ts(t),
-                    source=target,
-                    component=comp,
-                    event=ev_type,
-                    key=k,
-                    value=v,
-                    severity=static_severity,
-                    actor=actor,
-                    ip=ip,
-                    unit=key_spec.get("unit", ""),
-                    tags=tags_str,
-                    correlation_id=cor_id,
-                ))
-                t = t + timedelta(milliseconds=self.rng.uniform(
-                    interval_ms[0], interval_ms[1]))
+                events.append(
+                    Event(
+                        timestamp=_ts(t),
+                        source=target,
+                        component=comp,
+                        event=ev_type,
+                        key=k,
+                        value=v,
+                        severity=static_severity,
+                        actor=actor,
+                        ip=ip,
+                        unit=key_spec.get("unit", ""),
+                        tags=tags_str,
+                        correlation_id=cor_id,
+                    )
+                )
+                t = t + timedelta(milliseconds=self.rng.uniform(interval_ms[0], interval_ms[1]))
 
-        log.info("telemetry_spoofing: generated %d events, offset=%ds",
-                 len(events), self.start_offset)
+        log.info(
+            "telemetry_spoofing: generated %d events, offset=%ds", len(events), self.start_offset
+        )
         return events

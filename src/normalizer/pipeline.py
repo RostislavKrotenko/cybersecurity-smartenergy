@@ -35,6 +35,7 @@ def _resolve_tz(tz_name: str) -> timezone | Any:
         return UTC
     # Python 3.9+ zoneinfo
     from zoneinfo import ZoneInfo
+
     return ZoneInfo(tz_name)
 
 
@@ -135,12 +136,14 @@ class NormalizerPipeline:
                     file_stats["parsed"] += 1
                 else:
                     line_text, reason = result
-                    quarantine.append({
-                        "file": fpath,
-                        "line_no": line_no,
-                        "raw_line": line_text,
-                        "reason": reason,
-                    })
+                    quarantine.append(
+                        {
+                            "file": fpath,
+                            "line_no": line_no,
+                            "raw_line": line_text,
+                            "reason": reason,
+                        }
+                    )
                     file_stats["quarantined"] += 1
 
         stats["by_source"][fpath] = file_stats
@@ -160,12 +163,14 @@ class NormalizerPipeline:
             for line_no, raw_line in enumerate(fh, 1):
                 file_stats["lines"] += 1
                 file_stats["quarantined"] += 1
-                quarantine.append({
-                    "file": fpath,
-                    "line_no": line_no,
-                    "raw_line": raw_line.rstrip("\n\r"),
-                    "reason": "no_profile",
-                })
+                quarantine.append(
+                    {
+                        "file": fpath,
+                        "line_no": line_no,
+                        "raw_line": raw_line.rstrip("\n\r"),
+                        "reason": "no_profile",
+                    }
+                )
         stats["by_source"][fpath] = file_stats
         stats["total_lines"] += file_stats["lines"]
         stats["total_quarantined"] += file_stats["quarantined"]
