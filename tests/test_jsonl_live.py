@@ -1,11 +1,4 @@
-"""Tests for JSONL input support and live / watch mode helpers.
-
-Covers:
-  - load_events_jsonl / load_events auto-detect
-  - JSONL ↔ CSV parity (same events produce same analysis)
-  - stream_jsonl writes valid JSONL incrementally
-  - watch_pipeline internal helpers
-"""
+"""Тести JSONL та watch mode."""
 
 from __future__ import annotations
 
@@ -21,10 +14,6 @@ from src.analyzer.pipeline import (
 )
 from src.contracts.event import CSV_COLUMNS, Event
 from src.emulator.engine import EmulatorEngine, stream_jsonl, write_csv, write_jsonl
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  _parse_event
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestParseEvent:
@@ -67,11 +56,6 @@ class TestParseEvent:
         ev = _parse_event({})
         assert ev.severity == "low"
         assert ev.timestamp == ""
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  load_events_jsonl
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestLoadEventsJsonl:
@@ -131,11 +115,6 @@ class TestLoadEventsJsonl:
         assert len(events) == 2
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  load_events auto-detect
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class TestLoadEventsAutoDetect:
     def test_csv_detected(self, tmp_path):
         path = tmp_path / "events.csv"
@@ -170,13 +149,8 @@ class TestLoadEventsAutoDetect:
         assert events[0].source == "inv-01"
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  CSV ↔ JSONL parity
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class TestCsvJsonlParity:
-    """Events written via write_csv vs write_jsonl must reload identically."""
+    """Події записані через write_csv/write_jsonl повинні бути ідентичними."""
 
     @pytest.fixture
     def sample_events(self):
@@ -232,11 +206,6 @@ class TestCsvJsonlParity:
             assert csv_ev.severity == jsonl_ev.severity
             assert csv_ev.actor == jsonl_ev.actor
             assert csv_ev.ip == jsonl_ev.ip
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  stream_jsonl
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestStreamJsonl:

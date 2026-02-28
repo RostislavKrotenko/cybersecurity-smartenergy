@@ -1,4 +1,4 @@
-"""Tests for src.analyzer.detector — rule-based detection engine."""
+"""Тести детектора: виявлення за правилами."""
 
 from __future__ import annotations
 
@@ -17,10 +17,6 @@ from src.analyzer.detector import (
     detect,
 )
 from tests.conftest import make_event, ts_offset
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Utility function tests
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestTimestampUtils:
@@ -47,11 +43,6 @@ class TestTimestampUtils:
         a = "2026-02-26T10:01:00Z"
         b = "2026-02-26T10:00:00Z"
         assert _diff_sec(a, b) == -60.0
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  detect() — top-level dispatcher
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestDetect:
@@ -109,7 +100,7 @@ class TestDetect:
                 assert a.timestamp <= b.timestamp
 
     def test_policy_modifiers_adjust_threshold(self, brute_force_rule):
-        """With threshold_multiplier=2.0, need 10 events instead of 5."""
+        """При threshold_multiplier=2.0 потрібно 10 подій замість 5."""
         events = [
             make_event(
                 event="auth_failure",
@@ -125,7 +116,7 @@ class TestDetect:
         assert len(alerts) == 0  # threshold is now 10
 
     def test_policy_modifiers_adjust_window(self, brute_force_rule):
-        """With window_multiplier=0.1, the 60s window shrinks to 6s."""
+        """При window_multiplier=0.1 вікно 60s стає 6s."""
         events = [
             make_event(
                 event="auth_failure",
@@ -140,11 +131,6 @@ class TestDetect:
         alerts = detect(events, brute_force_rule, policy_modifiers=modifiers)
         # window is 6s but events are 10s apart — never accumulate 5 in window
         assert len(alerts) == 0
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Brute-force detection
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestDetectBruteForce:
@@ -254,11 +240,6 @@ class TestDetectBruteForce:
         assert "192.168.1.100" in alerts[0].description
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  DDoS detection
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class TestDetectDDoS:
     @pytest.fixture
     def rule(self):
@@ -324,11 +305,6 @@ class TestDetectDDoS:
         assert alerts[0].severity == "critical"
         assert alerts[0].confidence == 0.98
         assert "service impact" in alerts[0].description
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Telemetry spoof detection
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestDetectTelemetrySpoof:
@@ -453,11 +429,6 @@ class TestDetectTelemetrySpoof:
         assert alerts[0].confidence == 0.90
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Unauthorized command detection
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class TestDetectUnauthorizedCmd:
     @pytest.fixture
     def rule(self):
@@ -516,11 +487,6 @@ class TestDetectUnauthorizedCmd:
         alerts = _detect_unauthorized_cmd(events, rule, counter=0)
         assert alerts[0].confidence == 0.99
         assert alerts[0].event_count == 4
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Outage detection
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestDetectOutage:

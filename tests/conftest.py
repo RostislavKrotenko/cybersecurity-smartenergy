@@ -1,4 +1,4 @@
-"""Shared fixtures for SmartEnergy Cyber-Resilience Analyzer tests."""
+"""Фікстури для тестів."""
 
 from __future__ import annotations
 
@@ -9,8 +9,6 @@ import pytest
 from src.contracts.alert import Alert
 from src.contracts.event import Event
 from src.contracts.incident import Incident
-
-# ── Helper: create Event with sensible defaults ─────────────────────────
 
 
 def make_event(
@@ -112,22 +110,17 @@ def make_incident(
     )
 
 
-# ── Timestamp helpers ────────────────────────────────────────────────────
-
 
 def ts_offset(base: str = "2026-02-26T10:00:00Z", seconds: int = 0) -> str:
-    """Return an ISO-8601 timestamp offset from *base* by *seconds*."""
+    """Повертає ISO-8601 timestamp зі зсувом в секундах."""
     dt = datetime.fromisoformat(base.replace("Z", "+00:00"))
     dt += timedelta(seconds=seconds)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-# ── Rules config fixtures ───────────────────────────────────────────────
-
-
 @pytest.fixture
 def brute_force_rule() -> dict:
-    """Minimal brute-force rule config matching rules.yaml RULE-BF-001."""
+    """Мінімальна конфігурація brute-force правила."""
     return {
         "rules": [
             {
@@ -148,7 +141,7 @@ def brute_force_rule() -> dict:
 
 @pytest.fixture
 def ddos_rule() -> dict:
-    """Minimal DDoS rule config."""
+    """Мінімальна конфігурація DDoS правила."""
     return {
         "rules": [
             {
@@ -169,7 +162,7 @@ def ddos_rule() -> dict:
 
 @pytest.fixture
 def spoof_rule() -> dict:
-    """Minimal telemetry spoof rule config."""
+    """Мінімальна конфігурація spoof правила."""
     return {
         "rules": [
             {
@@ -195,7 +188,7 @@ def spoof_rule() -> dict:
 
 @pytest.fixture
 def unauthorized_cmd_rule() -> dict:
-    """Minimal unauthorized cmd rule config."""
+    """Мінімальна конфігурація unauthorized cmd правила."""
     return {
         "rules": [
             {
@@ -219,7 +212,7 @@ def unauthorized_cmd_rule() -> dict:
 
 @pytest.fixture
 def outage_rule() -> dict:
-    """Minimal outage rule config."""
+    """Мінімальна конфігурація outage правила."""
     return {
         "rules": [
             {

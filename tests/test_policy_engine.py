@@ -1,4 +1,4 @@
-"""Tests for src.analyzer.policy_engine — policy loading and modifier extraction."""
+"""Тести policy engine."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from src.analyzer.policy_engine import (
 
 @pytest.fixture
 def policies_cfg():
-    """Minimal policies config mirroring real structure."""
+    """Мінімальна конфігурація політик."""
     return {
         "policies": {
             "minimal": {

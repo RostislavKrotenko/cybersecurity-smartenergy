@@ -1,4 +1,4 @@
-"""Tests for src.analyzer.correlator — alert-to-incident grouping."""
+"""Тести корелятора: групування алертів у інциденти."""
 
 from __future__ import annotations
 
@@ -11,10 +11,6 @@ from src.analyzer.correlator import (
     correlate,
 )
 from tests.conftest import make_alert, ts_offset
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Helper functions
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestHelpers:
@@ -42,11 +38,6 @@ class TestHelpers:
 
     def test_max_sev_same(self):
         assert _max_sev("low", "low") == "low"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  correlate() — grouping logic
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestCorrelate:
@@ -157,11 +148,6 @@ class TestCorrelate:
 
         assert inc_fast.mttd_sec < inc_baseline.mttd_sec
         assert inc_fast.mttr_sec < inc_baseline.mttr_sec
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  _build_incident
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestBuildIncident:

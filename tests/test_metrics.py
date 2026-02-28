@@ -1,4 +1,4 @@
-"""Tests for src.analyzer.metrics — resilience metric computation."""
+"""Тести розрахунку метрик стійкості."""
 
 from __future__ import annotations
 
@@ -13,10 +13,6 @@ from src.analyzer.metrics import (
     compute,
 )
 from tests.conftest import make_incident
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  _merge_intervals
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestMergeIntervals:
@@ -50,7 +46,7 @@ class TestMergeIntervals:
         assert merged[0] == (self._dt(0), self._dt(15))
 
     def test_adjacent_intervals_merged(self):
-        """Intervals that touch exactly at boundary are merged."""
+        """Суміжні інтервали об'єднуються."""
         iv = [
             (self._dt(0), self._dt(10)),
             (self._dt(10), self._dt(20)),
@@ -88,11 +84,6 @@ class TestMergeIntervals:
         assert len(merged) == 2
         assert merged[0] == (self._dt(0), self._dt(25))
         assert merged[1] == (self._dt(30), self._dt(40))
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  compute()
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestCompute:
@@ -206,11 +197,6 @@ class TestCompute:
         m = compute([inc1, inc2], "baseline", horizon_sec=3600)
         assert m.mean_mttd_min == round((60 + 120) / 2 / 60, 2)  # 1.5
         assert m.mean_mttr_min == round((120 + 240) / 2 / 60, 2)  # 3.0
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  PolicyMetrics serialisation
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestPolicyMetricsSerialization:

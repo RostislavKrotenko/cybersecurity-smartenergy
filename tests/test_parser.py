@@ -1,4 +1,4 @@
-"""Tests for src.normalizer.parser — raw log line parsing."""
+"""Тести парсера логів."""
 
 from __future__ import annotations
 
@@ -21,14 +21,10 @@ from src.normalizer.parser import (
     select_profile,
 )
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Fixtures — minimal API-like profile
-# ═══════════════════════════════════════════════════════════════════════════
-
 
 @pytest.fixture
 def api_profile() -> Profile:
-    """A minimal profile matching API gateway logs."""
+    """Мінімальний профіль для API gateway логів."""
     return Profile(
         name="api",
         file_pattern=re.compile(r"api", re.IGNORECASE),
@@ -77,7 +73,7 @@ def api_profile() -> Profile:
 
 @pytest.fixture
 def syslog_profile() -> Profile:
-    """A minimal syslog-style profile."""
+    """Мінімальний syslog-style профіль."""
     return Profile(
         name="syslog",
         file_pattern=re.compile(r"syslog|messages", re.IGNORECASE),
@@ -114,11 +110,6 @@ def syslog_profile() -> Profile:
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  build_profiles / select_profile
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class TestBuildAndSelectProfile:
     def test_build_profiles_from_config(self):
         cfg = {
@@ -150,11 +141,6 @@ class TestBuildAndSelectProfile:
     def test_select_profile_no_match(self, api_profile):
         p = select_profile([api_profile], "firewall_logs.txt")
         assert p is None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  parse_line
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestParseLine:
@@ -226,11 +212,6 @@ class TestParseLine:
         line = "2026-02-26 10:00:00 INFO api-gw-01 GET /health 200\n"
         result = parse_line(line, api_profile, UTC)
         assert isinstance(result, Event)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Field extraction helpers
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestDetectSeverity:

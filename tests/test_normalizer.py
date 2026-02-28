@@ -1,4 +1,4 @@
-"""Test 5 — Normalizer: parsing + quarantine."""
+"""Тести нормалайзера."""
 
 from __future__ import annotations
 
@@ -37,13 +37,8 @@ def auth_profile(profiles):
     return p
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  Parsing: successful lines
-# ═════════════════════════════════════════════════════════════════════════════
-
-
 class TestParserSuccess:
-    """Raw log lines that should parse into Events."""
+    """Сирі рядки логів які повинні парситись у Events."""
 
     def test_api_info_line(self, api_profile):
         line = "2026-09-10 12:31:02 INFO api-gw-01 GET /api/v1/telemetry 200"
@@ -67,13 +62,8 @@ class TestParserSuccess:
         assert "auth" in result.component or result.source == "auth-server"
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  Parsing: quarantine (unparseable lines)
-# ═════════════════════════════════════════════════════════════════════════════
-
-
 class TestParserQuarantine:
-    """Lines that should fail parsing and go to quarantine."""
+    """Рядки які повинні потрапити в карантин."""
 
     def test_empty_line(self, api_profile):
         result = parse_line("", api_profile, UTC)
@@ -89,11 +79,6 @@ class TestParserQuarantine:
         result = parse_line("    \t  ", api_profile, UTC)
         assert isinstance(result, tuple)
         assert result[1] == "empty_line"
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  Filters: dedup + validate
-# ═════════════════════════════════════════════════════════════════════════════
 
 
 class TestDedup:

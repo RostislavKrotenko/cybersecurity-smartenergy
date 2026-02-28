@@ -1,4 +1,4 @@
-"""Tests for src.emulator.engine — EmulatorEngine simulation."""
+"""Тести EmulatorEngine."""
 
 from __future__ import annotations
 
@@ -18,11 +18,6 @@ from src.emulator.engine import SCENARIO_REGISTRY, EmulatorEngine, write_csv, wr
 ROOT = Path(__file__).resolve().parent.parent
 COMPONENTS_PATH = ROOT / "config" / "components.yaml"
 SCENARIOS_PATH = ROOT / "config" / "scenarios.yaml"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  build_device_index
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestBuildDeviceIndex:
@@ -56,11 +51,6 @@ class TestBuildDeviceIndex:
         cfg = {"components": {"edge": {"instances": [{"id": "dev-01"}]}}}
         index = build_device_index(cfg)
         assert index["dev-01"].ip == "0.0.0.0"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  EmulatorEngine init
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestEmulatorEngineInit:
@@ -107,14 +97,9 @@ class TestEmulatorEngineInit:
         assert engine.scenario_set == "brute_force,ddos_abuse"
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  EmulatorEngine.run — minimal smoke test
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class TestEmulatorEngineRun:
     def test_run_no_background_no_attacks(self):
-        """Engine with no bg generators and no attacks returns empty list."""
+        """Без фонових генераторів і атак повертає порожній список."""
         comp = {"components": {"edge": {"instances": [{"id": "d1", "ip": "10.0.0.1"}]}}}
         scen = {
             "simulation": {"duration_sec": 5, "start_time": "2026-02-26T10:00:00Z"},
@@ -141,11 +126,6 @@ class TestEmulatorEngineRun:
             assert events[i].timestamp <= events[i + 1].timestamp
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  SCENARIO_REGISTRY
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class TestScenarioRegistry:
     def test_all_expected_scenarios_registered(self):
         expected = {
@@ -160,11 +140,6 @@ class TestScenarioRegistry:
     def test_registry_values_are_classes(self):
         for name, cls in SCENARIO_REGISTRY.items():
             assert isinstance(cls, type), f"{name} is not a class"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Writers
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestWriters:
@@ -217,11 +192,6 @@ class TestWriters:
         path = tmp_path / "deep" / "nested" / "events.csv"
         write_csv([], path)
         assert path.exists()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Seed reproducibility (full emulator run)
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def _load_real_configs() -> tuple[dict, dict]:

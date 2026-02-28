@@ -1,4 +1,4 @@
-"""End-to-end integration tests: events → detector → correlator → metrics."""
+"""Інтеграційні тести пайплайну."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from tests.conftest import make_event, ts_offset
 
 
 class TestDetectorToCorrelatorToMetrics:
-    """Full pipeline: generate events → detect alerts → correlate → compute metrics."""
+    """Повний пайплайн: події → детектор → корелятор → метрики."""
 
     @pytest.fixture
     def brute_force_events(self):
-        """10 auth_failure events from same IP in 30 seconds."""
+        """10 auth_failure подій з одного IP за 30 секунд."""
         return [
             make_event(
                 event="auth_failure",

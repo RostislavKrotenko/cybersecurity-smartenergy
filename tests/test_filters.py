@@ -1,13 +1,9 @@
-"""Tests for src.normalizer.filters — deduplication and validation."""
+"""Тести фільтрів: дедуплікація та валідація."""
 
 from __future__ import annotations
 
 from src.normalizer.filters import deduplicate, validate_event
 from tests.conftest import make_event, ts_offset
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  deduplicate
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestDeduplicate:
@@ -79,7 +75,7 @@ class TestDeduplicate:
         assert len(result) == 1
 
     def test_chain_of_duplicates(self):
-        """Multiple duplicates in succession — only first survives."""
+        """Кілька дублікатів поспіль — лише перший залишається."""
         events = [
             make_event(timestamp=ts_offset(seconds=i), source="a", event="e", key="k", value="v")
             for i in range(5)
@@ -88,7 +84,7 @@ class TestDeduplicate:
         assert len(result) == 1
 
     def test_duplicate_after_gap_creates_new_chain(self):
-        """After a gap > window, duplicate from new time is kept."""
+        """Після проміжку > window дублікат зберігається."""
         events = [
             make_event(timestamp=ts_offset(seconds=0), source="a", event="e", key="k", value="v"),
             make_event(timestamp=ts_offset(seconds=1), source="a", event="e", key="k", value="v"),
@@ -97,11 +93,6 @@ class TestDeduplicate:
         ]
         result = deduplicate(events, window_sec=2)
         assert len(result) == 2  # ts=0 and ts=10
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  validate_event
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestValidateEvent:

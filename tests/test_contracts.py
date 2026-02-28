@@ -1,4 +1,4 @@
-"""Tests for src.contracts — Event, Alert, Incident data classes."""
+"""Тести контрактів: Event, Alert, Incident."""
 
 from __future__ import annotations
 
@@ -12,10 +12,6 @@ from src.contracts.alert import Alert
 from src.contracts.enums import Component, EventType, Severity
 from src.contracts.event import CSV_COLUMNS, Event
 from src.contracts.incident import INCIDENT_CSV_COLUMNS, Incident
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Event
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestEvent:
@@ -73,17 +69,12 @@ class TestEvent:
         assert ev.correlation_id == ""
 
     def test_csv_roundtrip(self, sample_event):
-        """CSV header + row can be re-read by csv.DictReader."""
+        """Перевірка CSV header + row через csv.DictReader."""
         text = Event.csv_header() + "\n" + sample_event.to_csv_row() + "\n"
         reader = csv.DictReader(io.StringIO(text))
         row = next(reader)
         assert row["timestamp"] == "2026-02-26T10:00:00Z"
         assert row["source"] == "inv-01"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Alert
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestAlert:
@@ -125,11 +116,6 @@ class TestAlert:
         assert a.response_hint == "block_ip"
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Incident
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class TestIncident:
     @pytest.fixture
     def sample_incident(self):
@@ -167,11 +153,6 @@ class TestIncident:
         row = next(reader)
         assert row["incident_id"] == "INC-001"
         assert row["policy"] == "baseline"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Enums
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestEnums:

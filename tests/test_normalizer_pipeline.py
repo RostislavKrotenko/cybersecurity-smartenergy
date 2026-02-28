@@ -1,4 +1,4 @@
-"""Tests for src.normalizer.pipeline — NormalizerPipeline orchestrator."""
+"""Тести NormalizerPipeline."""
 
 from __future__ import annotations
 
@@ -11,10 +11,6 @@ import pytest
 
 from src.normalizer.pipeline import NormalizerPipeline, _resolve_tz
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  _resolve_tz
-# ═══════════════════════════════════════════════════════════════════════════
-
 
 class TestResolveTz:
     def test_utc(self):
@@ -26,17 +22,12 @@ class TestResolveTz:
         assert str(tz) == "Europe/Kyiv"
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  NormalizerPipeline — integration tests with real file I/O
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class TestNormalizerPipeline:
-    """Integration tests that run the pipeline over temporary files."""
+    """Інтеграційні тести пайплайну з файловим I/O."""
 
     @pytest.fixture
     def tmp_dirs(self, tmp_path):
-        """Create temp input/output directories."""
+        """Створює тимчасові input/output директорії."""
         input_dir = tmp_path / "input"
         input_dir.mkdir()
         out_dir = tmp_path / "output"
@@ -45,7 +36,7 @@ class TestNormalizerPipeline:
 
     @pytest.fixture
     def minimal_mapping(self, tmp_path):
-        """Write a minimal mapping.yaml and return its path."""
+        """Записує мінімальний mapping.yaml."""
         mapping = {
             "defaults": {
                 "source": "unknown",
