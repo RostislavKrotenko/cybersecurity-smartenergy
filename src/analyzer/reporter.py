@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import tempfile
@@ -31,10 +32,8 @@ def _atomic_write(path: str, content: str) -> None:
         os.replace(tmp, path)
     except BaseException:
         # Clean up temp file on any failure
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
 
 

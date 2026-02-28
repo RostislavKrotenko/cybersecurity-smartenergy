@@ -153,7 +153,7 @@ def render_sidebar(
             "Enable auto-refresh",
             key="auto_refresh",
         )
-        refresh_interval = st.slider(
+        st.slider(
             "Refresh interval (sec)",
             min_value=2,
             max_value=60,
