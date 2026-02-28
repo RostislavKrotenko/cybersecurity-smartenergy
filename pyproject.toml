@@ -60,6 +60,7 @@ ignore = [
     "RUF012", # mutable class default
     "B008",   # default arg in argparse
     "UP007",  # X | Y union syntax
+    "UP017",  # datetime.UTC alias (ламає сумісність)
     "RUF001", # ambiguous unicode in string (intentional: ×, →, etc.)
     "RUF002", # ambiguous unicode in docstring
     "B905",   # zip-without-strict (Python 3.11 compat)
