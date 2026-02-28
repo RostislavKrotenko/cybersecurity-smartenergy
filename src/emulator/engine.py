@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import random as _random_mod
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -280,7 +280,7 @@ def stream_jsonl_infinite(
     while True:
         cycle += 1
         # Shift simulation start to current wall-clock time
-        engine.sim_start = datetime.now(tz=datetime.UTC)
+        engine.sim_start = datetime.now(tz=timezone.utc)
         _random_mod.seed(current_seed + cycle)
         engine.rng = _random_mod.Random(current_seed + cycle)
 
@@ -291,7 +291,7 @@ def stream_jsonl_infinite(
         with path.open("a", encoding="utf-8") as fh:
             for ev in events:
                 # Re-stamp to real wall-clock time
-                ev.timestamp = datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                ev.timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
                 fh.write(ev.to_json() + "\n")
                 fh.flush()

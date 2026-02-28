@@ -120,3 +120,74 @@ def downtime_bar(df: pd.DataFrame) -> go.Figure:
         )
     )
     return fig
+
+
+# -- incidents per minute -------------------------------------------------
+
+
+def incidents_per_minute(df: pd.DataFrame) -> go.Figure | None:
+    """Line chart -- incident count aggregated by minute.
+
+    Returns *None* when the dataframe is empty or lacks a usable
+    timestamp column, so the caller can show a placeholder instead.
+    Missing minute bins inside the range are filled with zeros so the
+    line is continuous.
+    """
+    if df is None or df.empty:
+        return None
+
+    ts_col = "start_ts" if "start_ts" in df.columns else None
+    if ts_col is None:
+        # fall back to detect_ts / recover_ts if start_ts is missing
+        for candidate in ("detect_ts", "recover_ts"):
+            if candidate in df.columns:
+                ts_col = candidate
+                break
+    if ts_col is None:
+        return None
+
+    tmp = df[[ts_col]].copy()
+    tmp["minute"] = tmp[ts_col].dt.floor("min")
+    agg = tmp.groupby("minute").size().reset_index(name="count")
+    agg = agg.sort_values("minute")
+
+    if agg.empty or agg["count"].sum() == 0:
+        return None
+
+    # Fill gaps so the line has no holes
+    full_range = pd.date_range(
+        start=agg["minute"].min(),
+        end=agg["minute"].max(),
+        freq="min",
+    )
+    agg = agg.set_index("minute").reindex(full_range, fill_value=0).rename_axis("minute").reset_index()
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=agg["minute"],
+            y=agg["count"],
+            mode="lines+markers",
+            line=dict(color="#8b5cf6", width=2),
+            marker=dict(color="#8b5cf6", size=6),
+            hovertemplate="%{x|%H:%M}<br>%{y} incidents<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        **_base(
+            title=dict(text="Incidents per Minute"),
+            xaxis=dict(
+                title="",
+                gridcolor=_GRID_COLOR,
+                tickformat="%H:%M",
+            ),
+            yaxis=dict(
+                title="",
+                gridcolor=_GRID_COLOR,
+                zeroline=False,
+                dtick=1,
+            ),
+            showlegend=False,
+        )
+    )
+    return fig

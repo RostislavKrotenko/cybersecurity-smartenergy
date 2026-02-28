@@ -48,8 +48,11 @@ make test
 
 ---
 
-All additional documentation (architecture, configuration, policies, scenarios,
-development notes) is available in the GitHub Wiki.
+## Documentation
+
+Повна документація проєкту доступна у [GitHub Wiki](https://github.com/RostislavKrotenko/cybersecurity-smartenergy/wiki):
+архітектура, Event Contract, політики безпеки, сценарії атак, правила детекції,
+нормалізатор, метрики, запуск та розробка.
 
 ## License
 

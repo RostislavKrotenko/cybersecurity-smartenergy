@@ -38,6 +38,7 @@ from src.dashboard.ui.charts import (  # noqa: E402
     CHART_CONFIG,
     availability_bar,
     downtime_bar,
+    incidents_per_minute,
 )
 from src.dashboard.ui.layout import render_header, render_sidebar  # noqa: E402
 from src.dashboard.ui.state import init_state  # noqa: E402
@@ -134,6 +135,23 @@ with c2:
         downtime_bar(df_results),
         width="stretch",
         config=CHART_CONFIG,
+    )
+
+# ═════════════════════════════════════════════════════════════════════════════
+#   CHART — incidents per minute
+# ═════════════════════════════════════════════════════════════════════════════
+
+st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
+
+_ipm_fig = incidents_per_minute(df_incidents) if df_incidents is not None else None
+if _ipm_fig is not None:
+    st.plotly_chart(_ipm_fig, use_container_width=True, config=CHART_CONFIG)
+else:
+    st.markdown(
+        '<div class="no-data-box">'
+        "<strong>Incidents per Minute</strong><br>Not enough data yet."
+        "</div>",
+        unsafe_allow_html=True,
     )
 
 # ═════════════════════════════════════════════════════════════════════════════
