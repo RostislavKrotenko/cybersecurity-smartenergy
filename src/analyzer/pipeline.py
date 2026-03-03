@@ -215,20 +215,17 @@ def watch_pipeline(
     poll_interval_sec: float = 1.0,
     rolling_window_min: float = 5.0,
 ) -> None:
-    """Tail a JSONL file and re-run the pipeline on each batch of new lines.
+    """Tail a JSONL file and incrementally detect new incidents.
 
-    The function blocks until interrupted (Ctrl+C). It keeps a file offset
-    and re-reads only newly appended lines, then re-runs the full
-    detect -> correlate -> metrics -> report chain on events within the
-    rolling window.
+    Unlike batch mode which re-analyses ALL events from scratch, the watch
+    pipeline performs **incremental** detection:
 
-    *rolling_window_min* controls how many minutes of events to keep.
-    Events older than ``now - rolling_window_min`` are discarded before
-    each analysis cycle, so the incident set naturally refreshes and
-    the dashboard shows evolving data rather than a frozen snapshot.
-
-    Every poll cycle logs a tick with event/incident counts even when
-    no new data arrives, so operators can verify the process is alive.
+    1. Each poll cycle reads only *newly appended* lines.
+    2. Detection + correlation run on the **new events only**, producing
+       fresh incidents that get appended to a running incident list.
+    3. Incidents older than *rolling_window_min* are expired, so the
+       dashboard shows a live, evolving picture instead of a frozen count.
+    4. Metrics are recomputed on the active incident set each cycle.
     """
     rules_cfg = load_yaml(f"{config_dir}/rules.yaml")
     policies_cfg = load_policies(config_dir)
@@ -238,31 +235,39 @@ def watch_pipeline(
     else:
         selected = [p for p in policy_names if p in available]
 
-    accumulated_events: list[Event] = []
     file_offset: int = 0
     iteration = 0
-    last_analysis_events = 0
     tick_counter = 0
     rolling_sec = rolling_window_min * 60.0
+    inc_counter = 0                      # global incident numbering
+    all_incidents: list[Any] = []        # persistent across cycles
 
-    # If file already exists pre-load existing lines
+    # Horizon: fixed if given, otherwise use the rolling window size
+    if horizon_days is not None and horizon_days > 0:
+        horizon_sec = horizon_days * 86400
+    else:
+        horizon_sec = max(rolling_sec, 3600.0)
+
+    out_p = Path(out_dir)
+    out_p.mkdir(parents=True, exist_ok=True)
+
+    # If file already exists, pre-load and run initial analysis
     if os.path.isfile(input_path):
-        accumulated_events = load_events(input_path)
+        pre_events = load_events(input_path)
         file_offset = os.path.getsize(input_path)
-        log.info("Watch: pre-loaded %d events (offset=%d)", len(accumulated_events), file_offset)
-
-    # Run initial analysis if we have pre-loaded events
-    if accumulated_events:
-        _run_analysis(
-            events=accumulated_events,
-            rules_cfg=rules_cfg,
-            policies_cfg=policies_cfg,
-            selected=selected,
-            out_dir=out_dir,
-            horizon_days=horizon_days,
-        )
-        last_analysis_events = len(accumulated_events)
-        log.info("Watch: initial analysis complete (%d events)", last_analysis_events)
+        if pre_events:
+            log.info(
+                "Watch: pre-loaded %d events (offset=%d)",
+                len(pre_events),
+                file_offset,
+            )
+            inc_counter, all_incidents = _incremental_detect(
+                pre_events, rules_cfg, policies_cfg, selected, inc_counter,
+            )
+            _write_live_output(
+                all_incidents, selected, policies_cfg, horizon_sec, out_p,
+            )
+            log.info("Watch: initial analysis -> %d incidents", len(all_incidents))
 
     print(f"Analyzer watch mode -> {input_path}")
     print(
@@ -294,55 +299,95 @@ def watch_pipeline(
                     file_offset = current_size
 
             if new_events:
-                accumulated_events.extend(new_events)
-
-                # Trim events outside the rolling window
-                if rolling_sec > 0 and accumulated_events:
-                    cutoff = _ts(accumulated_events[-1].timestamp) - timedelta(seconds=rolling_sec)
-                    before = len(accumulated_events)
-                    accumulated_events = [
-                        e for e in accumulated_events if _ts(e.timestamp) >= cutoff
-                    ]
-                    trimmed = before - len(accumulated_events)
-                    if trimmed:
-                        log.debug("Rolling window trimmed %d stale events", trimmed)
-
                 iteration += 1
+
+                # ── Detect + correlate ONLY new events ──────────────
+                inc_counter, new_incs = _incremental_detect(
+                    new_events, rules_cfg, policies_cfg, selected, inc_counter,
+                )
+                all_incidents.extend(new_incs)
+
+                # ── Expire old incidents outside the rolling window ─
+                if rolling_sec > 0 and all_incidents:
+                    latest = max(_ts(i.start_ts) for i in all_incidents)
+                    cutoff = latest - timedelta(seconds=rolling_sec)
+                    before = len(all_incidents)
+                    all_incidents = [
+                        i for i in all_incidents if _ts(i.start_ts) >= cutoff
+                    ]
+                    expired = before - len(all_incidents)
+                    if expired:
+                        log.debug("Expired %d old incidents", expired)
+
+                # ── Recompute metrics & write output ────────────────
+                _write_live_output(
+                    all_incidents, selected, policies_cfg, horizon_sec, out_p,
+                )
+
                 log.info(
-                    "[tick %d] Watch iteration %d: +%d new, %d total events",
+                    "[tick %d] iter %d: +%d events, +%d incidents, %d active",
                     tick_counter,
                     iteration,
                     len(new_events),
-                    len(accumulated_events),
-                )
-
-                # Re-run full analysis on accumulated state
-                result_info = _run_analysis(
-                    events=accumulated_events,
-                    rules_cfg=rules_cfg,
-                    policies_cfg=policies_cfg,
-                    selected=selected,
-                    out_dir=out_dir,
-                    horizon_days=horizon_days,
-                )
-                last_analysis_events = len(accumulated_events)
-                log.info(
-                    "[tick %d] Analysis done: %d events -> %d incidents",
-                    tick_counter,
-                    last_analysis_events,
-                    result_info.get("total_incidents", 0),
+                    len(new_incs),
+                    len(all_incidents),
                 )
             elif tick_counter % 10 == 0:
-                # Periodic heartbeat tick even when no new data
                 log.info(
-                    "[tick %d] Heartbeat: %d accumulated events, waiting for new data...",
+                    "[tick %d] Heartbeat: %d active incidents, waiting...",
                     tick_counter,
-                    len(accumulated_events),
+                    len(all_incidents),
                 )
 
             time.sleep(poll_interval_sec)
     except KeyboardInterrupt:
-        print(f"\nWatch stopped. Total events processed: {len(accumulated_events)}")
+        print(f"\nWatch stopped. Active incidents: {len(all_incidents)}")
+
+
+# ── Watch-mode helpers ──────────────────────────────────────────────────────
+
+
+def _incremental_detect(
+    events: list[Event],
+    rules_cfg: dict[str, Any],
+    policies_cfg: dict[str, Any],
+    selected: list[str],
+    inc_counter: int,
+) -> tuple[int, list[Any]]:
+    """Run detect -> correlate on *events* for each policy.
+
+    Returns updated inc_counter and new incidents with globally unique IDs.
+    """
+    new_incidents: list[Any] = []
+    for pname in selected:
+        modifiers = get_modifiers(policies_cfg, pname)
+        alerts = detect(events, rules_cfg, policy_modifiers=modifiers)
+        incidents = correlate(alerts, pname, policy_modifiers=modifiers)
+        for inc in incidents:
+            inc_counter += 1
+            inc.incident_id = f"INC-{inc_counter:04d}"
+        new_incidents.extend(incidents)
+    return inc_counter, new_incidents
+
+
+def _write_live_output(
+    incidents: list[Any],
+    selected: list[str],
+    policies_cfg: dict[str, Any],
+    horizon_sec: float,
+    out_p: Path,
+) -> None:
+    """Compute metrics on *incidents* and write results / incidents / report."""
+    all_metrics = []
+    for pname in selected:
+        policy_incs = [i for i in incidents if i.policy == pname]
+        m = compute(policy_incs, pname, horizon_sec=horizon_sec)
+        all_metrics.append(m)
+
+    control_ranking = rank_controls(policies_cfg, selected)
+    write_results_csv(all_metrics, str(out_p / "results.csv"))
+    write_incidents_csv(incidents, str(out_p / "incidents.csv"))
+    write_report_txt(all_metrics, incidents, control_ranking, str(out_p / "report.txt"))
 
 
 def _run_analysis(
