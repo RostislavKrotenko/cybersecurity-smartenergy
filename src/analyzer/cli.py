@@ -63,6 +63,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Poll interval for watch mode, ms (default: 1000).",
     )
     p.add_argument(
+        "--rolling-window-min",
+        type=float,
+        default=5.0,
+        help=(
+            "Rolling analysis window in minutes (watch mode only). "
+            "Events older than this are dropped before each analysis cycle "
+            "so that the incident set refreshes over time. Default: 5."
+        ),
+    )
+    p.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -87,6 +97,7 @@ def main(argv: list[str] | None = None) -> None:
             config_dir=args.config_dir,
             horizon_days=args.horizon_days,
             poll_interval_sec=args.poll_interval_ms / 1000.0,
+            rolling_window_min=args.rolling_window_min,
         )
     else:
         run_pipeline(

@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -213,12 +213,19 @@ def watch_pipeline(
     config_dir: str = "config",
     horizon_days: float | None = None,
     poll_interval_sec: float = 1.0,
+    rolling_window_min: float = 5.0,
 ) -> None:
     """Tail a JSONL file and re-run the pipeline on each batch of new lines.
 
     The function blocks until interrupted (Ctrl+C). It keeps a file offset
     and re-reads only newly appended lines, then re-runs the full
-    detect -> correlate -> metrics -> report chain on the accumulated events.
+    detect -> correlate -> metrics -> report chain on events within the
+    rolling window.
+
+    *rolling_window_min* controls how many minutes of events to keep.
+    Events older than ``now - rolling_window_min`` are discarded before
+    each analysis cycle, so the incident set naturally refreshes and
+    the dashboard shows evolving data rather than a frozen snapshot.
 
     Every poll cycle logs a tick with event/incident counts even when
     no new data arrives, so operators can verify the process is alive.
@@ -236,6 +243,7 @@ def watch_pipeline(
     iteration = 0
     last_analysis_events = 0
     tick_counter = 0
+    rolling_sec = rolling_window_min * 60.0
 
     # If file already exists pre-load existing lines
     if os.path.isfile(input_path):
@@ -257,7 +265,11 @@ def watch_pipeline(
         log.info("Watch: initial analysis complete (%d events)", last_analysis_events)
 
     print(f"Analyzer watch mode -> {input_path}")
-    print(f"  poll interval: {poll_interval_sec:.1f}s, policies: {', '.join(selected)}")
+    print(
+        f"  poll interval: {poll_interval_sec:.1f}s, "
+        f"rolling window: {rolling_window_min:.0f} min, "
+        f"policies: {', '.join(selected)}"
+    )
     print("  Press Ctrl+C to stop.")
 
     try:
@@ -283,6 +295,18 @@ def watch_pipeline(
 
             if new_events:
                 accumulated_events.extend(new_events)
+
+                # Trim events outside the rolling window
+                if rolling_sec > 0 and accumulated_events:
+                    cutoff = _ts(accumulated_events[-1].timestamp) - timedelta(seconds=rolling_sec)
+                    before = len(accumulated_events)
+                    accumulated_events = [
+                        e for e in accumulated_events if _ts(e.timestamp) >= cutoff
+                    ]
+                    trimmed = before - len(accumulated_events)
+                    if trimmed:
+                        log.debug("Rolling window trimmed %d stale events", trimmed)
+
                 iteration += 1
                 log.info(
                     "[tick %d] Watch iteration %d: +%d new, %d total events",

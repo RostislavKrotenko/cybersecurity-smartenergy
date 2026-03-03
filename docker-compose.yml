@@ -154,6 +154,7 @@ services:
         --input data/live/normalized.jsonl
         --watch
         --poll-interval-ms 1000
+        --rolling-window-min 5
         --out-dir out
         --policies all
         --log-level INFO
