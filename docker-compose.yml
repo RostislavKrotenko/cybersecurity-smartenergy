@@ -24,6 +24,19 @@ x-common: &common
   env_file: []
 
 services:
+  # ── 0. Live Init — clear runtime data from previous runs ────────────────
+  init-live:
+    <<: *common
+    container_name: smartenergy-init-live
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        rm -rf data/live/* out/* logs/live/*
+        && mkdir -p data/live out logs/live
+        && echo 'Runtime data cleared.'
+    restart: "no"
+    profiles: ["live"]
+
   # ── 1. Emulator — generate synthetic events.csv (batch) ─────────────────
   emulator:
     <<: *common
@@ -107,6 +120,9 @@ services:
         --profile demo_high_rate
         --seed 42
         --log-level INFO
+    depends_on:
+      init-live:
+        condition: service_completed_successfully
     restart: unless-stopped
     profiles: ["live"]
 
