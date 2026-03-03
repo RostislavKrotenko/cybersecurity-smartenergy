@@ -1,4 +1,9 @@
-"""Макет сторінки: sidebar та заголовок."""
+"""Page layout — sidebar controls and main-area scaffolding.
+
+``render_sidebar`` populates the left panel and returns an object
+with the current filter values.  ``render_header`` draws the top
+title bar.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,13 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+
+try:
+    from streamlit_autorefresh import st_autorefresh  # type: ignore[import-untyped]
+
+    _HAS_AUTOREFRESH = True
+except ModuleNotFoundError:
+    _HAS_AUTOREFRESH = False
 
 _TZ_OPTIONS: list[str] = [
     "UTC",
@@ -22,7 +34,7 @@ _TZ_OPTIONS: list[str] = [
 
 @dataclass
 class SidebarState:
-    """Значення з елементів керування sidebar."""
+    """Values collected from sidebar controls."""
 
     policies: list[str]
     severities: list[str]
@@ -51,7 +63,7 @@ def render_header() -> None:
 def render_sidebar(
     incidents_df: pd.DataFrame | None,
 ) -> SidebarState:
-    """Відображає елементи керування sidebar та повертає поточні вибори."""
+    """Draw sidebar controls and return current selections."""
 
     with st.sidebar:
         st.markdown('<p class="sidebar-brand">SmartEnergy</p>', unsafe_allow_html=True)
@@ -89,8 +101,6 @@ def render_sidebar(
             label_visibility="visible",
             key="f_severities",
         )
-        # Store initial option set so the fragment can detect "all selected"
-        st.session_state["_sev_opts"] = list(sev_options)
 
         # threat type
         type_options = (
@@ -105,7 +115,6 @@ def render_sidebar(
             label_visibility="visible",
             key="f_threats",
         )
-        st.session_state["_threat_opts"] = list(type_options)
 
         # component
         comp_options = (
@@ -120,7 +129,6 @@ def render_sidebar(
             label_visibility="visible",
             key="f_components",
         )
-        st.session_state["_comp_opts"] = list(comp_options)
 
         # horizon
         horizon_days = st.number_input(
@@ -151,9 +159,10 @@ def render_sidebar(
         st.markdown("##### Auto-refresh")
         auto_refresh = st.toggle(
             "Enable auto-refresh",
+            value=False,
             key="auto_refresh",
         )
-        st.slider(
+        refresh_interval = st.slider(
             "Refresh interval (sec)",
             min_value=2,
             max_value=60,
@@ -164,7 +173,13 @@ def render_sidebar(
         )
 
         if auto_refresh:
-            st.caption("Fragment-based auto-refresh is active.")
+            if _HAS_AUTOREFRESH:
+                st_autorefresh(
+                    interval=refresh_interval * 1000,
+                    key="live_refresh",
+                )
+            else:
+                st.warning("Install streamlit-autorefresh:\npip install streamlit-autorefresh")
 
         tz_obj = ZoneInfo(display_tz)
         now_str = datetime.now(tz_obj).strftime("%Y-%m-%d %H:%M:%S")

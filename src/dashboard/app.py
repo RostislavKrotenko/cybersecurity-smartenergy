@@ -30,8 +30,6 @@ from src.dashboard.data_access import (  # noqa: E402
     file_mtime_str,
     file_row_count,
     file_size,
-    filter_incidents,
-    filter_results,
     load_incidents,
     load_results,
 )
@@ -50,13 +48,13 @@ from src.dashboard.ui.tables import render_incident_table  # noqa: E402
 
 init_state()
 
-# ── load initial data (for sidebar filter population) ───────────────────────
+# ── sidebar (needs incidents for dynamic filter options) ────────────────────
 
-_initial_incidents = load_incidents()
+_sidebar_incidents = load_incidents()
+_sidebar_state = render_sidebar(_sidebar_incidents)
 
-# ── sidebar ─────────────────────────────────────────────────────────────────
-
-sidebar = render_sidebar(_initial_incidents)
+# store display_tz in session state so the fragment can access it
+st.session_state["_display_tz"] = _sidebar_state.display_tz
 
 # ── header ──────────────────────────────────────────────────────────────────
 
@@ -83,11 +81,11 @@ def _live_data_section() -> None:
     st.session_state["refresh_tick"] += 1
 
     # ── load fresh data ─────────────────────────────────────────────
-    df_results_raw = load_results()
-    df_incidents_raw = load_incidents()
+    df_results = load_results()
+    df_incidents = load_incidents()
 
     # ── guard: no data ──────────────────────────────────────────────
-    if df_results_raw is None:
+    if df_results is None:
         st.markdown(
             '<div class="no-data-box">'
             "<strong>No results yet. Run analysis first.</strong>"
@@ -99,41 +97,6 @@ def _live_data_section() -> None:
             unsafe_allow_html=True,
         )
         return
-
-    # ── read filter values from session state ───────────────────────
-    policies = st.session_state.get("f_policies", [])
-    severities = st.session_state.get("f_severities", [])
-    threat_types = st.session_state.get("f_threats", [])
-    components = st.session_state.get("f_components", [])
-    horizon_days = st.session_state.get("f_horizon", 0.0)
-    display_tz = st.session_state.get("display_tz", "UTC")
-
-    # In live mode the sidebar options were frozen at first load.
-    # If the user still has ALL initial options selected (hasn't
-    # narrowed the filter), pass None so new values that appeared
-    # in the data since then are included automatically.
-    _sev_opts = st.session_state.get("_sev_opts", [])
-    _threat_opts = st.session_state.get("_threat_opts", [])
-    _comp_opts = st.session_state.get("_comp_opts", [])
-
-    eff_severities = None if set(severities) == set(_sev_opts) else severities
-    eff_threats = None if set(threat_types) == set(_threat_opts) else threat_types
-    eff_components = None if set(components) == set(_comp_opts) else components
-
-    df_results = filter_results(df_results_raw, policies)
-
-    df_incidents = (
-        filter_incidents(
-            df_incidents_raw,
-            policies=policies,
-            severities=eff_severities,
-            threat_types=eff_threats,
-            components=eff_components,
-            horizon_days=horizon_days,
-        )
-        if df_incidents_raw is not None
-        else None
-    )
 
     # ── KPI CARDS ───────────────────────────────────────────────────
     _policy_order = ["baseline", "minimal", "standard"]
@@ -178,8 +141,10 @@ def _live_data_section() -> None:
     # ── CHART: incidents per minute ─────────────────────────────────
     st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
 
+    _tz = st.session_state.get("_display_tz", "Europe/Kyiv")
+
     if df_incidents is not None and not df_incidents.empty:
-        fig = incidents_per_minute(df_incidents, tz=display_tz)
+        fig = incidents_per_minute(df_incidents, tz=_tz)
         if fig is not None:
             st.plotly_chart(
                 fig,
@@ -187,7 +152,7 @@ def _live_data_section() -> None:
                 config=CHART_CONFIG,
                 key="chart_ipm",
             )
-            st.caption(f"Incident rows: {len(df_incidents)} | Time axis: {display_tz}")
+            st.caption(f"Incident rows: {len(df_incidents)} | Time axis: {_tz}")
         else:
             st.markdown(
                 '<div class="no-data-box">'
@@ -229,11 +194,11 @@ def _live_data_section() -> None:
 
         _last_inc_ts = "N/A"
         if (
-            df_incidents_raw is not None
-            and not df_incidents_raw.empty
-            and "start_ts" in df_incidents_raw.columns
+            df_incidents is not None
+            and not df_incidents.empty
+            and "start_ts" in df_incidents.columns
         ):
-            _max_ts = df_incidents_raw["start_ts"].max()
+            _max_ts = df_incidents["start_ts"].max()
             if pd.notna(_max_ts):
                 _last_inc_ts = str(_max_ts)
 
