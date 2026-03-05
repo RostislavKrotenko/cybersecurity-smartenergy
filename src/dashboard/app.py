@@ -28,16 +28,19 @@ from src.dashboard.data_access import (  # noqa: E402
     ACTIONS_PATH,
     INCIDENTS_PATH,
     RESULTS_PATH,
+    STATE_PATH,
     file_mtime_str,
     file_row_count,
     file_size,
     load_actions,
     load_incidents,
     load_results,
+    load_state,
 )
-from src.dashboard.ui.cards import policy_kpi_card  # noqa: E402
+from src.dashboard.ui.cards import component_status_card, policy_kpi_card  # noqa: E402
 from src.dashboard.ui.charts import (  # noqa: E402
     CHART_CONFIG,
+    actions_per_minute,
     availability_bar,
     downtime_bar,
     incidents_per_minute,
@@ -50,13 +53,9 @@ from src.dashboard.ui.tables import render_incident_table  # noqa: E402
 
 init_state()
 
-# ── sidebar (needs incidents for dynamic filter options) ────────────────────
+# ── sidebar ─────────────────────────────────────────────────────────────────
 
-_sidebar_incidents = load_incidents()
-_sidebar_state = render_sidebar(_sidebar_incidents)
-
-# store display_tz in session state so the fragment can access it
-st.session_state["_display_tz"] = _sidebar_state.display_tz
+render_sidebar()
 
 # ── header ──────────────────────────────────────────────────────────────────
 
@@ -121,6 +120,68 @@ def _live_data_section() -> None:
                     unsafe_allow_html=True,
                 )
 
+    # ── COMPONENT STATUS ──────────────────────────────────────────
+    st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
+    st.markdown('<p class="section-label">Component Status (Live)</p>', unsafe_allow_html=True)
+
+    df_state = load_state()
+    if df_state is not None and not df_state.empty and "component" in df_state.columns:
+        _state_components = ["gateway", "api", "auth", "db", "network"]
+        state_cols = st.columns(len(_state_components))
+        for col, comp_name in zip(state_cols, _state_components):
+            row = df_state[df_state["component"] == comp_name]
+            if not row.empty:
+                r = row.iloc[0]
+                _comp_status = str(r.get("status", "healthy"))
+                _raw_details = r.get("details", "")
+                _comp_details = "" if pd.isna(_raw_details) else str(_raw_details)
+                _raw_ttl = r.get("ttl_sec", 0)
+                _comp_ttl = 0.0 if pd.isna(_raw_ttl) else float(_raw_ttl)
+            else:
+                _comp_status = "healthy"
+                _comp_details = ""
+                _comp_ttl = 0.0
+            with col:
+                st.markdown(
+                    component_status_card(comp_name, _comp_status, _comp_details, _comp_ttl),
+                    unsafe_allow_html=True,
+                )
+
+        # State diagnostics row
+        _state_mtime_inner = file_mtime_str(STATE_PATH)
+        _state_rows_inner = file_row_count(STATE_PATH)
+        _last_state_ts = "N/A"
+        if "timestamp_utc" in df_state.columns and not df_state.empty:
+            _last_ts = df_state["timestamp_utc"].iloc[0]
+            if pd.notna(_last_ts):
+                _last_state_ts = str(_last_ts)
+
+        # Actions emitted vs applied stats
+        _emitted = 0
+        _applied = 0
+        df_act_diag = load_actions()
+        if df_act_diag is not None and "status" in df_act_diag.columns:
+            _emitted = int((df_act_diag["status"] == "emitted").sum())
+            _applied = int((df_act_diag["status"] == "applied").sum())
+
+        _diag_cols = st.columns(4)
+        with _diag_cols[0]:
+            st.caption(f"state.csv mtime: {_state_mtime_inner}")
+        with _diag_cols[1]:
+            st.caption(f"state.csv rows: {_state_rows_inner}")
+        with _diag_cols[2]:
+            st.caption(f"last_state_ts: {_last_state_ts}")
+        with _diag_cols[3]:
+            st.caption(f"actions: {_emitted} emitted / {_applied} applied")
+    else:
+        st.markdown(
+            '<div class="no-data-box">'
+            "<strong>Component Status</strong><br>"
+            "State not available yet. Waiting for live data..."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
     # ── CHARTS: availability + downtime ─────────────────────────────
     st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
 
@@ -143,10 +204,8 @@ def _live_data_section() -> None:
     # ── CHART: incidents per minute ─────────────────────────────────
     st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
 
-    _tz = st.session_state.get("_display_tz", "Europe/Kyiv")
-
     if df_incidents is not None and not df_incidents.empty:
-        fig = incidents_per_minute(df_incidents, tz=_tz)
+        fig = incidents_per_minute(df_incidents, tz="UTC")
         if fig is not None:
             st.plotly_chart(
                 fig,
@@ -154,7 +213,7 @@ def _live_data_section() -> None:
                 config=CHART_CONFIG,
                 key="chart_ipm",
             )
-            st.caption(f"Incident rows: {len(df_incidents)} | Time axis: {_tz}")
+            st.caption(f"Incident rows: {len(df_incidents)} | Time axis: UTC")
         else:
             st.markdown(
                 '<div class="no-data-box">'
@@ -185,18 +244,33 @@ def _live_data_section() -> None:
 
     df_actions = load_actions()
     if df_actions is not None and not df_actions.empty:
+        # Chart: actions per minute
+        fig_apm = actions_per_minute(df_actions, tz="UTC")
+        if fig_apm is not None:
+            st.plotly_chart(
+                fig_apm,
+                width="stretch",
+                config=CHART_CONFIG,
+                key="chart_apm",
+            )
+
+        # Table: last 100 actions
         _action_cols = [
             c for c in ["ts_utc", "action", "target_component", "target_id",
                         "reason", "correlation_id", "status"]
             if c in df_actions.columns
         ]
+        _df_display = (
+            df_actions[_action_cols].sort_values("ts_utc", ascending=False).head(100)
+            if "ts_utc" in df_actions.columns
+            else df_actions[_action_cols].head(100)
+        )
         st.dataframe(
-            df_actions[_action_cols].sort_values("ts_utc", ascending=False)
-            if "ts_utc" in df_actions.columns else df_actions[_action_cols],
+            _df_display,
             use_container_width=True,
             height=300,
         )
-        st.caption(f"Actions: {len(df_actions)} total")
+        st.caption(f"Actions: {len(df_actions)} total (showing last 100)")
     else:
         st.markdown(
             '<div class="no-data-box">'
@@ -225,6 +299,10 @@ def _live_data_section() -> None:
         _act_size = file_size(ACTIONS_PATH)
         _act_rows = file_row_count(ACTIONS_PATH)
 
+        _state_mtime = file_mtime_str(STATE_PATH)
+        _state_size = file_size(STATE_PATH)
+        _state_rows = file_row_count(STATE_PATH)
+
         _last_inc_ts = "N/A"
         if (
             df_incidents is not None
@@ -251,6 +329,9 @@ def _live_data_section() -> None:
 | **actions.csv mtime** | {_act_mtime} |
 | **actions.csv size** | {_act_size} bytes |
 | **actions.csv rows** | {_act_rows} |
+| **state.csv mtime** | {_state_mtime} |
+| **state.csv size** | {_state_size} bytes |
+| **state.csv rows** | {_state_rows} |
 """,
         )
 

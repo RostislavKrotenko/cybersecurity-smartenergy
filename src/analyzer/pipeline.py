@@ -28,7 +28,8 @@ from src.analyzer.reporter import (
     write_report_txt,
     write_results_csv,
 )
-from src.contracts.action import Action
+from src.analyzer.state_store import ComponentStateStore
+from src.contracts.action import Action, ActionAck
 from src.contracts.event import Event
 from src.shared.config_loader import load_yaml
 
@@ -217,6 +218,7 @@ def watch_pipeline(
     poll_interval_sec: float = 1.0,
     rolling_window_min: float = 5.0,
     actions_path: str | None = None,
+    applied_path: str | None = None,
 ) -> None:
     """Tail a JSONL file and incrementally detect new incidents.
 
@@ -249,8 +251,13 @@ def watch_pipeline(
     all_incidents: list[Any] = []        # persistent across cycles
     all_actions: list[Action] = []       # accumulated actions for CSV export
     acted_incidents: set[str] = set()    # incident IDs already acted upon
-    all_actions: list[Action] = []       # accumulated actions for CSV
-    acted_incidents: set[str] = set()    # incident IDs already handled
+    state_store = ComponentStateStore()  # live component state tracker
+    # Map correlation_id -> list of Action objects for status tracking
+    _actions_by_cor_id: dict[str, list[Action]] = {}
+    # Map action_id -> Action for ACK-based status tracking
+    _actions_by_id: dict[str, Action] = {}
+    # File offset for tailing actions_applied.jsonl
+    _applied_offset: int = 0
 
     # Horizon: fixed if given, otherwise use the rolling window size
     if horizon_days is not None and horizon_days > 0:
@@ -271,18 +278,24 @@ def watch_pipeline(
                 len(pre_events),
                 file_offset,
             )
+            state_store.process_events(pre_events)
             inc_counter, all_incidents = _incremental_detect(
                 pre_events, rules_cfg, policies_cfg, selected, inc_counter,
             )
+            state_store.tick()
+            state_store.write_csv(str(out_p / "state.csv"))
             _write_live_output(
                 all_incidents, selected, policies_cfg, horizon_sec, out_p,
+                actions_count=len(all_actions),
             )
-            # Decision engine for pre-loaded incidents
             if actions_path and all_incidents:
                 new_actions = decide(all_incidents, acted_incidents)
                 if new_actions:
                     emit_actions(new_actions, actions_path)
                     all_actions.extend(new_actions)
+                    for a in new_actions:
+                        _actions_by_cor_id.setdefault(a.correlation_id, []).append(a)
+                        _actions_by_id[a.action_id] = a
                     write_actions_csv(all_actions, str(out_p / "actions.csv"))
 
             log.info("Watch: initial analysis -> %d incidents", len(all_incidents))
@@ -295,6 +308,8 @@ def watch_pipeline(
     )
     if actions_path:
         print(f"  actions -> {actions_path} (closed-loop)")
+    if applied_path:
+        print(f"  applied <- {applied_path} (ACK)")
     print("  Press Ctrl+C to stop.")
 
     try:
@@ -318,8 +333,29 @@ def watch_pipeline(
                                 log.debug("Skipping line: %s", exc)
                     file_offset = current_size
 
+            # ── Read ACKs from actions_applied.jsonl ──────────────
+            acks_changed = False
+            if applied_path and os.path.isfile(applied_path):
+                _applied_offset, acks_changed = _read_acks(
+                    applied_path, _applied_offset,
+                    _actions_by_id, all_actions, state_store,
+                    out_p,
+                )
+                if acks_changed:
+                    write_actions_csv(all_actions, str(out_p / "actions.csv"))
+                    state_store.write_csv(str(out_p / "state.csv"))
+
             if new_events:
                 iteration += 1
+
+                # ── Update component state from state-change events ──
+                state_store.process_events(new_events)
+
+                # ── Confirm applied actions from state-change events ──
+                # (fallback for live_direct mode where events.jsonl has state_change)
+                if _actions_by_cor_id:
+                    if _confirm_actions(new_events, _actions_by_cor_id):
+                        write_actions_csv(all_actions, str(out_p / "actions.csv"))
 
                 # ── Detect + correlate ONLY new events ──────────────
                 inc_counter, new_incs = _incremental_detect(
@@ -333,7 +369,14 @@ def watch_pipeline(
                     if new_actions:
                         emit_actions(new_actions, actions_path)
                         all_actions.extend(new_actions)
+                        for a in new_actions:
+                            _actions_by_cor_id.setdefault(a.correlation_id, []).append(a)
+                            _actions_by_id[a.action_id] = a
                         write_actions_csv(all_actions, str(out_p / "actions.csv"))
+                        log.info(
+                            "EMITTED %d new actions (%d total)",
+                            len(new_actions), len(all_actions),
+                        )
 
                 # ── Expire old incidents outside the rolling window ─
                 if rolling_sec > 0 and all_incidents:
@@ -347,9 +390,14 @@ def watch_pipeline(
                     if expired:
                         log.debug("Expired %d old incidents", expired)
 
+                # ── Tick TTLs and write state.csv ─────────────────
+                state_store.tick()
+                state_store.write_csv(str(out_p / "state.csv"))
+
                 # ── Recompute metrics & write output ────────────────
                 _write_live_output(
                     all_incidents, selected, policies_cfg, horizon_sec, out_p,
+                    actions_count=len(all_actions),
                 )
 
                 log.info(
@@ -362,6 +410,9 @@ def watch_pipeline(
                     len(all_actions),
                 )
             elif tick_counter % 10 == 0:
+                # Tick TTLs even when idle so state.csv reflects decay
+                state_store.tick()
+                state_store.write_csv(str(out_p / "state.csv"))
                 log.info(
                     "[tick %d] Heartbeat: %d active incidents, %d actions, waiting...",
                     tick_counter,
@@ -375,6 +426,172 @@ def watch_pipeline(
             f"\nWatch stopped. Active incidents: {len(all_incidents)}, "
             f"Total actions: {len(all_actions)}"
         )
+
+
+# ── ACK reader (actions_applied.jsonl) ────────────────────────────────────
+
+# Map ACK state_event -> synthetic Event for the state_store
+_ACK_TO_STATE_EVENT: dict[str, str] = {
+    "rate_limit_enabled": "rate_limit_enabled",
+    "rate_limit_disabled": "rate_limit_disabled",
+    "isolation_enabled": "isolation_enabled",
+    "isolation_released": "isolation_released",
+    "actor_blocked": "actor_blocked",
+    "actor_unblocked": "actor_unblocked",
+    "restore_started": "restore_started",
+    "backup_created": "backup_created",
+}
+
+
+def _read_acks(
+    path: str,
+    offset: int,
+    actions_by_id: dict[str, Action],
+    all_actions: list[Action],
+    state_store: "ComponentStateStore",
+    out_p: Path,
+) -> tuple[int, bool]:
+    """Read new ACK lines from *path* starting at *offset*.
+
+    For each ACK, marks the corresponding Action as 'applied' (or 'failed')
+    and feeds a synthetic state-change event into the state_store so that
+    component status updates even in live_normalized mode.
+
+    Returns (new_offset, changed).
+    """
+    changed = False
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return offset, changed
+
+    if size <= offset:
+        return offset, changed
+
+    acks: list[ActionAck] = []
+    with open(path, encoding="utf-8") as fh:
+        fh.seek(offset)
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ack = ActionAck.from_json(line)
+                acks.append(ack)
+            except (json.JSONDecodeError, KeyError) as exc:
+                log.debug("Skipping bad ACK line: %s", exc)
+        new_offset = fh.tell()
+
+    for ack in acks:
+        # Update action status
+        act = actions_by_id.get(ack.action_id)
+        if act and act.status != ack.result:
+            old_status = act.status
+            act.status = "applied" if ack.result == "success" else "failed"
+            changed = True
+            log.info(
+                "ACK: action_id=%s %s -> %s (was %s, cor=%s)",
+                ack.action_id, ack.action, act.status, old_status,
+                ack.correlation_id,
+            )
+
+        # Feed state_store with a synthetic state-change event
+        se = ack.state_event
+        if se and se in _ACK_TO_STATE_EVENT and ack.result == "success":
+            # Build a synthetic Event so the state_store picks it up
+            synthetic = Event(
+                timestamp=ack.applied_ts_utc,
+                source=f"{ack.target_component}-01",
+                component=ack.target_component,
+                event=se,
+                key="action_result",
+                value=_build_ack_value(ack, act),
+                severity="high",
+                actor="system",
+                ip="",
+                unit="",
+                tags="action;state_change",
+                correlation_id=ack.correlation_id,
+            )
+            state_store.process_events([synthetic])
+            log.info(
+                "STATE from ACK: %s -> %s (cor=%s)",
+                ack.target_component, se, ack.correlation_id,
+            )
+
+    if acks:
+        log.info("ACKS READ: %d from %s", len(acks), path)
+
+    return new_offset, changed
+
+
+def _build_ack_value(ack: ActionAck, act: Action | None) -> str:
+    """Build the value string for a synthetic state-change event from an ACK."""
+    if act is None:
+        return ack.action
+    params = act.params
+    if ack.state_event == "rate_limit_enabled":
+        rps = params.get("rps", 100)
+        burst = params.get("burst", 200)
+        dur = params.get("duration_sec", 300)
+        return f"rps={rps},burst={burst},dur={dur}"
+    if ack.state_event == "isolation_enabled":
+        dur = params.get("duration_sec", 120)
+        return f"duration={dur}"
+    if ack.state_event == "actor_blocked":
+        actor = params.get("actor", "")
+        ip = params.get("ip", "")
+        dur = params.get("duration_sec", 600)
+        return f"actor={actor},ip={ip},duration={dur}"
+    if ack.state_event == "restore_started":
+        snap = params.get("snapshot", "")
+        return f"snapshot={snap}"
+    if ack.state_event == "backup_created":
+        return params.get("name", "snapshot")
+    return ack.action
+
+
+# ── action confirmation from state-change events ──────────────────────────
+
+# State-change event types that confirm an action was applied
+_CONFIRM_EVENTS = frozenset({
+    "rate_limit_enabled",
+    "rate_limit_disabled",
+    "isolation_enabled",
+    "isolation_released",
+    "actor_blocked",
+    "actor_unblocked",
+    "restore_started",
+    "backup_created",
+})
+
+
+def _confirm_actions(
+    events: list[Event],
+    actions_index: dict[str, list[Action]],
+) -> bool:
+    """Scan *events* for state-change confirmations and mark matching actions as 'applied'.
+
+    Returns True if any action status was updated.
+    """
+    changed = False
+    for ev in events:
+        if "state_change" not in ev.tags:
+            continue
+        if ev.event not in _CONFIRM_EVENTS:
+            continue
+        cor_id = ev.correlation_id
+        if not cor_id or cor_id not in actions_index:
+            continue
+        for act in actions_index[cor_id]:
+            if act.status != "applied":
+                act.status = "applied"
+                changed = True
+                log.info(
+                    "ACTION CONFIRMED: %s (cor=%s) -> applied",
+                    act.action, cor_id,
+                )
+    return changed
 
 
 # ── Watch-mode helpers ──────────────────────────────────────────────────────
@@ -409,6 +626,7 @@ def _write_live_output(
     policies_cfg: dict[str, Any],
     horizon_sec: float,
     out_p: Path,
+    actions_count: int = 0,
 ) -> None:
     """Compute metrics on *incidents* and write results / incidents / report."""
     all_metrics = []
@@ -420,7 +638,10 @@ def _write_live_output(
     control_ranking = rank_controls(policies_cfg, selected)
     write_results_csv(all_metrics, str(out_p / "results.csv"))
     write_incidents_csv(incidents, str(out_p / "incidents.csv"))
-    write_report_txt(all_metrics, incidents, control_ranking, str(out_p / "report.txt"))
+    write_report_txt(
+        all_metrics, incidents, control_ranking, str(out_p / "report.txt"),
+        actions_count=actions_count,
+    )
 
 
 def _run_analysis(

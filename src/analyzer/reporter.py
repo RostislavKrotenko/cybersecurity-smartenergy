@@ -74,6 +74,8 @@ def write_report_txt(
     all_incidents: list[Incident],
     control_ranking: list[dict[str, Any]],
     path: str,
+    *,
+    actions_count: int = 0,
 ) -> None:
     """Генерує текстовий звіт."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +133,13 @@ def write_report_txt(
         )
         lines.append(f"     Controls: {', '.join(cr['enabled_controls'])}")
     lines.append("")
+
+    # Closed-loop actions summary
+    if actions_count > 0:
+        lines.append("--- Closed-Loop Response ---")
+        lines.append(f"  Actions issued:   {actions_count}")
+        lines.append("")
+
     lines.append("=" * 60)
 
     with open(path, "w", encoding="utf-8") as f:

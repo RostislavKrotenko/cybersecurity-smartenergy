@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 RESULTS_PATH = ROOT / "out" / "results.csv"
 INCIDENTS_PATH = ROOT / "out" / "incidents.csv"
 ACTIONS_PATH = ROOT / "out" / "actions.csv"
+STATE_PATH = ROOT / "out" / "state.csv"
 EVENTS_PATH = ROOT / "data" / "events.csv"
 
 # ── retry / stability settings ──────────────────────────────────────────────
@@ -134,51 +135,16 @@ def load_actions() -> pd.DataFrame | None:
     return df
 
 
+def load_state() -> pd.DataFrame | None:
+    """Завантажує out/state.csv. Повертає None якщо відсутній."""
+    return _read_csv_safe(STATE_PATH)
+
+
 def clear_caches() -> None:
     """Не використовується, збережено для сумісності інтерфейсу."""
     pass
 
 
-# ── filtering ───────────────────────────────────────────────────────────────
+# ── sorting ──────────────────────────────────────────────────────────────────
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-
-
-def filter_results(
-    df: pd.DataFrame,
-    policies: list[str],
-) -> pd.DataFrame:
-    """Фільтрує results за політиками."""
-    if not policies:
-        return df
-    return df[df["policy"].isin(policies)].copy()
-
-
-def filter_incidents(
-    df: pd.DataFrame,
-    *,
-    policies: list[str] | None = None,
-    severities: list[str] | None = None,
-    threat_types: list[str] | None = None,
-    components: list[str] | None = None,
-    horizon_days: float | None = None,
-) -> pd.DataFrame:
-    """Застосовує фільтри sidebar до incidents."""
-    mask = pd.Series(True, index=df.index)
-
-    if policies:
-        mask &= df["policy"].isin(policies)
-    if severities:
-        mask &= df["severity"].isin(severities)
-    if threat_types:
-        mask &= df["threat_type"].isin(threat_types)
-    if components:
-        mask &= df["component"].isin(components)
-
-    if horizon_days and horizon_days > 0 and "start_ts" in df.columns:
-        latest = df["start_ts"].max()
-        if pd.notna(latest):
-            cutoff = latest - pd.Timedelta(days=horizon_days)
-            mask &= df["start_ts"] >= cutoff
-
-    return df.loc[mask].copy()

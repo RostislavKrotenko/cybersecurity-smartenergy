@@ -125,6 +125,7 @@ services:
         --profile demo_high_rate
         --seed 42
         --actions-path data/live/actions.jsonl
+        --applied-path data/live/actions_applied.jsonl
         --log-level INFO
     depends_on:
       init-live:
@@ -144,6 +145,7 @@ services:
         --out-dir out
         --policies all
         --actions-path data/live/actions.jsonl
+        --applied-path data/live/actions_applied.jsonl
         --log-level INFO
     depends_on:
       emulator-live-direct:
@@ -198,6 +200,7 @@ services:
         --profile demo_high_rate
         --seed 42
         --actions-path data/live/actions.jsonl
+        --applied-path data/live/actions_applied.jsonl
         --log-level INFO
     depends_on:
       init-live:
@@ -235,6 +238,7 @@ services:
         --out-dir out
         --policies all
         --actions-path data/live/actions.jsonl
+        --applied-path data/live/actions_applied.jsonl
         --log-level INFO
     depends_on:
       emulator-live-normalized:

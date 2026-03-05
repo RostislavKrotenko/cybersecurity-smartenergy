@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 
@@ -19,6 +20,7 @@ class ActionType(str, Enum):
 
 
 ACTION_CSV_COLUMNS = [
+    "action_id",
     "ts_utc",
     "action",
     "target_component",
@@ -28,6 +30,10 @@ ACTION_CSV_COLUMNS = [
     "correlation_id",
     "status",
 ]
+
+
+def _gen_action_id() -> str:
+    return f"ACT-{uuid.uuid4().hex[:8]}"
 
 
 @dataclass(slots=True)
@@ -42,6 +48,7 @@ class Action:
     reason: str = ""
     correlation_id: str = ""
     status: str = "pending"
+    action_id: str = field(default_factory=_gen_action_id)
 
     def to_json(self) -> str:
         d = asdict(self)
@@ -50,6 +57,7 @@ class Action:
     def to_csv_row(self) -> str:
         params_str = json.dumps(self.params, ensure_ascii=False, separators=(",", ":"))
         vals = [
+            self.action_id,
             self.ts_utc,
             self.action,
             self.target_component,
@@ -86,8 +94,46 @@ class Action:
             reason=d.get("reason", ""),
             correlation_id=d.get("correlation_id", ""),
             status=d.get("status", "pending"),
+            action_id=d.get("action_id", _gen_action_id()),
         )
 
     @classmethod
     def from_json(cls, line: str) -> Action:
         return cls.from_dict(json.loads(line))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  ActionAck -- confirmation written by the Emulator after apply_action
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@dataclass(slots=True)
+class ActionAck:
+    """Acknowledgement emitted by the Emulator after applying an action."""
+
+    action_id: str
+    correlation_id: str
+    target_component: str
+    action: str
+    applied_ts_utc: str
+    result: str  # "success" or "failed"
+    error: str = ""
+    state_event: str = ""  # e.g. "rate_limit_enabled"
+
+    def to_json(self) -> str:
+        d = asdict(self)
+        return json.dumps(d, ensure_ascii=False, separators=(",", ":"))
+
+    @classmethod
+    def from_json(cls, line: str) -> ActionAck:
+        d = json.loads(line)
+        return cls(
+            action_id=d.get("action_id", ""),
+            correlation_id=d.get("correlation_id", ""),
+            target_component=d.get("target_component", ""),
+            action=d.get("action", ""),
+            applied_ts_utc=d.get("applied_ts_utc", ""),
+            result=d.get("result", ""),
+            error=d.get("error", ""),
+            state_event=d.get("state_event", ""),
+        )

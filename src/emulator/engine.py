@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from src.contracts.action import ActionAck
 from src.contracts.event import Event
 from src.emulator.devices import build_device_index
 from src.emulator.noise import (
@@ -912,6 +913,7 @@ def stream_demo_highrate(
     raw_log_dir: Path | None = None,
     csv_out: Path | None = None,
     actions_path: Path | None = None,
+    applied_path: Path | None = None,
 ) -> None:
     """Stream events optimised for live demo: high background rate + periodic attack bursts.
 
@@ -928,6 +930,9 @@ def stream_demo_highrate(
     When *actions_path* is provided, the emulator reads actions.jsonl
     (tail mode) and applies them to the world state, closing the feedback
     loop with the Analyzer.
+
+    When *applied_path* is provided, the emulator writes an ACK line to
+    actions_applied.jsonl after every successful apply_action().
 
     Args:
         engine: Configured EmulatorEngine (used for rng and device index).
@@ -983,9 +988,65 @@ def stream_demo_highrate(
             new_actions, actions_offset = read_new_actions(
                 str(actions_path), actions_offset,
             )
+            if new_actions:
+                log.info(
+                    "ACTIONS READ: %d new actions from %s",
+                    len(new_actions), actions_path,
+                )
+            acks: list[ActionAck] = []
             for act in new_actions:
-                state_events = apply_action(world, act)
-                events.extend(state_events)
+                try:
+                    state_events = apply_action(world, act)
+                    events.extend(state_events)
+                    # Determine the primary state-change event name
+                    se_name = state_events[0].event if state_events else act.action
+                    acks.append(ActionAck(
+                        action_id=act.action_id,
+                        correlation_id=act.correlation_id,
+                        target_component=act.target_component,
+                        action=act.action,
+                        applied_ts_utc=datetime.now(tz=timezone.utc).strftime(
+                            "%Y-%m-%dT%H:%M:%SZ",
+                        ),
+                        result="success",
+                        state_event=se_name,
+                    ))
+                    log.info(
+                        "APPLIED action_id=%s %s -> %s (cor=%s)",
+                        act.action_id, act.action, se_name, act.correlation_id,
+                    )
+                except Exception as exc:
+                    acks.append(ActionAck(
+                        action_id=act.action_id,
+                        correlation_id=act.correlation_id,
+                        target_component=act.target_component,
+                        action=act.action,
+                        applied_ts_utc=datetime.now(tz=timezone.utc).strftime(
+                            "%Y-%m-%dT%H:%M:%SZ",
+                        ),
+                        result="failed",
+                        error=str(exc),
+                    ))
+                    log.error(
+                        "FAILED action_id=%s %s: %s",
+                        act.action_id, act.action, exc,
+                    )
+            # Write ACKs to applied file
+            if acks and applied_path is not None:
+                applied_path.parent.mkdir(parents=True, exist_ok=True)
+                with applied_path.open("a", encoding="utf-8") as fh:
+                    for ack in acks:
+                        fh.write(ack.to_json() + "\n")
+                    fh.flush()
+                log.info(
+                    "ACKS WRITTEN: %d -> %s",
+                    len(acks), applied_path,
+                )
+            if new_actions:
+                log.info(
+                    "ACTIONS APPLIED: %d actions, %d state-change events generated",
+                    len(new_actions), len(events),
+                )
 
         # 0b. Expire transient states -----------------------------------
         expire_events = expire_state(world)

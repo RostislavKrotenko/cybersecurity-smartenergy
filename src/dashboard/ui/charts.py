@@ -206,3 +206,79 @@ def incidents_per_minute(
         )
     )
     return fig
+
+
+# -- actions per minute --------------------------------------------------
+
+
+def actions_per_minute(
+    df: pd.DataFrame,
+    *,
+    tz: str = "UTC",
+) -> go.Figure | None:
+    """Line chart -- action count aggregated by minute.
+
+    Returns *None* when the dataframe is empty or lacks a usable
+    timestamp column.
+    """
+    if df is None or df.empty:
+        return None
+
+    ts_col = "ts_utc" if "ts_utc" in df.columns else None
+    if ts_col is None:
+        return None
+
+    tmp = df[[ts_col]].copy()
+    if tmp[ts_col].dt.tz is not None:
+        tmp["_local"] = tmp[ts_col].dt.tz_convert(tz).apply(lambda t: t.replace(tzinfo=None))
+    else:
+        tmp["_local"] = tmp[ts_col]
+
+    tmp["minute"] = tmp["_local"].dt.floor("min")
+    agg = tmp.groupby("minute").size().reset_index(name="count")
+    agg = agg.sort_values("minute")
+
+    if agg.empty or agg["count"].sum() == 0:
+        return None
+
+    full_range = pd.date_range(
+        start=agg["minute"].min(),
+        end=agg["minute"].max(),
+        freq="min",
+    )
+    agg = (
+        agg.set_index("minute")
+        .reindex(full_range, fill_value=0)
+        .rename_axis("minute")
+        .reset_index()
+    )
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=agg["minute"],
+            y=agg["count"],
+            mode="lines+markers",
+            line=dict(color="#10b981", width=2),
+            marker=dict(color="#10b981", size=6),
+            hovertemplate="%{x|%H:%M}<br>%{y} actions<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        **_base(
+            title=dict(text="Actions per Minute (Closed-Loop)"),
+            xaxis=dict(
+                title="",
+                gridcolor=_GRID_COLOR,
+                tickformat="%H:%M",
+            ),
+            yaxis=dict(
+                title="",
+                gridcolor=_GRID_COLOR,
+                zeroline=False,
+                dtick=1,
+            ),
+            showlegend=False,
+        )
+    )
+    return fig

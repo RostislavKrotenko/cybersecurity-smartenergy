@@ -400,7 +400,7 @@ class TestAtomicWrite:
             with open(path) as f:
                 lines = f.readlines()
             assert len(lines) == 3  # header + 2 rows
-            assert lines[0].strip().startswith("ts_utc")
+            assert lines[0].strip().startswith("action_id")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

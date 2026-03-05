@@ -150,6 +150,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "Only used with --live --profile demo_high_rate.",
     )
     p.add_argument(
+        "--applied-path",
+        type=str,
+        default=None,
+        help="Path to actions_applied.jsonl for ACK output. "
+        "Emulator writes acknowledgements here after applying actions.",
+    )
+    p.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -191,6 +198,7 @@ def main(argv: list[str] | None = None) -> None:
         raw_log_dir = Path(args.raw_log_dir) if args.raw_log_dir else None
         csv_out = Path(args.csv_out) if args.csv_out else None
         actions_path = Path(args.actions_path) if args.actions_path else None
+        applied_path = Path(args.applied_path) if args.applied_path else None
         print(f"Emulator live mode -> {out_path}")
         print(
             f"  interval: {args.live_interval_ms} ms, max_events: {args.max_events or 'infinite'}"
@@ -208,6 +216,8 @@ def main(argv: list[str] | None = None) -> None:
             print(f"  csv out  -> {csv_out}")
         if actions_path:
             print(f"  actions  <- {actions_path} (closed-loop)")
+        if applied_path:
+            print(f"  applied  -> {applied_path} (ACK)")
         print("  Press Ctrl+C to stop.")
         try:
             if args.profile == "demo_high_rate":
@@ -222,6 +232,7 @@ def main(argv: list[str] | None = None) -> None:
                     raw_log_dir=raw_log_dir,
                     csv_out=csv_out,
                     actions_path=actions_path,
+                    applied_path=applied_path,
                 )
             elif args.max_events is not None:
                 # Finite live mode (legacy)

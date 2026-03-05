@@ -1,18 +1,24 @@
-"""Page layout — sidebar controls and main-area scaffolding.
+"""Page layout -- sidebar controls and main-area scaffolding.
 
-``render_sidebar`` populates the left panel and returns an object
-with the current filter values.  ``render_header`` draws the top
-title bar.
+``render_sidebar`` populates the left panel with auto-refresh controls
+and live diagnostics.  ``render_header`` draws the top title bar.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timezone
 
-import pandas as pd
 import streamlit as st
+
+from src.dashboard.data_access import (
+    ACTIONS_PATH,
+    INCIDENTS_PATH,
+    RESULTS_PATH,
+    STATE_PATH,
+    file_mtime_str,
+    file_row_count,
+    file_size,
+)
 
 try:
     from streamlit_autorefresh import st_autorefresh  # type: ignore[import-untyped]
@@ -20,28 +26,6 @@ try:
     _HAS_AUTOREFRESH = True
 except ModuleNotFoundError:
     _HAS_AUTOREFRESH = False
-
-_TZ_OPTIONS: list[str] = [
-    "UTC",
-    "Europe/Kyiv",
-    "Europe/Berlin",
-    "Europe/London",
-    "US/Eastern",
-    "US/Pacific",
-    "Asia/Tokyo",
-]
-
-
-@dataclass
-class SidebarState:
-    """Values collected from sidebar controls."""
-
-    policies: list[str]
-    severities: list[str]
-    threat_types: list[str]
-    components: list[str]
-    horizon_days: float
-    display_tz: str
 
 
 # ── header ──────────────────────────────────────────────────────────────────
@@ -60,99 +44,12 @@ def render_header() -> None:
 # ── sidebar ─────────────────────────────────────────────────────────────────
 
 
-def render_sidebar(
-    incidents_df: pd.DataFrame | None,
-) -> SidebarState:
-    """Draw sidebar controls and return current selections."""
+def render_sidebar() -> None:
+    """Draw sidebar: auto-refresh controls, diagnostics, reset."""
 
     with st.sidebar:
         st.markdown('<p class="sidebar-brand">SmartEnergy</p>', unsafe_allow_html=True)
         st.caption("Cyber-Resilience Analyzer")
-        st.divider()
-
-        # -- policies --
-        st.markdown("##### Policies")
-        policies = st.multiselect(
-            "Policies",
-            options=["baseline", "minimal", "standard"],
-            default=["baseline", "minimal", "standard"],
-            label_visibility="collapsed",
-            key="f_policies",
-        )
-
-        st.divider()
-
-        # -- incident filters --
-        st.markdown("##### Filter Incidents")
-
-        # severity
-        sev_options = (
-            sorted(
-                incidents_df["severity"].dropna().unique(),
-                key=lambda s: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(s, 9),
-            )
-            if incidents_df is not None and "severity" in incidents_df.columns
-            else []
-        )
-        severities = st.multiselect(
-            "Severity",
-            options=sev_options,
-            default=sev_options,
-            label_visibility="visible",
-            key="f_severities",
-        )
-
-        # threat type
-        type_options = (
-            sorted(incidents_df["threat_type"].dropna().unique())
-            if incidents_df is not None and "threat_type" in incidents_df.columns
-            else []
-        )
-        threat_types = st.multiselect(
-            "Threat type",
-            options=type_options,
-            default=type_options,
-            label_visibility="visible",
-            key="f_threats",
-        )
-
-        # component
-        comp_options = (
-            sorted(incidents_df["component"].dropna().unique())
-            if incidents_df is not None and "component" in incidents_df.columns
-            else []
-        )
-        components = st.multiselect(
-            "Component",
-            options=comp_options,
-            default=comp_options,
-            label_visibility="visible",
-            key="f_components",
-        )
-
-        # horizon
-        horizon_days = st.number_input(
-            "Horizon (days)",
-            min_value=0.0,
-            max_value=365.0,
-            value=0.0,
-            step=0.5,
-            help="Filter incidents within the last N days. 0 = show all.",
-            key="f_horizon",
-        )
-
-        st.divider()
-
-        # -- display timezone --
-        st.markdown("##### Display timezone")
-        display_tz = st.selectbox(
-            "Timezone",
-            options=_TZ_OPTIONS,
-            index=_TZ_OPTIONS.index("Europe/Kyiv"),
-            key="display_tz",
-            label_visibility="collapsed",
-        )
-
         st.divider()
 
         # -- auto-refresh --
@@ -181,18 +78,46 @@ def render_sidebar(
             else:
                 st.warning("Install streamlit-autorefresh:\npip install streamlit-autorefresh")
 
-        tz_obj = ZoneInfo(display_tz)
-        now_str = datetime.now(tz_obj).strftime("%Y-%m-%d %H:%M:%S")
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         st.markdown(
-            f'<p class="refresh-timestamp">Last refresh: {now_str} ({display_tz})</p>',
+            f'<p class="refresh-timestamp">Last refresh: {now_str} (UTC)</p>',
             unsafe_allow_html=True,
         )
 
-    return SidebarState(
-        policies=policies,
-        severities=severities,
-        threat_types=threat_types,
-        components=components,
-        horizon_days=horizon_days,
-        display_tz=display_tz,
-    )
+        st.divider()
+
+        # -- live diagnostics (read-only) --
+        st.markdown("##### Live Diagnostics")
+
+        _diag_files = [
+            ("incidents.csv", INCIDENTS_PATH),
+            ("results.csv", RESULTS_PATH),
+            ("actions.csv", ACTIONS_PATH),
+            ("state.csv", STATE_PATH),
+        ]
+
+        for label, path in _diag_files:
+            mtime = file_mtime_str(path)
+            size = file_size(path)
+            rows = file_row_count(path)
+            if mtime == "N/A":
+                st.markdown(
+                    f"**{label}** -- not found",
+                    help=f"{path}",
+                )
+            else:
+                st.markdown(
+                    f"**{label}**  \n"
+                    f"mtime: {mtime}  \n"
+                    f"size: {size} bytes | rows: {rows}",
+                )
+
+        st.divider()
+
+        # -- reset to defaults --
+        if st.button("Reset to defaults", use_container_width=True):
+            from src.dashboard.ui.state import DEFAULTS
+
+            for key, value in DEFAULTS.items():
+                st.session_state[key] = value
+            st.rerun()
