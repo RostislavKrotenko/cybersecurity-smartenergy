@@ -2,14 +2,14 @@
 #  SmartEnergy Cyber-Resilience Analyzer — Docker Compose
 # ─────────────────────────────────────────────────────────────────────────────
 #  Profiles:
-#    demo   — one-shot: emulator → analyzer → UI  (batch CSV)
-#    live   — continuous: emulator-live + analyzer-live + UI (JSONL streaming)
+#    demo            — one-shot: emulator -> analyzer -> UI (batch CSV)
+#    live_direct     — closed-loop: emulator -> events.jsonl -> analyzer -> actions.jsonl -> emulator + dashboard
+#    live_normalized — closed-loop: emulator -> raw logs -> normalizer -> normalized.jsonl -> analyzer -> actions.jsonl -> emulator + dashboard
 #
-#  Quick start (live):
-#    docker compose --profile live up --build
-#
-#  Quick start (batch demo):
-#    make demo
+#  Quick start:
+#    docker compose --profile live_direct up --build
+#    docker compose --profile live_normalized up --build
+#    docker compose --profile demo up --build
 # ─────────────────────────────────────────────────────────────────────────────
 
 x-common: &common
@@ -24,7 +24,7 @@ x-common: &common
   env_file: []
 
 services:
-  # ── 0. Live Init — clear runtime data from previous runs ────────────────
+  # ── 0. Init — clear runtime data from previous runs ──────────────────────
   init-live:
     <<: *common
     container_name: smartenergy-init-live
@@ -35,9 +35,9 @@ services:
         && mkdir -p data/live out logs/live
         && echo 'Runtime data cleared.'
     restart: "no"
-    profiles: ["live"]
+    profiles: ["live_direct", "live_normalized"]
 
-  # ── 1. Emulator — generate synthetic events.csv (batch) ─────────────────
+  # ── 1. Emulator — batch CSV (demo profile) ──────────────────────────────
   emulator:
     <<: *common
     container_name: smartenergy-emulator
@@ -48,7 +48,7 @@ services:
         --log-level INFO
     profiles: ["generate", "demo"]
 
-  # ── 2. Normalizer — raw logs → normalised events.csv ────────────────────
+  # ── 2. Normalizer — batch: raw logs -> events.csv ──────────────────────
   normalizer:
     <<: *common
     container_name: smartenergy-normalizer
@@ -61,7 +61,7 @@ services:
         --log-level INFO
     profiles: ["normalize"]
 
-  # ── 3. Analyzer — events.csv → results, incidents, plots (batch) ────────
+  # ── 3. Analyzer — batch: events.csv -> results ─────────────────────────
   analyzer:
     <<: *common
     container_name: smartenergy-analyzer
@@ -78,7 +78,7 @@ services:
         required: false
     profiles: ["analyze", "demo"]
 
-  # ── 4. UI — Streamlit dashboard ─────────────────────────────────────────
+  # ── 4. UI — batch dashboard ────────────────────────────────────────────
   ui:
     <<: *common
     container_name: smartenergy-ui
@@ -103,10 +103,15 @@ services:
     restart: unless-stopped
     profiles: ["ui", "demo"]
 
-  # ── 5. Live Emulator — infinite JSONL stream + raw logs ─────────────────
-  emulator-live:
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  MODE A: live_direct
+  #    Emulator -> events.jsonl -> Analyzer (direct, skips normalizer)
+  #    Closed-loop: Analyzer -> actions.jsonl -> Emulator
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  emulator-live-direct:
     <<: *common
-    container_name: smartenergy-emulator-live
+    container_name: smartenergy-emulator-live-direct
     command: >-
       python -m src.emulator
         --live
@@ -119,14 +124,87 @@ services:
         --csv-out data/live/events.csv
         --profile demo_high_rate
         --seed 42
+        --actions-path data/live/actions.jsonl
         --log-level INFO
     depends_on:
       init-live:
         condition: service_completed_successfully
     restart: unless-stopped
-    profiles: ["live"]
+    profiles: ["live_direct"]
 
-  # ── 6. Live Normalizer — tail raw logs → normalised JSONL ──────────────
+  analyzer-live-direct:
+    <<: *common
+    container_name: smartenergy-analyzer-live-direct
+    command: >-
+      python -m src.analyzer
+        --input data/live/events.jsonl
+        --watch
+        --poll-interval-ms 1000
+        --rolling-window-min 5
+        --out-dir out
+        --policies all
+        --actions-path data/live/actions.jsonl
+        --log-level INFO
+    depends_on:
+      emulator-live-direct:
+        condition: service_started
+    restart: unless-stopped
+    profiles: ["live_direct"]
+
+  ui-live-direct:
+    <<: *common
+    container_name: smartenergy-ui-live-direct
+    environment:
+      - SMARTENERGY_LIVE_MODE=1
+    command: >-
+      streamlit run src/dashboard/app.py
+        --server.headless true
+        --server.port 8501
+        --server.address 0.0.0.0
+        --browser.gatherUsageStats false
+    ports:
+      - "8501:8501"
+    depends_on:
+      analyzer-live-direct:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    profiles: ["live_direct"]
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  MODE B: live_normalized
+  #    Emulator -> raw logs -> Normalizer -> normalized.jsonl -> Analyzer
+  #    Closed-loop: Analyzer -> actions.jsonl -> Emulator
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  emulator-live-normalized:
+    <<: *common
+    container_name: smartenergy-emulator-live-normalized
+    command: >-
+      python -m src.emulator
+        --live
+        --live-interval-ms 250
+        --attack-every-sec 10
+        --background-events-per-tick 20
+        --max-file-mb 50
+        --out data/live/events.jsonl
+        --raw-log-dir logs/live
+        --csv-out data/live/events.csv
+        --profile demo_high_rate
+        --seed 42
+        --actions-path data/live/actions.jsonl
+        --log-level INFO
+    depends_on:
+      init-live:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    profiles: ["live_normalized"]
+
   normalizer-live:
     <<: *common
     container_name: smartenergy-normalizer-live
@@ -140,15 +218,14 @@ services:
         --poll-interval-ms 500
         --log-level INFO
     depends_on:
-      emulator-live:
+      emulator-live-normalized:
         condition: service_started
     restart: unless-stopped
-    profiles: ["live"]
+    profiles: ["live_normalized"]
 
-  # ── 7. Live Analyzer — watch mode, tail normalised JSONL ───────────────
-  analyzer-live:
+  analyzer-live-normalized:
     <<: *common
-    container_name: smartenergy-analyzer-live
+    container_name: smartenergy-analyzer-live-normalized
     command: >-
       python -m src.analyzer
         --input data/live/normalized.jsonl
@@ -157,19 +234,19 @@ services:
         --rolling-window-min 5
         --out-dir out
         --policies all
+        --actions-path data/live/actions.jsonl
         --log-level INFO
     depends_on:
-      emulator-live:
+      emulator-live-normalized:
         condition: service_started
       normalizer-live:
         condition: service_started
     restart: unless-stopped
-    profiles: ["live"]
+    profiles: ["live_normalized"]
 
-  # ── 8. Live UI — live-only dashboard ───────────────────────────────────
-  ui-live:
+  ui-live-normalized:
     <<: *common
-    container_name: smartenergy-ui-live
+    container_name: smartenergy-ui-live-normalized
     environment:
       - SMARTENERGY_LIVE_MODE=1
     command: >-
@@ -181,7 +258,7 @@ services:
     ports:
       - "8501:8501"
     depends_on:
-      analyzer-live:
+      analyzer-live-normalized:
         condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
@@ -190,4 +267,4 @@ services:
       start_period: 10s
       retries: 3
     restart: unless-stopped
-    profiles: ["live"]
+    profiles: ["live_normalized"]

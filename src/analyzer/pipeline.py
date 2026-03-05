@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from src.analyzer.correlator import correlate
+from src.analyzer.decision import decide, emit_actions, write_actions_csv
 from src.analyzer.detector import detect
 from src.analyzer.metrics import compute
 from src.analyzer.policy_engine import (
@@ -27,6 +28,7 @@ from src.analyzer.reporter import (
     write_report_txt,
     write_results_csv,
 )
+from src.contracts.action import Action
 from src.contracts.event import Event
 from src.shared.config_loader import load_yaml
 
@@ -214,6 +216,7 @@ def watch_pipeline(
     horizon_days: float | None = None,
     poll_interval_sec: float = 1.0,
     rolling_window_min: float = 5.0,
+    actions_path: str | None = None,
 ) -> None:
     """Tail a JSONL file and incrementally detect new incidents.
 
@@ -226,6 +229,9 @@ def watch_pipeline(
     3. Incidents older than *rolling_window_min* are expired, so the
        dashboard shows a live, evolving picture instead of a frozen count.
     4. Metrics are recomputed on the active incident set each cycle.
+    5. When *actions_path* is provided, the decision engine maps new
+       incidents to actions and writes them to actions.jsonl for the
+       Emulator to consume (closed-loop).
     """
     rules_cfg = load_yaml(f"{config_dir}/rules.yaml")
     policies_cfg = load_policies(config_dir)
@@ -241,6 +247,10 @@ def watch_pipeline(
     rolling_sec = rolling_window_min * 60.0
     inc_counter = 0                      # global incident numbering
     all_incidents: list[Any] = []        # persistent across cycles
+    all_actions: list[Action] = []       # accumulated actions for CSV export
+    acted_incidents: set[str] = set()    # incident IDs already acted upon
+    all_actions: list[Action] = []       # accumulated actions for CSV
+    acted_incidents: set[str] = set()    # incident IDs already handled
 
     # Horizon: fixed if given, otherwise use the rolling window size
     if horizon_days is not None and horizon_days > 0:
@@ -267,6 +277,14 @@ def watch_pipeline(
             _write_live_output(
                 all_incidents, selected, policies_cfg, horizon_sec, out_p,
             )
+            # Decision engine for pre-loaded incidents
+            if actions_path and all_incidents:
+                new_actions = decide(all_incidents, acted_incidents)
+                if new_actions:
+                    emit_actions(new_actions, actions_path)
+                    all_actions.extend(new_actions)
+                    write_actions_csv(all_actions, str(out_p / "actions.csv"))
+
             log.info("Watch: initial analysis -> %d incidents", len(all_incidents))
 
     print(f"Analyzer watch mode -> {input_path}")
@@ -275,6 +293,8 @@ def watch_pipeline(
         f"rolling window: {rolling_window_min:.0f} min, "
         f"policies: {', '.join(selected)}"
     )
+    if actions_path:
+        print(f"  actions -> {actions_path} (closed-loop)")
     print("  Press Ctrl+C to stop.")
 
     try:
@@ -307,6 +327,14 @@ def watch_pipeline(
                 )
                 all_incidents.extend(new_incs)
 
+                # ── Decision engine: emit actions for new incidents ──
+                if actions_path and new_incs:
+                    new_actions = decide(new_incs, acted_incidents)
+                    if new_actions:
+                        emit_actions(new_actions, actions_path)
+                        all_actions.extend(new_actions)
+                        write_actions_csv(all_actions, str(out_p / "actions.csv"))
+
                 # ── Expire old incidents outside the rolling window ─
                 if rolling_sec > 0 and all_incidents:
                     latest = max(_ts(i.start_ts) for i in all_incidents)
@@ -325,23 +353,28 @@ def watch_pipeline(
                 )
 
                 log.info(
-                    "[tick %d] iter %d: +%d events, +%d incidents, %d active",
+                    "[tick %d] iter %d: +%d events, +%d incidents, %d active, %d actions total",
                     tick_counter,
                     iteration,
                     len(new_events),
                     len(new_incs),
                     len(all_incidents),
+                    len(all_actions),
                 )
             elif tick_counter % 10 == 0:
                 log.info(
-                    "[tick %d] Heartbeat: %d active incidents, waiting...",
+                    "[tick %d] Heartbeat: %d active incidents, %d actions, waiting...",
                     tick_counter,
                     len(all_incidents),
+                    len(all_actions),
                 )
 
             time.sleep(poll_interval_sec)
     except KeyboardInterrupt:
-        print(f"\nWatch stopped. Active incidents: {len(all_incidents)}")
+        print(
+            f"\nWatch stopped. Active incidents: {len(all_incidents)}, "
+            f"Total actions: {len(all_actions)}"
+        )
 
 
 # ── Watch-mode helpers ──────────────────────────────────────────────────────

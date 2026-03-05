@@ -25,11 +25,13 @@ if _CSS_PATH.exists():
 # ── local imports (after page config) ───────────────────────────────────────
 
 from src.dashboard.data_access import (  # noqa: E402
+    ACTIONS_PATH,
     INCIDENTS_PATH,
     RESULTS_PATH,
     file_mtime_str,
     file_row_count,
     file_size,
+    load_actions,
     load_incidents,
     load_results,
 )
@@ -177,6 +179,33 @@ def _live_data_section() -> None:
     else:
         st.info("No incidents data available.")
 
+    # ── ACTIONS TIMELINE ─────────────────────────────────────────
+    st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
+    st.markdown('<p class="section-label">Actions Timeline (Closed-Loop)</p>', unsafe_allow_html=True)
+
+    df_actions = load_actions()
+    if df_actions is not None and not df_actions.empty:
+        _action_cols = [
+            c for c in ["ts_utc", "action", "target_component", "target_id",
+                        "reason", "correlation_id", "status"]
+            if c in df_actions.columns
+        ]
+        st.dataframe(
+            df_actions[_action_cols].sort_values("ts_utc", ascending=False)
+            if "ts_utc" in df_actions.columns else df_actions[_action_cols],
+            use_container_width=True,
+            height=300,
+        )
+        st.caption(f"Actions: {len(df_actions)} total")
+    else:
+        st.markdown(
+            '<div class="no-data-box">'
+            "<strong>Actions Timeline</strong><br>"
+            "No actions emitted yet. Waiting for closed-loop response..."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
     # ── DIAGNOSTICS ─────────────────────────────────────────────────
     st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
 
@@ -191,6 +220,10 @@ def _live_data_section() -> None:
         _res_mtime = file_mtime_str(RESULTS_PATH)
         _res_size = file_size(RESULTS_PATH)
         _res_rows = file_row_count(RESULTS_PATH)
+
+        _act_mtime = file_mtime_str(ACTIONS_PATH)
+        _act_size = file_size(ACTIONS_PATH)
+        _act_rows = file_row_count(ACTIONS_PATH)
 
         _last_inc_ts = "N/A"
         if (
@@ -215,6 +248,9 @@ def _live_data_section() -> None:
 | **results.csv mtime** | {_res_mtime} |
 | **results.csv size** | {_res_size} bytes |
 | **results.csv rows** | {_res_rows} |
+| **actions.csv mtime** | {_act_mtime} |
+| **actions.csv size** | {_act_size} bytes |
+| **actions.csv rows** | {_act_rows} |
 """,
         )
 

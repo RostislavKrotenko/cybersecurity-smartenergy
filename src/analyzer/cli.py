@@ -73,6 +73,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--actions-path",
+        type=str,
+        default=None,
+        help="Path to actions.jsonl for closed-loop output (watch mode only). "
+        "When set, the analyzer emits response actions for the Emulator.",
+    )
+    p.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -98,6 +105,7 @@ def main(argv: list[str] | None = None) -> None:
             horizon_days=args.horizon_days,
             poll_interval_sec=args.poll_interval_ms / 1000.0,
             rolling_window_min=args.rolling_window_min,
+            actions_path=args.actions_path,
         )
     else:
         run_pipeline(

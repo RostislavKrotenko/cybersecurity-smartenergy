@@ -143,6 +143,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "Applies to JSONL and CSV in live mode.",
     )
     p.add_argument(
+        "--actions-path",
+        type=str,
+        default=None,
+        help="Path to actions.jsonl for closed-loop feedback from Analyzer. "
+        "Only used with --live --profile demo_high_rate.",
+    )
+    p.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -183,6 +190,7 @@ def main(argv: list[str] | None = None) -> None:
         interval_sec = args.live_interval_ms / 1000.0
         raw_log_dir = Path(args.raw_log_dir) if args.raw_log_dir else None
         csv_out = Path(args.csv_out) if args.csv_out else None
+        actions_path = Path(args.actions_path) if args.actions_path else None
         print(f"Emulator live mode -> {out_path}")
         print(
             f"  interval: {args.live_interval_ms} ms, max_events: {args.max_events or 'infinite'}"
@@ -198,6 +206,8 @@ def main(argv: list[str] | None = None) -> None:
             print(f"  raw logs -> {raw_log_dir}/")
         if csv_out:
             print(f"  csv out  -> {csv_out}")
+        if actions_path:
+            print(f"  actions  <- {actions_path} (closed-loop)")
         print("  Press Ctrl+C to stop.")
         try:
             if args.profile == "demo_high_rate":
@@ -211,6 +221,7 @@ def main(argv: list[str] | None = None) -> None:
                     max_file_mb=args.max_file_mb,
                     raw_log_dir=raw_log_dir,
                     csv_out=csv_out,
+                    actions_path=actions_path,
                 )
             elif args.max_events is not None:
                 # Finite live mode (legacy)

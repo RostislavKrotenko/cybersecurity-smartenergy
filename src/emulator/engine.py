@@ -24,6 +24,15 @@ from src.emulator.scenarios.ddos_abuse import DDoSAbuseScenario
 from src.emulator.scenarios.outage import OutageScenario
 from src.emulator.scenarios.telemetry_spoof import TelemetrySpoofScenario
 from src.emulator.scenarios.unauthorized_cmd import UnauthorizedCmdScenario
+from src.emulator.world import (
+    WorldState,
+    apply_action,
+    expire_state,
+    is_actor_blocked,
+    is_isolated,
+    is_rate_limited,
+    read_new_actions,
+)
 
 log = logging.getLogger(__name__)
 
@@ -902,6 +911,7 @@ def stream_demo_highrate(
     max_file_mb: float = 50.0,
     raw_log_dir: Path | None = None,
     csv_out: Path | None = None,
+    actions_path: Path | None = None,
 ) -> None:
     """Stream events optimised for live demo: high background rate + periodic attack bursts.
 
@@ -915,6 +925,10 @@ def stream_demo_highrate(
     five scenarios and are calibrated to exceed detection thresholds so that
     incidents appear within 10--20 seconds of launch.
 
+    When *actions_path* is provided, the emulator reads actions.jsonl
+    (tail mode) and applies them to the world state, closing the feedback
+    loop with the Analyzer.
+
     Args:
         engine: Configured EmulatorEngine (used for rng and device index).
         path: JSONL output path.
@@ -924,6 +938,7 @@ def stream_demo_highrate(
         max_file_mb: Max file size in MB before rotation.
         raw_log_dir: Optional directory for dirty raw logs.
         csv_out: Optional CSV output path.
+        actions_path: Optional path to actions.jsonl for closed-loop feedback.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     if raw_log_dir is not None:
@@ -936,6 +951,10 @@ def stream_demo_highrate(
     attack_idx = 0
     total_count = 0
 
+    # Closed-loop state
+    world = WorldState()
+    actions_offset = 0
+
     csv_header_written = False
     if csv_out is not None:
         with contextlib.suppress(OSError):
@@ -946,35 +965,61 @@ def stream_demo_highrate(
 
     log.info(
         "Demo high-rate stream -> %s "
-        "(tick=%.0f ms, attack_every=%ds, bg/tick=%d, max_file=%.0f MB)",
+        "(tick=%.0f ms, attack_every=%ds, bg/tick=%d, max_file=%.0f MB, actions=%s)",
         path,
         interval_sec * 1000,
         int(attack_every_sec),
         bg_per_tick,
         max_file_mb,
+        actions_path or "none",
     )
 
     while True:
         now = datetime.now(tz=timezone.utc)
         events: list[Event] = []
 
+        # 0. Read and apply actions from Analyzer -----------------------
+        if actions_path is not None:
+            new_actions, actions_offset = read_new_actions(
+                str(actions_path), actions_offset,
+            )
+            for act in new_actions:
+                state_events = apply_action(world, act)
+                events.extend(state_events)
+
+        # 0b. Expire transient states -----------------------------------
+        expire_events = expire_state(world)
+        events.extend(expire_events)
+
         # 1. Background noise -------------------------------------------
         for _ in range(bg_per_tick):
-            events.append(_random_bg_event(rng, devices, now))
+            ev = _random_bg_event(rng, devices, now)
+            # Apply world state filtering
+            if _should_suppress(ev, world):
+                continue
+            events.append(ev)
 
         # 2. Attack burst (round-robin) ---------------------------------
         wall_elapsed = time.monotonic() - last_attack_wall
         if wall_elapsed >= attack_every_sec:
             name = _ATTACK_SEQUENCE[attack_idx % len(_ATTACK_SEQUENCE)]
             burst = _generate_attack_burst(name, rng, devices, now)
-            events.extend(burst)
+            # Filter burst through world state
+            filtered_burst = [e for e in burst if not _should_suppress(e, world)]
+            if len(filtered_burst) < len(burst):
+                log.info(
+                    "World state suppressed %d/%d events from %s burst",
+                    len(burst) - len(filtered_burst), len(burst), name,
+                )
+            events.extend(filtered_burst)
             attack_idx += 1
             last_attack_wall = time.monotonic()
             log.info(
-                "ATTACK BURST [%d]: %s -> %d events (next in %ds)",
+                "ATTACK BURST [%d]: %s -> %d events (%d suppressed, next in %ds)",
                 attack_idx,
                 name,
-                len(burst),
+                len(filtered_burst),
+                len(burst) - len(filtered_burst),
                 int(attack_every_sec),
             )
 
@@ -1013,9 +1058,42 @@ def stream_demo_highrate(
         # 7. Progress ---------------------------------------------------
         if total_count % 500 < len(events):
             log.info(
-                "Demo stream: %d events total, %d attack bursts fired",
+                "Demo stream: %d events total, %d attack bursts fired, "
+                "world: rate_limit=%s, isolated=%s, blocked_actors=%d, db=%s",
                 total_count,
                 attack_idx,
+                world.gateway.rate_limit_enabled,
+                world.api.status,
+                len(world.auth.blocked_actors) + len(world.auth.blocked_ips),
+                world.db.status,
             )
 
         time.sleep(interval_sec)
+
+
+def _should_suppress(ev: Event, world: WorldState) -> bool:
+    """Check if an event should be suppressed by the world state.
+
+    This makes defenses REAL: rate limits actually reduce flood events,
+    blocked actors can't authenticate, isolated components don't serve, etc.
+    """
+    # Rate-limited gateway suppresses rate_exceeded floods
+    if is_rate_limited(world) and ev.event == "rate_exceeded":
+        return True
+
+    # Blocked actors can't generate auth_failure; their attempts are rejected earlier
+    if ev.event in ("auth_failure", "auth_success"):
+        if is_actor_blocked(world, ev.actor, ev.ip):
+            return True
+
+    # Isolated component doesn't generate normal events
+    if is_isolated(world, ev.component):
+        if ev.event not in ("isolation_enabled", "isolation_released",
+                            "isolation_expired", "action_result"):
+            return True
+
+    # During DB restore, suppress db_error
+    if world.db.status == "restoring" and ev.event == "db_error":
+        return True
+
+    return False

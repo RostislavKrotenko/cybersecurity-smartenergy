@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent.parent
 RESULTS_PATH = ROOT / "out" / "results.csv"
 INCIDENTS_PATH = ROOT / "out" / "incidents.csv"
+ACTIONS_PATH = ROOT / "out" / "actions.csv"
 EVENTS_PATH = ROOT / "data" / "events.csv"
 
 # ── retry / stability settings ──────────────────────────────────────────────
@@ -121,6 +122,16 @@ def load_incidents() -> pd.DataFrame | None:
 def load_events(nrows: int = 200) -> pd.DataFrame | None:
     """Завантажує data/events.csv (перші nrows рядків)."""
     return _read_csv_safe(EVENTS_PATH, nrows=nrows)
+
+
+def load_actions() -> pd.DataFrame | None:
+    """Завантажує out/actions.csv. Повертає None якщо відсутній."""
+    df = _read_csv_safe(ACTIONS_PATH)
+    if df is None:
+        return None
+    if "ts_utc" in df.columns:
+        df["ts_utc"] = pd.to_datetime(df["ts_utc"], utc=True, errors="coerce")
+    return df
 
 
 def clear_caches() -> None:
