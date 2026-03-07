@@ -319,17 +319,16 @@ def expire_state(state: WorldState) -> list[Event]:
         log.info("STATE EXPIRED: db restore complete")
 
     # Network degradation expiry
-    if state.network.degraded_until > 0:
-        if now >= state.network.degraded_until:
-            state.network.latency_ms = 0
-            state.network.drop_rate = 0.0
-            state.network.disconnected = False
-            state.network.degraded_until = 0.0
-            events.append(_state_event(
-                ts, "network", "network-sim", "network_recovered",
-                "auto_ttl_expired", "low", "",
-            ))
-            log.info("STATE EXPIRED: network degradation TTL")
+    if state.network.degraded_until > 0 and now >= state.network.degraded_until:
+        state.network.latency_ms = 0
+        state.network.drop_rate = 0.0
+        state.network.disconnected = False
+        state.network.degraded_until = 0.0
+        events.append(_state_event(
+            ts, "network", "network-sim", "network_recovered",
+            "auto_ttl_expired", "low", "",
+        ))
+        log.info("STATE EXPIRED: network degradation TTL")
 
     return events
 
@@ -339,9 +338,7 @@ def is_actor_blocked(state: WorldState, actor: str, ip: str) -> bool:
     now = time.monotonic()
     if actor in state.auth.blocked_actors and now < state.auth.blocked_actors[actor]:
         return True
-    if ip in state.auth.blocked_ips and now < state.auth.blocked_ips[ip]:
-        return True
-    return False
+    return ip in state.auth.blocked_ips and now < state.auth.blocked_ips[ip]
 
 
 def is_rate_limited(state: WorldState) -> bool:

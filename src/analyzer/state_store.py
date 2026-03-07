@@ -209,11 +209,7 @@ class ComponentStateStore:
             self.db.expires_at_utc = ""
             self.db.last_updated = ts
 
-        elif ev.event == "backup_created":
-            self.db.details = f"latest backup: {ev.value}"
-            self.db.last_updated = ts
-
-        elif ev.event == "db_backup_created":
+        elif ev.event == "backup_created" or ev.event == "db_backup_created":
             self.db.details = f"latest backup: {ev.value}"
             self.db.last_updated = ts
 
@@ -242,14 +238,7 @@ class ComponentStateStore:
                 self.network.expires_at_utc = _add_seconds(ts, ttl)
             self.network.last_updated = ts
 
-        elif ev.event == "network_reset_applied":
-            self.network.status = "healthy"
-            self.network.details = ""
-            self.network.ttl_sec = 0.0
-            self.network.expires_at_utc = ""
-            self.network.last_updated = ts
-
-        elif ev.event == "network_recovered":
+        elif ev.event == "network_reset_applied" or ev.event == "network_recovered":
             self.network.status = "healthy"
             self.network.details = ""
             self.network.ttl_sec = 0.0

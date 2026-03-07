@@ -1166,11 +1166,7 @@ def _should_suppress(ev: Event, world: WorldState) -> bool:
         return True
 
     # Network disconnected suppresses normal network-dependent events
-    if world.network.disconnected and ev.component in ("api", "ui"):
-        if ev.event in ("http_request", "auth_success"):
-            return True
-
-    return False
+    return world.network.disconnected and ev.component in ("api", "ui") and ev.event in ("http_request", "auth_success")
 
 
 def _generate_network_errors(

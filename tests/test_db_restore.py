@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -64,10 +63,9 @@ def _conn():
 
 
 def _query_one(sql: str):
-    with _conn() as c:
-        with c.cursor() as cur:
-            cur.execute(sql)
-            return cur.fetchone()
+    with _conn() as c, c.cursor() as cur:
+        cur.execute(sql)
+        return cur.fetchone()
 
 
 def _execute(sql: str):
