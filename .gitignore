@@ -56,3 +56,7 @@ logs/live/
 # ── Docker ────────────────────────────────────────────────────────────────
 *.tar
 docker-compose.override.yml
+
+# ── Postgres data & backups (runtime, not committed) ─────────────────────
+pgdata/
+backups/

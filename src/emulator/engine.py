@@ -31,6 +31,7 @@ from src.emulator.world import (
     expire_state,
     is_actor_blocked,
     is_isolated,
+    is_network_degraded,
     is_rate_limited,
     read_new_actions,
 )
@@ -1060,6 +1061,13 @@ def stream_demo_highrate(
                 continue
             events.append(ev)
 
+        # 1b. Network degradation effects --------------------------------
+        # When network is degraded, inject timeout/error events so the
+        # detector sees real anomalies for "network outage/degraded".
+        if is_network_degraded(world):
+            net_errors = _generate_network_errors(rng, devices, now, world)
+            events.extend(net_errors)
+
         # 2. Attack burst (round-robin) ---------------------------------
         wall_elapsed = time.monotonic() - last_attack_wall
         if wall_elapsed >= attack_every_sec:
@@ -1120,13 +1128,15 @@ def stream_demo_highrate(
         if total_count % 500 < len(events):
             log.info(
                 "Demo stream: %d events total, %d attack bursts fired, "
-                "world: rate_limit=%s, isolated=%s, blocked_actors=%d, db=%s",
+                "world: rate_limit=%s, isolated=%s, blocked_actors=%d, db=%s, "
+                "net_degraded=%s",
                 total_count,
                 attack_idx,
                 world.gateway.rate_limit_enabled,
                 world.api.status,
                 len(world.auth.blocked_actors) + len(world.auth.blocked_ips),
                 world.db.status,
+                is_network_degraded(world),
             )
 
         time.sleep(interval_sec)
@@ -1143,18 +1153,71 @@ def _should_suppress(ev: Event, world: WorldState) -> bool:
         return True
 
     # Blocked actors can't generate auth_failure; their attempts are rejected earlier
-    if ev.event in ("auth_failure", "auth_success"):
-        if is_actor_blocked(world, ev.actor, ev.ip):
-            return True
+    if ev.event in ("auth_failure", "auth_success") and is_actor_blocked(world, ev.actor, ev.ip):
+        return True
 
     # Isolated component doesn't generate normal events
-    if is_isolated(world, ev.component):
-        if ev.event not in ("isolation_enabled", "isolation_released",
+    if is_isolated(world, ev.component) and ev.event not in ("isolation_enabled", "isolation_released",
                             "isolation_expired", "action_result"):
-            return True
+        return True
 
     # During DB restore, suppress db_error
     if world.db.status == "restoring" and ev.event == "db_error":
         return True
 
+    # Network disconnected suppresses normal network-dependent events
+    if world.network.disconnected and ev.component in ("api", "ui"):
+        if ev.event in ("http_request", "auth_success"):
+            return True
+
     return False
+
+
+def _generate_network_errors(
+    rng: _random_mod.Random,
+    devices: dict[str, Any],
+    now: datetime,
+    world: WorldState,
+) -> list[Event]:
+    """Generate timeout/error events proportional to network degradation."""
+    events: list[Event] = []
+    drop = world.network.drop_rate
+    latency = world.network.latency_ms
+
+    # Number of error events scales with severity
+    if world.network.disconnected:
+        n_errors = rng.randint(3, 6)
+    elif drop > 0.3 or latency > 500:
+        n_errors = rng.randint(2, 4)
+    elif drop > 0 or latency > 100:
+        n_errors = rng.randint(1, 2)
+    else:
+        return events
+
+    error_templates = [
+        ("service_status", "degraded", "network", "switch-core-01"),
+        ("service_status", "timeout", "api", "api-gw-01"),
+        ("http_request", "timeout", "api", "api-gw-01"),
+        ("service_status", "packet_loss", "network", "firewall-01"),
+    ]
+
+    for _ in range(n_errors):
+        tpl = rng.choice(error_templates)
+        evt_type, val, comp, src = tpl
+        sev = "critical" if world.network.disconnected else "high"
+        events.append(Event(
+            timestamp=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            source=src,
+            component=comp,
+            event=evt_type,
+            key="status" if evt_type == "service_status" else "endpoint",
+            value=val,
+            severity=sev,
+            actor="system",
+            ip="",
+            unit="",
+            tags="network;degradation",
+            correlation_id="",
+        ))
+
+    return events

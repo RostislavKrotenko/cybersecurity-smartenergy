@@ -6,13 +6,13 @@ import json
 import os
 import tempfile
 import time
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from src.contracts.action import Action, ActionType
 from src.contracts.incident import Incident
+from src.analyzer.decision import decide, emit_actions, write_actions_csv
+from src.analyzer.reporter import _atomic_write
 from src.emulator.world import (
     WorldState,
     apply_action,
@@ -22,8 +22,6 @@ from src.emulator.world import (
     is_rate_limited,
     read_new_actions,
 )
-from src.analyzer.decision import decide, emit_actions, write_actions_csv
-from src.analyzer.reporter import _atomic_write
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -337,7 +335,7 @@ class TestReadNewActions:
             with open(path, "a") as f:
                 f.write(a2.to_json() + "\n")
 
-            actions3, offset3 = read_new_actions(path, offset)
+            actions3, _offset3 = read_new_actions(path, offset)
             assert len(actions3) == 1
             assert actions3[0].action == "backup_db"
 
@@ -454,9 +452,9 @@ class TestEndToEndClosedLoop:
 
     def test_full_closed_loop_cycle(self):
         """Emulate a full cycle: brute-force events -> incident -> action -> world state."""
-        from src.contracts.event import Event
-        from src.analyzer.detector import detect
         from src.analyzer.correlator import correlate
+        from src.analyzer.detector import detect
+        from src.contracts.event import Event
         from src.shared.config_loader import load_yaml
 
         rules_cfg = load_yaml("config/rules.yaml")
@@ -530,7 +528,7 @@ class TestEndToEndClosedLoop:
             emit_actions(actions, path)
 
             # Read back
-            read_actions, offset = read_new_actions(path, 0)
+            read_actions, _offset = read_new_actions(path, 0)
             assert len(read_actions) == 2
 
             # Apply to world

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import csv
 import os
 import tempfile
-import csv
 
 from src.analyzer.state_store import ComponentStateStore, _parse_kv
 from src.contracts.action import Action
@@ -144,11 +144,11 @@ class TestComponentStateStore:
                 rows = list(reader)
 
             assert len(rows) == 5  # gateway, api, auth, db, network
-            gw_row = [r for r in rows if r["component"] == "gateway"][0]
+            gw_row = next(r for r in rows if r["component"] == "gateway")
             assert gw_row["status"] == "rate_limited"
             assert "rps=50" in gw_row["details"]
 
-            api_row = [r for r in rows if r["component"] == "api"][0]
+            api_row = next(r for r in rows if r["component"] == "api")
             assert api_row["status"] == "healthy"
 
     def test_write_csv_atomic_no_temp_files(self):

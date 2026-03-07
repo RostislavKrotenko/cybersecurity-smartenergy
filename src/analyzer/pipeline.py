@@ -353,9 +353,8 @@ def watch_pipeline(
 
                 # ── Confirm applied actions from state-change events ──
                 # (fallback for live_direct mode where events.jsonl has state_change)
-                if _actions_by_cor_id:
-                    if _confirm_actions(new_events, _actions_by_cor_id):
-                        write_actions_csv(all_actions, str(out_p / "actions.csv"))
+                if _actions_by_cor_id and _confirm_actions(new_events, _actions_by_cor_id):
+                    write_actions_csv(all_actions, str(out_p / "actions.csv"))
 
                 # ── Detect + correlate ONLY new events ──────────────
                 inc_counter, new_incs = _incremental_detect(
@@ -439,7 +438,14 @@ _ACK_TO_STATE_EVENT: dict[str, str] = {
     "actor_blocked": "actor_blocked",
     "actor_unblocked": "actor_unblocked",
     "restore_started": "restore_started",
+    "restore_completed": "restore_completed",
+    "restore_failed": "restore_failed",
     "backup_created": "backup_created",
+    "db_backup_created": "db_backup_created",
+    "db_corruption_detected": "db_corruption_detected",
+    "network_degraded": "network_degraded",
+    "network_reset_applied": "network_reset_applied",
+    "network_recovered": "network_recovered",
 }
 
 
@@ -448,7 +454,7 @@ def _read_acks(
     offset: int,
     actions_by_id: dict[str, Action],
     all_actions: list[Action],
-    state_store: "ComponentStateStore",
+    state_store: ComponentStateStore,
     out_p: Path,
 ) -> tuple[int, bool]:
     """Read new ACK lines from *path* starting at *offset*.
@@ -546,8 +552,18 @@ def _build_ack_value(ack: ActionAck, act: Action | None) -> str:
     if ack.state_event == "restore_started":
         snap = params.get("snapshot", "")
         return f"snapshot={snap}"
-    if ack.state_event == "backup_created":
+    if ack.state_event in ("restore_completed", "restore_failed"):
+        snap = params.get("snapshot", "")
+        return f"snapshot={snap}"
+    if ack.state_event in ("backup_created", "db_backup_created"):
         return params.get("name", "snapshot")
+    if ack.state_event == "network_degraded":
+        latency = params.get("latency_ms", 0)
+        drop = params.get("drop_rate", 0)
+        ttl = params.get("ttl_sec", 0)
+        return f"latency_ms={latency},drop_rate={drop},ttl_sec={ttl}"
+    if ack.state_event in ("network_reset_applied", "network_recovered"):
+        return "healthy"
     return ack.action
 
 
@@ -562,7 +578,12 @@ _CONFIRM_EVENTS = frozenset({
     "actor_blocked",
     "actor_unblocked",
     "restore_started",
+    "restore_completed",
     "backup_created",
+    "db_backup_created",
+    "network_degraded",
+    "network_reset_applied",
+    "network_recovered",
 })
 
 

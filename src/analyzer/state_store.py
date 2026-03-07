@@ -15,7 +15,6 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
 
 from src.analyzer.reporter import _atomic_write
 from src.contracts.event import Event
@@ -116,14 +115,7 @@ class ComponentStateStore:
             self.gateway.expires_at_utc = _add_seconds(ts, dur)
             self.gateway.last_updated = ts
 
-        elif ev.event == "rate_limit_disabled":
-            self.gateway.status = "healthy"
-            self.gateway.details = ""
-            self.gateway.ttl_sec = 0.0
-            self.gateway.expires_at_utc = ""
-            self.gateway.last_updated = ts
-
-        elif ev.event == "rate_limit_expired":
+        elif ev.event == "rate_limit_disabled" or ev.event == "rate_limit_expired":
             self.gateway.status = "healthy"
             self.gateway.details = ""
             self.gateway.ttl_sec = 0.0
@@ -221,15 +213,47 @@ class ComponentStateStore:
             self.db.details = f"latest backup: {ev.value}"
             self.db.last_updated = ts
 
-        # ── network (future) ───────────────────────────────────────
+        elif ev.event == "db_backup_created":
+            self.db.details = f"latest backup: {ev.value}"
+            self.db.last_updated = ts
+
+        elif ev.event == "db_corruption_detected":
+            self.db.status = "corrupted"
+            self.db.details = ev.value
+            self.db.last_updated = ts
+
+        elif ev.event == "restore_failed":
+            self.db.status = "corrupted"
+            self.db.details = f"restore failed: {ev.value}"
+            self.db.ttl_sec = 0.0
+            self.db.expires_at_utc = ""
+            self.db.last_updated = ts
+
+        # ── network ───────────────────────────────────────────────
         elif ev.event == "network_degraded":
+            params = _parse_kv(ev.value)
+            ttl = int(params.get("ttl_sec", "0") or "0")
+            latency = params.get("latency_ms", "?")
+            drop = params.get("drop_rate", "?")
             self.network.status = "degraded"
-            self.network.details = ev.value
+            self.network.details = f"latency={latency}ms drop={drop}"
+            if ttl > 0:
+                self.network.ttl_sec = float(ttl)
+                self.network.expires_at_utc = _add_seconds(ts, ttl)
+            self.network.last_updated = ts
+
+        elif ev.event == "network_reset_applied":
+            self.network.status = "healthy"
+            self.network.details = ""
+            self.network.ttl_sec = 0.0
+            self.network.expires_at_utc = ""
             self.network.last_updated = ts
 
         elif ev.event == "network_recovered":
             self.network.status = "healthy"
             self.network.details = ""
+            self.network.ttl_sec = 0.0
+            self.network.expires_at_utc = ""
             self.network.last_updated = ts
 
     # ── TTL tick ───────────────────────────────────────────────────────

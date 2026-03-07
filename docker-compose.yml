@@ -23,6 +23,13 @@ x-common: &common
     - ./logs:/work/logs
   env_file: []
 
+x-pg-env: &pg-env
+  PGHOST: postgres
+  PGPORT: "5432"
+  PGUSER: smartenergy
+  PGPASSWORD: smartenergy
+  PGDATABASE: smartenergy
+
 services:
   # ── 0. Init — clear runtime data from previous runs ──────────────────────
   init-live:
@@ -104,6 +111,77 @@ services:
     profiles: ["ui", "demo"]
 
   # ═══════════════════════════════════════════════════════════════════════════
+  #  INFRASTRUCTURE: Postgres + network-sim + db-writer
+  #  Shared across live_direct and live_normalized profiles
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: smartenergy-postgres
+    environment:
+      POSTGRES_USER: smartenergy
+      POSTGRES_PASSWORD: smartenergy
+      POSTGRES_DB: smartenergy
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+      - ./services/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartenergy"]
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+    profiles: ["live_direct", "live_normalized"]
+
+  db-writer:
+    build:
+      context: .
+      dockerfile: services/db_writer/Dockerfile
+    container_name: smartenergy-db-writer
+    environment:
+      <<: *pg-env
+      BACKUP_DIR: /backups
+      BACKUP_INTERVAL_SEC: "60"
+      WRITE_INTERVAL_SEC: "5"
+      EVENTS_JSONL: /work/data/live/events.jsonl
+      ACTIONS_PATH: /work/data/live/actions.jsonl
+      APPLIED_PATH: /work/data/live/actions_applied.jsonl
+    volumes:
+      - ./data:/work/data
+      - ./out:/work/out
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init-live:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    profiles: ["live_direct", "live_normalized"]
+
+  network-sim:
+    build:
+      context: .
+      dockerfile: services/network_sim/Dockerfile
+    container_name: smartenergy-network-sim
+    environment:
+      PORT: "8090"
+      EVENTS_JSONL: /work/data/live/events.jsonl
+    volumes:
+      - ./data:/work/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/healthz')"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    depends_on:
+      init-live:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    profiles: ["live_direct", "live_normalized"]
+
+  # ═══════════════════════════════════════════════════════════════════════════
   #  MODE A: live_direct
   #    Emulator -> events.jsonl -> Analyzer (direct, skips normalizer)
   #    Closed-loop: Analyzer -> actions.jsonl -> Emulator
@@ -112,6 +190,8 @@ services:
   emulator-live-direct:
     <<: *common
     container_name: smartenergy-emulator-live-direct
+    environment:
+      NETWORK_SIM_URL: "http://network-sim:8090"
     command: >-
       python -m src.emulator
         --live
@@ -130,12 +210,18 @@ services:
     depends_on:
       init-live:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      network-sim:
+        condition: service_healthy
     restart: unless-stopped
     profiles: ["live_direct"]
 
   analyzer-live-direct:
     <<: *common
     container_name: smartenergy-analyzer-live-direct
+    environment:
+      NETWORK_SIM_URL: "http://network-sim:8090"
     command: >-
       python -m src.analyzer
         --input data/live/events.jsonl
@@ -187,6 +273,8 @@ services:
   emulator-live-normalized:
     <<: *common
     container_name: smartenergy-emulator-live-normalized
+    environment:
+      NETWORK_SIM_URL: "http://network-sim:8090"
     command: >-
       python -m src.emulator
         --live
@@ -205,6 +293,10 @@ services:
     depends_on:
       init-live:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      network-sim:
+        condition: service_healthy
     restart: unless-stopped
     profiles: ["live_normalized"]
 
@@ -229,6 +321,8 @@ services:
   analyzer-live-normalized:
     <<: *common
     container_name: smartenergy-analyzer-live-normalized
+    environment:
+      NETWORK_SIM_URL: "http://network-sim:8090"
     command: >-
       python -m src.analyzer
         --input data/live/normalized.jsonl

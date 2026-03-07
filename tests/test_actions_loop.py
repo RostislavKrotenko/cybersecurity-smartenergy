@@ -18,8 +18,6 @@ import os
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from src.analyzer.correlator import correlate
 from src.analyzer.decision import decide, emit_actions
 from src.analyzer.detector import detect
@@ -30,8 +28,6 @@ from src.contracts.event import Event
 from src.emulator.world import (
     WorldState,
     apply_action,
-    expire_state,
-    is_actor_blocked,
     is_isolated,
     is_rate_limited,
     read_new_actions,
@@ -183,7 +179,7 @@ class TestClosedLoopActionCycle:
                 assert "action" in obj
 
             # Read back via the emulator's reader
-            read_acts, offset = read_new_actions(path, 0)
+            read_acts, _offset = read_new_actions(path, 0)
             assert len(read_acts) == 2
 
             # Apply to world
@@ -410,7 +406,7 @@ class TestActionAckMechanism:
 
             store = ComponentStateStore()
             out_p = Path(tmpdir)
-            new_offset, changed = _read_acks(
+            _new_offset, changed = _read_acks(
                 ack_path, 0,
                 actions_by_id, [action], store, out_p,
             )

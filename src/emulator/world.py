@@ -10,15 +10,19 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from src.contracts.action import Action
 from src.contracts.event import Event
 
 log = logging.getLogger(__name__)
+
+NETWORK_SIM_URL = os.environ.get("NETWORK_SIM_URL", "")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -63,6 +67,7 @@ class NetworkState:
     latency_ms: int = 0
     drop_rate: float = 0.0
     disconnected: bool = False
+    degraded_until: float = 0.0
 
 
 @dataclass
@@ -75,6 +80,31 @@ class WorldState:
     db: DbState = field(default_factory=DbState)
     edge: EdgeState = field(default_factory=EdgeState)
     network: NetworkState = field(default_factory=NetworkState)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Network-sim HTTP helper
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _netsim_post(endpoint: str, body: dict) -> dict | None:
+    """POST JSON to network-sim. Returns parsed response or None on error."""
+    url = NETWORK_SIM_URL
+    if not url:
+        return None
+    try:
+        data = json.dumps(body).encode()
+        req = Request(
+            f"{url}{endpoint}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except (URLError, OSError, json.JSONDecodeError) as exc:
+        log.warning("network-sim %s failed: %s", endpoint, exc)
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -175,7 +205,7 @@ def apply_action(state: WorldState, action: Action) -> list[Event]:
 
     elif act == "restore_db":
         snap = action.params.get("snapshot", "")
-        if snap in state.db.snapshots:
+        if snap in state.db.snapshots or snap == "latest":
             state.db.status = "restoring"
             restore_dur = 10.0  # simulated restore time
             state.db.restoring_until = now + restore_dur
@@ -186,6 +216,46 @@ def apply_action(state: WorldState, action: Action) -> list[Event]:
             log.info("ACTION APPLIED: restore_db from %s", snap)
         else:
             log.warning("ACTION FAILED: restore_db snapshot '%s' not found", snap)
+
+    elif act == "degrade_network":
+        latency = action.params.get("latency_ms", 200)
+        drop = action.params.get("drop_rate", 0.1)
+        ttl = action.params.get("ttl_sec", 120)
+        disconnected = action.params.get("disconnected", False)
+        state.network.latency_ms = latency
+        state.network.drop_rate = drop
+        state.network.disconnected = disconnected
+        state.network.degraded_until = now + ttl
+        # Call real network-sim container
+        _netsim_post("/degrade", {
+            "latency_ms": latency,
+            "drop_rate": drop,
+            "ttl_sec": ttl,
+            "disconnected": disconnected,
+            "correlation_id": action.correlation_id,
+        })
+        val = (f"latency_ms={latency},drop_rate={drop},"
+               f"disconnected={disconnected},ttl_sec={ttl}")
+        events.append(_state_event(
+            ts, "network", "network-sim", "network_degraded",
+            val, "high", action.correlation_id,
+        ))
+        log.info("ACTION APPLIED: degrade_network %s", val)
+
+    elif act == "reset_network":
+        state.network.latency_ms = 0
+        state.network.drop_rate = 0.0
+        state.network.disconnected = False
+        state.network.degraded_until = 0.0
+        # Call real network-sim container
+        _netsim_post("/reset", {
+            "correlation_id": action.correlation_id,
+        })
+        events.append(_state_event(
+            ts, "network", "network-sim", "network_reset_applied",
+            "healthy", "medium", action.correlation_id,
+        ))
+        log.info("ACTION APPLIED: reset_network")
 
     else:
         log.warning("Unknown action type: %s", act)
@@ -200,28 +270,26 @@ def expire_state(state: WorldState) -> list[Event]:
     events: list[Event] = []
 
     # Rate limit expiry
-    if state.gateway.rate_limit_enabled and state.gateway.rate_limit_expires > 0:
-        if now >= state.gateway.rate_limit_expires:
-            state.gateway.rate_limit_enabled = False
-            state.gateway.rate_limit_rps = 0
-            state.gateway.rate_limit_burst = 0
-            state.gateway.rate_limit_expires = 0.0
-            events.append(_state_event(
-                ts, "gateway", "api-gw-01", "rate_limit_expired", "auto",
-                "low", "",
-            ))
-            log.info("STATE EXPIRED: rate_limit on gateway")
+    if state.gateway.rate_limit_enabled and state.gateway.rate_limit_expires > 0 and now >= state.gateway.rate_limit_expires:
+        state.gateway.rate_limit_enabled = False
+        state.gateway.rate_limit_rps = 0
+        state.gateway.rate_limit_burst = 0
+        state.gateway.rate_limit_expires = 0.0
+        events.append(_state_event(
+            ts, "gateway", "api-gw-01", "rate_limit_expired", "auto",
+            "low", "",
+        ))
+        log.info("STATE EXPIRED: rate_limit on gateway")
 
     # Isolation expiry
-    if state.api.status == "isolated" and state.api.isolation_expires > 0:
-        if now >= state.api.isolation_expires:
-            state.api.status = "healthy"
-            state.api.isolation_expires = 0.0
-            events.append(_state_event(
-                ts, "api", "api-gw-01", "isolation_expired", "auto",
-                "low", "",
-            ))
-            log.info("STATE EXPIRED: isolation on api")
+    if state.api.status == "isolated" and state.api.isolation_expires > 0 and now >= state.api.isolation_expires:
+        state.api.status = "healthy"
+        state.api.isolation_expires = 0.0
+        events.append(_state_event(
+            ts, "api", "api-gw-01", "isolation_expired", "auto",
+            "low", "",
+        ))
+        log.info("STATE EXPIRED: isolation on api")
 
     # Actor/IP block expiry
     expired_actors = [a for a, t in state.auth.blocked_actors.items() if now >= t]
@@ -241,15 +309,27 @@ def expire_state(state: WorldState) -> list[Event]:
         ))
 
     # DB restore completion
-    if state.db.status == "restoring" and state.db.restoring_until > 0:
-        if now >= state.db.restoring_until:
-            state.db.status = "healthy"
-            state.db.restoring_until = 0.0
+    if state.db.status == "restoring" and state.db.restoring_until > 0 and now >= state.db.restoring_until:
+        state.db.status = "healthy"
+        state.db.restoring_until = 0.0
+        events.append(_state_event(
+            ts, "db", "db-primary", "restore_completed", "auto",
+            "medium", "",
+        ))
+        log.info("STATE EXPIRED: db restore complete")
+
+    # Network degradation expiry
+    if state.network.degraded_until > 0:
+        if now >= state.network.degraded_until:
+            state.network.latency_ms = 0
+            state.network.drop_rate = 0.0
+            state.network.disconnected = False
+            state.network.degraded_until = 0.0
             events.append(_state_event(
-                ts, "db", "db-primary", "restore_completed", "auto",
-                "medium", "",
+                ts, "network", "network-sim", "network_recovered",
+                "auto_ttl_expired", "low", "",
             ))
-            log.info("STATE EXPIRED: db restore complete")
+            log.info("STATE EXPIRED: network degradation TTL")
 
     return events
 
@@ -257,12 +337,10 @@ def expire_state(state: WorldState) -> list[Event]:
 def is_actor_blocked(state: WorldState, actor: str, ip: str) -> bool:
     """Check if an actor or IP is currently blocked."""
     now = time.monotonic()
-    if actor in state.auth.blocked_actors:
-        if now < state.auth.blocked_actors[actor]:
-            return True
-    if ip in state.auth.blocked_ips:
-        if now < state.auth.blocked_ips[ip]:
-            return True
+    if actor in state.auth.blocked_actors and now < state.auth.blocked_actors[actor]:
+        return True
+    if ip in state.auth.blocked_ips and now < state.auth.blocked_ips[ip]:
+        return True
     return False
 
 
@@ -278,6 +356,11 @@ def is_isolated(state: WorldState, component: str) -> bool:
     return False
 
 
+def is_network_degraded(state: WorldState) -> bool:
+    """Check if network is currently degraded."""
+    return state.network.latency_ms > 0 or state.network.disconnected
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  Actions JSONL reader (tail mode)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -288,7 +371,6 @@ def read_new_actions(path: str, offset: int) -> tuple[list[Action], int]:
 
     Returns (actions, new_offset).
     """
-    import os
     actions: list[Action] = []
     try:
         size = os.path.getsize(path)

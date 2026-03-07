@@ -17,6 +17,9 @@ class ActionType(str, Enum):
     UNBLOCK_ACTOR = "unblock_actor"
     BACKUP_DB = "backup_db"
     RESTORE_DB = "restore_db"
+    DEGRADE_NETWORK = "degrade_network"
+    RESET_NETWORK = "reset_network"
+    CORRUPT_DB = "corrupt_db"
 
 
 ACTION_CSV_COLUMNS = [

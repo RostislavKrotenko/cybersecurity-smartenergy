@@ -10,7 +10,6 @@ or a SOAR API adapter.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import tempfile
@@ -70,7 +69,14 @@ _PLAYBOOK: dict[str, list[dict[str, Any]]] = {
         {
             "action": "restore_db",
             "target_component": "db",
-            "params": {"snapshot": "snapshot_init"},
+            "params": {"snapshot": "latest"},
+        },
+    ],
+    "network_degraded": [
+        {
+            "action": "reset_network",
+            "target_component": "network",
+            "params": {},
         },
     ],
 }
