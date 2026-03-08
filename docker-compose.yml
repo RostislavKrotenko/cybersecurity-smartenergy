@@ -1,16 +1,18 @@
-# ─────────────────────────────────────────────────────────────────────────────
-#  SmartEnergy Cyber-Resilience Analyzer — Docker Compose
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+#  SmartEnergy Cyber-Resilience Analyzer -- Docker Compose
+# ---------------------------------------------------------------------------
 #  Profiles:
-#    demo            — one-shot: emulator -> analyzer -> UI (batch CSV)
-#    live_direct     — closed-loop: emulator -> events.jsonl -> analyzer -> actions.jsonl -> emulator + dashboard
-#    live_normalized — closed-loop: emulator -> raw logs -> normalizer -> normalized.jsonl -> analyzer -> actions.jsonl -> emulator + dashboard
+#    demo            -- one-shot: emulator -> analyzer -> UI (batch CSV)
+#    live_direct     -- closed-loop: emulator -> events.jsonl -> analyzer -> actions.jsonl -> emulator + dashboard
+#                       + pg-ops (real Postgres executor) + network-sim (real network executor)
+#    live_normalized -- closed-loop: emulator -> raw logs -> normalizer -> normalized.jsonl -> analyzer
+#                       + pg-ops + network-sim + dashboard
 #
 #  Quick start:
 #    docker compose --profile live_direct up --build
 #    docker compose --profile live_normalized up --build
 #    docker compose --profile demo up --build
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 
 x-common: &common
   build:
@@ -31,7 +33,7 @@ x-pg-env: &pg-env
   PGDATABASE: smartenergy
 
 services:
-  # ── 0. Init — clear runtime data from previous runs ──────────────────────
+  # -- 0. Init -- clear runtime data from previous runs -----------------------
   init-live:
     <<: *common
     container_name: smartenergy-init-live
@@ -44,7 +46,7 @@ services:
     restart: "no"
     profiles: ["live_direct", "live_normalized"]
 
-  # ── 1. Emulator — batch CSV (demo profile) ──────────────────────────────
+  # -- 1. Emulator -- batch CSV (demo profile) --------------------------------
   emulator:
     <<: *common
     container_name: smartenergy-emulator
@@ -55,7 +57,7 @@ services:
         --log-level INFO
     profiles: ["generate", "demo"]
 
-  # ── 2. Normalizer — batch: raw logs -> events.csv ──────────────────────
+  # -- 2. Normalizer -- batch: raw logs -> events.csv -------------------------
   normalizer:
     <<: *common
     container_name: smartenergy-normalizer
@@ -68,7 +70,7 @@ services:
         --log-level INFO
     profiles: ["normalize"]
 
-  # ── 3. Analyzer — batch: events.csv -> results ─────────────────────────
+  # -- 3. Analyzer -- batch: events.csv -> results ----------------------------
   analyzer:
     <<: *common
     container_name: smartenergy-analyzer
@@ -85,7 +87,7 @@ services:
         required: false
     profiles: ["analyze", "demo"]
 
-  # ── 4. UI — batch dashboard ────────────────────────────────────────────
+  # -- 4. UI -- batch dashboard -----------------------------------------------
   ui:
     <<: *common
     container_name: smartenergy-ui
@@ -110,10 +112,10 @@ services:
     restart: unless-stopped
     profiles: ["ui", "demo"]
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  #  INFRASTRUCTURE: Postgres + network-sim + db-writer
+  # ===========================================================================
+  #  INFRASTRUCTURE: Postgres + pg-ops (DB executor) + network-sim
   #  Shared across live_direct and live_normalized profiles
-  # ═══════════════════════════════════════════════════════════════════════════
+  # ===========================================================================
 
   postgres:
     image: postgres:16-alpine
@@ -124,6 +126,7 @@ services:
       POSTGRES_DB: smartenergy
     volumes:
       - ./pgdata:/var/lib/postgresql/data
+      - ./backups:/backups
       - ./services/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U smartenergy"]
@@ -167,6 +170,8 @@ services:
     environment:
       PORT: "8090"
       EVENTS_JSONL: /work/data/live/events.jsonl
+      ACTIONS_PATH: /work/data/live/actions.jsonl
+      APPLIED_PATH: /work/data/live/actions_applied.jsonl
     volumes:
       - ./data:/work/data
     healthcheck:
@@ -181,11 +186,12 @@ services:
     restart: unless-stopped
     profiles: ["live_direct", "live_normalized"]
 
-  # ═══════════════════════════════════════════════════════════════════════════
+  # ===========================================================================
   #  MODE A: live_direct
   #    Emulator -> events.jsonl -> Analyzer (direct, skips normalizer)
   #    Closed-loop: Analyzer -> actions.jsonl -> Emulator
-  # ═══════════════════════════════════════════════════════════════════════════
+  #    Real executors: pg-ops (DB) + network-sim (Network)
+  # ===========================================================================
 
   emulator-live-direct:
     <<: *common
@@ -264,11 +270,12 @@ services:
     restart: unless-stopped
     profiles: ["live_direct"]
 
-  # ═══════════════════════════════════════════════════════════════════════════
+  # ===========================================================================
   #  MODE B: live_normalized
   #    Emulator -> raw logs -> Normalizer -> normalized.jsonl -> Analyzer
   #    Closed-loop: Analyzer -> actions.jsonl -> Emulator
-  # ═══════════════════════════════════════════════════════════════════════════
+  #    Real executors: pg-ops (DB) + network-sim (Network)
+  # ===========================================================================
 
   emulator-live-normalized:
     <<: *common

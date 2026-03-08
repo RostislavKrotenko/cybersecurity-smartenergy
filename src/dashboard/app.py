@@ -1,4 +1,4 @@
-"""Головний файл дашборду SmartEnergy на Streamlit."""
+"""Main dashboard file for SmartEnergy (Streamlit)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-# ── page config (MUST be the first Streamlit call) ───────────────────────────
+# -- page config (MUST be the first Streamlit call) ---------------------------
 
 st.set_page_config(
     page_title="SmartEnergy Security Dashboard",
@@ -16,13 +16,13 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── inject theme CSS ────────────────────────────────────────────────────────
+# -- inject theme CSS ---------------------------------------------------------
 
 _CSS_PATH = Path(__file__).resolve().parent / "styles" / "theme.css"
 if _CSS_PATH.exists():
     st.markdown(f"<style>{_CSS_PATH.read_text()}</style>", unsafe_allow_html=True)
 
-# ── local imports (after page config) ───────────────────────────────────────
+# -- local imports (after page config) ----------------------------------------
 
 from src.dashboard.data_access import (  # noqa: E402
     ACTIONS_PATH,
@@ -37,7 +37,13 @@ from src.dashboard.data_access import (  # noqa: E402
     load_results,
     load_state,
 )
-from src.dashboard.ui.cards import component_status_card, policy_kpi_card  # noqa: E402
+from src.dashboard.ui.cards import (  # noqa: E402
+    action_summary_card,
+    component_status_card,
+    db_status_card,
+    network_status_card,
+    policy_kpi_card,
+)
 from src.dashboard.ui.charts import (  # noqa: E402
     CHART_CONFIG,
     actions_per_minute,
@@ -49,43 +55,65 @@ from src.dashboard.ui.layout import render_header, render_sidebar  # noqa: E402
 from src.dashboard.ui.state import init_state  # noqa: E402
 from src.dashboard.ui.tables import render_incident_table  # noqa: E402
 
-# ── initialise session state ────────────────────────────────────────────────
+# -- initialise session state -------------------------------------------------
 
 init_state()
 
-# ── sidebar ─────────────────────────────────────────────────────────────────
+# -- sidebar ------------------------------------------------------------------
 
 render_sidebar()
 
-# ── header ──────────────────────────────────────────────────────────────────
+# -- header -------------------------------------------------------------------
 
 render_header()
 
 
-# ═════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 #   LIVE DATA SECTION -- wrapped in @st.fragment for flicker-free refresh
-#
-#   When auto-refresh is enabled the fragment re-executes every N seconds
-#   WITHOUT triggering a full page rerun, so KPI cards, charts and the
-#   incident table update in-place with no visible flash.
-# ═════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 _auto = st.session_state.get("auto_refresh", False)
 _interval = st.session_state.get("refresh_interval", 5)
 
 
+def _action_counts(df: pd.DataFrame | None) -> dict[str, int]:
+    """Compute emitted/applied/failed counts from actions DataFrame."""
+    counts = {"emitted": 0, "applied": 0, "failed": 0, "total": 0}
+    if df is None or "status" not in df.columns:
+        return counts
+    counts["total"] = len(df)
+    counts["emitted"] = int((df["status"] == "emitted").sum())
+    counts["applied"] = int((df["status"] == "applied").sum())
+    counts["failed"] = int((df["status"] == "failed").sum())
+    return counts
+
+
+def _parse_details(details: str) -> dict[str, str]:
+    """Parse 'key1=val1 key2=val2' or 'key1=val1,key2=val2' into dict."""
+    result = {}
+    if not details or details in ("nan", "NaN", "None", "none"):
+        return result
+    # Support both space and comma separators
+    parts = details.replace(",", " ").split()
+    for part in parts:
+        if "=" in part:
+            k, v = part.split("=", 1)
+            result[k.strip()] = v.strip()
+    return result
+
+
 @st.fragment(run_every=timedelta(seconds=_interval) if _auto else None)
 def _live_data_section() -> None:
-    # ── refresh tick (counts fragment + full reruns) ─────────────────
+    # -- refresh tick (counts fragment + full reruns) -------------------------
     if "refresh_tick" not in st.session_state:
         st.session_state["refresh_tick"] = 0
     st.session_state["refresh_tick"] += 1
 
-    # ── load fresh data ─────────────────────────────────────────────
+    # -- load fresh data ------------------------------------------------------
     df_results = load_results()
     df_incidents = load_incidents()
 
-    # ── guard: no data ──────────────────────────────────────────────
+    # -- guard: no data -------------------------------------------------------
     if df_results is None:
         st.markdown(
             '<div class="no-data-box">'
@@ -99,7 +127,7 @@ def _live_data_section() -> None:
         )
         return
 
-    # ── KPI CARDS ───────────────────────────────────────────────────
+    # -- KPI CARDS ------------------------------------------------------------
     _policy_order = ["baseline", "minimal", "standard"]
     ordered = df_results.set_index("policy").reindex(
         [p for p in _policy_order if p in df_results["policy"].values]
@@ -120,15 +148,19 @@ def _live_data_section() -> None:
                     unsafe_allow_html=True,
                 )
 
-    # ── COMPONENT STATUS ──────────────────────────────────────────
+    # -- COMPONENT STATUS + ACTION SUMMARY ------------------------------------
     st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
-    st.markdown('<p class="section-label">Component Status (Live)</p>', unsafe_allow_html=True)
+    st.markdown('<p class="section-label">Infrastructure Status (Live)</p>', unsafe_allow_html=True)
 
     df_state = load_state()
+    df_act_all = load_actions()
+    act_counts = _action_counts(df_act_all)
+
     if df_state is not None and not df_state.empty and "component" in df_state.columns:
-        _state_components = ["gateway", "api", "auth", "db", "network"]
-        state_cols = st.columns(len(_state_components))
-        for col, comp_name in zip(state_cols, _state_components):
+        # Row 1: Gateway, API, Auth status cards
+        _basic_components = ["gateway", "api", "auth"]
+        basic_cols = st.columns(len(_basic_components))
+        for col, comp_name in zip(basic_cols, _basic_components):
             row = df_state[df_state["component"] == comp_name]
             if not row.empty:
                 r = row.iloc[0]
@@ -147,7 +179,84 @@ def _live_data_section() -> None:
                     unsafe_allow_html=True,
                 )
 
-        # State diagnostics row
+        # Row 2: DB, Network, Actions (dedicated cards)
+        st.markdown('<div style="margin-top:12px"></div>', unsafe_allow_html=True)
+        infra_cols = st.columns(3)
+
+        # DB status card
+        with infra_cols[0]:
+            db_row = df_state[df_state["component"] == "db"]
+            if not db_row.empty:
+                r = db_row.iloc[0]
+                _db_status = str(r.get("status", "healthy"))
+                _raw_details = r.get("details", "")
+                _db_details = "" if pd.isna(_raw_details) else str(_raw_details)
+                _raw_ttl = r.get("ttl_sec", 0)
+                _db_ttl = 0.0 if pd.isna(_raw_ttl) else float(_raw_ttl)
+                # Parse details for last_backup info
+                parsed = _parse_details(_db_details)
+                last_backup = parsed.get("latest", parsed.get("backup", ""))
+            else:
+                _db_status = "healthy"
+                _db_details = ""
+                _db_ttl = 0.0
+                last_backup = ""
+            st.markdown(
+                db_status_card(_db_status, _db_details, _db_ttl, last_backup=last_backup),
+                unsafe_allow_html=True,
+            )
+
+        # Network status card
+        with infra_cols[1]:
+            net_row = df_state[df_state["component"] == "network"]
+            if not net_row.empty:
+                r = net_row.iloc[0]
+                _net_status = str(r.get("status", "healthy"))
+                _raw_details = r.get("details", "")
+                _net_details = "" if pd.isna(_raw_details) else str(_raw_details)
+                _raw_ttl = r.get("ttl_sec", 0)
+                _net_ttl = 0.0 if pd.isna(_raw_ttl) else float(_raw_ttl)
+                # Parse details for latency/drop_rate
+                parsed = _parse_details(_net_details)
+                latency_ms = None
+                drop_rate = None
+                if "latency" in parsed:
+                    try:
+                        latency_ms = int(parsed["latency"].replace("ms", ""))
+                    except ValueError:
+                        pass
+                if "drop" in parsed:
+                    try:
+                        drop_rate = float(parsed["drop"])
+                    except ValueError:
+                        pass
+            else:
+                _net_status = "healthy"
+                _net_details = ""
+                _net_ttl = 0.0
+                latency_ms = None
+                drop_rate = None
+            st.markdown(
+                network_status_card(
+                    _net_status, _net_details, _net_ttl,
+                    latency_ms=latency_ms, drop_rate=drop_rate
+                ),
+                unsafe_allow_html=True,
+            )
+
+        # Action summary card
+        with infra_cols[2]:
+            st.markdown(
+                action_summary_card(
+                    act_counts["total"],
+                    act_counts["applied"],
+                    act_counts["failed"],
+                    act_counts["emitted"],
+                ),
+                unsafe_allow_html=True,
+            )
+
+        # Diagnostics row
         _state_mtime_inner = file_mtime_str(STATE_PATH)
         _state_rows_inner = file_row_count(STATE_PATH)
         _last_state_ts = "N/A"
@@ -155,14 +264,6 @@ def _live_data_section() -> None:
             _last_ts = df_state["timestamp_utc"].iloc[0]
             if pd.notna(_last_ts):
                 _last_state_ts = str(_last_ts)
-
-        # Actions emitted vs applied stats
-        _emitted = 0
-        _applied = 0
-        df_act_diag = load_actions()
-        if df_act_diag is not None and "status" in df_act_diag.columns:
-            _emitted = int((df_act_diag["status"] == "emitted").sum())
-            _applied = int((df_act_diag["status"] == "applied").sum())
 
         _diag_cols = st.columns(4)
         with _diag_cols[0]:
@@ -172,17 +273,21 @@ def _live_data_section() -> None:
         with _diag_cols[2]:
             st.caption(f"last_state_ts: {_last_state_ts}")
         with _diag_cols[3]:
-            st.caption(f"actions: {_emitted} emitted / {_applied} applied")
+            st.caption(
+                f"actions: {act_counts['applied']} applied / "
+                f"{act_counts['failed']} failed / "
+                f"{act_counts['emitted']} pending"
+            )
     else:
         st.markdown(
             '<div class="no-data-box">'
-            "<strong>Component Status</strong><br>"
+            "<strong>Infrastructure Status</strong><br>"
             "State not available yet. Waiting for live data..."
             "</div>",
             unsafe_allow_html=True,
         )
 
-    # ── CHARTS: availability + downtime ─────────────────────────────
+    # -- CHARTS: availability + downtime --------------------------------------
     st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
 
     c1, c2 = st.columns(2)
@@ -201,7 +306,7 @@ def _live_data_section() -> None:
             key="chart_downtime",
         )
 
-    # ── CHART: incidents per minute ─────────────────────────────────
+    # -- CHART: incidents per minute ------------------------------------------
     st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
 
     if df_incidents is not None and not df_incidents.empty:
@@ -229,7 +334,7 @@ def _live_data_section() -> None:
             unsafe_allow_html=True,
         )
 
-    # ── INCIDENT TABLE ──────────────────────────────────────────────
+    # -- INCIDENT TABLE -------------------------------------------------------
     st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
     st.markdown('<p class="section-label">Incident Table</p>', unsafe_allow_html=True)
 
@@ -238,7 +343,7 @@ def _live_data_section() -> None:
     else:
         st.info("No incidents data available.")
 
-    # ── ACTIONS TIMELINE ─────────────────────────────────────────
+    # -- ACTIONS TIMELINE -----------------------------------------------------
     st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
     st.markdown('<p class="section-label">Actions Timeline (Closed-Loop)</p>', unsafe_allow_html=True)
 
@@ -270,7 +375,14 @@ def _live_data_section() -> None:
             use_container_width=True,
             height=300,
         )
-        st.caption(f"Actions: {len(df_actions)} total (showing last 100)")
+
+        _act_counts_disp = _action_counts(df_actions)
+        st.caption(
+            f"Actions: {_act_counts_disp['total']} total | "
+            f"{_act_counts_disp['applied']} applied | "
+            f"{_act_counts_disp['failed']} failed | "
+            f"{_act_counts_disp['emitted']} pending"
+        )
     else:
         st.markdown(
             '<div class="no-data-box">'
@@ -280,7 +392,7 @@ def _live_data_section() -> None:
             unsafe_allow_html=True,
         )
 
-    # ── DIAGNOSTICS ─────────────────────────────────────────────────
+    # -- DIAGNOSTICS ----------------------------------------------------------
     st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
 
     with st.expander("Diagnostics (live debug info)", expanded=False):
@@ -336,6 +448,6 @@ def _live_data_section() -> None:
         )
 
 
-# ── invoke the fragment ─────────────────────────────────────────────────────
+# -- invoke the fragment ------------------------------------------------------
 
 _live_data_section()
