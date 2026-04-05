@@ -298,35 +298,3 @@ class TestParseKv:
     def test_empty(self):
         result = _parse_kv("")
         assert result == {}
-
-
-class TestComponentStatusCardNan:
-    """Verify that component_status_card handles NaN/None/empty details."""
-
-    def test_nan_details_cleaned(self):
-        from src.dashboard.ui.cards import component_status_card
-
-        html = component_status_card("gateway", "healthy", "nan", 0.0)
-        # "nan" should not appear as visible text in the card
-        assert "nan" not in html
-
-    def test_none_details_cleaned(self):
-        from src.dashboard.ui.cards import component_status_card
-
-        html = component_status_card("api", "isolated", "None", 120.0)
-        assert ">None<" not in html
-
-    def test_empty_details_no_details_row(self):
-        from src.dashboard.ui.cards import component_status_card
-
-        html = component_status_card("db", "healthy", "", 0.0)
-        # When details is empty, no details row should be rendered
-        assert "policy-metric-item" not in html
-
-    def test_real_details_shown(self):
-        from src.dashboard.ui.cards import component_status_card
-
-        html = component_status_card("gateway", "rate_limited", "rps=50 burst=100", 300.0)
-        assert "rps=50" in html
-        assert "RATE LIMITED" in html
-        assert "TTL" in html

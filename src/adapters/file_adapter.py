@@ -64,6 +64,7 @@ class FileEventSource(EventSource):
         self.path = Path(path)
         self._offset: int = 0
         self._is_jsonl = self.path.suffix in (".jsonl", ".ndjson")
+        self._last_mtime_ns: int | None = None
 
     def read_batch(self, limit: int = 10000) -> list[Event]:
         """Read all events from the file (batch mode)."""
@@ -118,11 +119,36 @@ class FileEventSource(EventSource):
             return []
 
         try:
-            current_size = self.path.stat().st_size
+            st = self.path.stat()
+            current_size = st.st_size
+            current_mtime_ns = st.st_mtime_ns
         except OSError:
             return []
 
-        if current_size <= self._offset:
+        # File was truncated/rotated: reset offset to re-read from start.
+        if current_size < self._offset:
+            log.info(
+                "FileEventSource: detected truncate/rotation for %s (offset=%d -> 0)",
+                self.path,
+                self._offset,
+            )
+            self._offset = 0
+
+        # File may have been rewritten in-place with the same size.
+        if current_size == self._offset:
+            if self._last_mtime_ns is not None and current_mtime_ns != self._last_mtime_ns:
+                log.info(
+                    "FileEventSource: detected same-size rewrite for %s (offset=%d -> 0)",
+                    self.path,
+                    self._offset,
+                )
+                self._offset = 0
+            else:
+                self._last_mtime_ns = current_mtime_ns
+                return []
+
+        if current_size == 0:
+            self._last_mtime_ns = current_mtime_ns
             return []
 
         events: list[Event] = []
@@ -138,6 +164,9 @@ class FileEventSource(EventSource):
                 except (json.JSONDecodeError, KeyError) as exc:
                     log.debug("Skipping line: %s", exc)
             self._offset = fh.tell()
+
+        with contextlib.suppress(OSError):
+            self._last_mtime_ns = self.path.stat().st_mtime_ns
 
         return events
 
@@ -320,6 +349,7 @@ class FileActionFeedback(ActionFeedback):
         """
         self.path = Path(path)
         self._offset: int = 0
+        self._last_mtime_ns: int | None = None
 
     def read_acks(self, since: Any = None) -> tuple[list[ActionAck], int]:
         """Read new ACKs from the file."""
@@ -330,11 +360,35 @@ class FileActionFeedback(ActionFeedback):
             return [], self._offset
 
         try:
-            size = self.path.stat().st_size
+            st = self.path.stat()
+            size = st.st_size
+            mtime_ns = st.st_mtime_ns
         except OSError:
             return [], self._offset
 
-        if size <= self._offset:
+        # ACK file was truncated/rotated: reset offset and continue reading.
+        if size < self._offset:
+            log.info(
+                "FileActionFeedback: detected truncate/rotation for %s (offset=%d -> 0)",
+                self.path,
+                self._offset,
+            )
+            self._offset = 0
+
+        if size == self._offset:
+            if self._last_mtime_ns is not None and mtime_ns != self._last_mtime_ns:
+                log.info(
+                    "FileActionFeedback: detected same-size rewrite for %s (offset=%d -> 0)",
+                    self.path,
+                    self._offset,
+                )
+                self._offset = 0
+            else:
+                self._last_mtime_ns = mtime_ns
+                return [], self._offset
+
+        if size == 0:
+            self._last_mtime_ns = mtime_ns
             return [], self._offset
 
         acks: list[ActionAck] = []
@@ -350,6 +404,9 @@ class FileActionFeedback(ActionFeedback):
                 except (json.JSONDecodeError, KeyError) as exc:
                     log.debug("Skipping bad ACK line: %s", exc)
             self._offset = fh.tell()
+
+        with contextlib.suppress(OSError):
+            self._last_mtime_ns = self.path.stat().st_mtime_ns
 
         if acks:
             log.info("FileActionFeedback: read %d ACKs from %s", len(acks), self.path)

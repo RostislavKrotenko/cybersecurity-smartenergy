@@ -82,6 +82,27 @@ addopts = [
 ]
 markers = [
     "slow: marks tests that need the full emulator run (deselect with -m 'not slow')",
+    "external: tests that require external services or system binaries",
+    "component_adapters: tests for adapters layer",
+    "component_analyzer: tests for analyzer layer",
+    "component_api: tests for API layer",
+    "component_contracts: tests for contracts and schemas",
+    "component_db: tests for database integration",
+    "component_emulator: tests for emulator layer",
+    "component_normalizer: tests for normalizer layer",
+    "component_pipeline: tests for multi-step pipelines",
+    "component_shared: tests for shared utilities",
+    "type_api: API endpoint and API behavior tests",
+    "type_cli: CLI argument and entrypoint tests",
+    "type_contract: interface and data contract tests",
+    "type_integration: integration tests across multiple modules",
+    "type_resilience: robustness tests for failures and malformed input",
+    "type_smoke: fast smoke checks for CI",
+    "type_unit: focused unit tests",
+    "priority_p0: highest priority smoke/regression checks",
+    "priority_p1: high priority integration and contract checks",
+    "priority_p2: regular unit and support checks",
+    "priority_p3: low priority and external-environment checks",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

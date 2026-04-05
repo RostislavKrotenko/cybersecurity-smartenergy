@@ -159,6 +159,26 @@ make test-cov
 make lint
 ```
 
+Запуск по маркерах (`pytest -m`) для вибіркових прогонів:
+
+```bash
+# Компоненти
+pytest -m component_api
+pytest -m component_analyzer
+pytest -m component_emulator
+
+# Типи
+pytest -m type_smoke
+pytest -m type_integration
+
+# Пріоритети
+pytest -m priority_p0
+pytest -m "priority_p1 and component_api"
+
+# Виключити зовнішні/повільні
+pytest -m "not external and not slow"
+```
+
 ## Ліцензія
 
 MIT (див. LICENSE)

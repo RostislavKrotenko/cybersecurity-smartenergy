@@ -3,12 +3,132 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from src.contracts.alert import Alert
 from src.contracts.event import Event
 from src.contracts.incident import Incident
+
+_COMPONENT_MARKERS_BY_FILE: dict[str, tuple[str, ...]] = {
+    "test_actions_loop.py": (
+        "component_analyzer",
+        "component_contracts",
+        "component_emulator",
+        "component_pipeline",
+    ),
+    "test_api_endpoints.py": ("component_api", "component_contracts"),
+    "test_cli_and_reporter.py": (
+        "component_analyzer",
+        "component_api",
+        "component_emulator",
+        "component_normalizer",
+    ),
+    "test_closed_loop.py": (
+        "component_analyzer",
+        "component_contracts",
+        "component_emulator",
+        "component_pipeline",
+    ),
+    "test_contracts.py": ("component_contracts",),
+    "test_correlator.py": ("component_analyzer",),
+    "test_db_restore.py": ("component_db", "component_emulator"),
+    "test_detector.py": ("component_analyzer",),
+    "test_emulator.py": ("component_contracts", "component_emulator"),
+    "test_file_adapter_resilience.py": ("component_adapters", "component_contracts"),
+    "test_filters.py": ("component_normalizer",),
+    "test_hybrid_and_interfaces.py": (
+        "component_adapters",
+        "component_contracts",
+        "component_emulator",
+    ),
+    "test_integration.py": ("component_analyzer", "component_pipeline"),
+    "test_jsonl_live.py": (
+        "component_analyzer",
+        "component_emulator",
+        "component_pipeline",
+    ),
+    "test_metrics.py": ("component_analyzer",),
+    "test_noise_and_scenarios.py": ("component_emulator", "component_shared"),
+    "test_normalizer_pipeline.py": ("component_normalizer", "component_pipeline"),
+    "test_normalizer.py": ("component_contracts", "component_normalizer"),
+    "test_parser.py": ("component_contracts", "component_normalizer"),
+    "test_policy_engine.py": ("component_analyzer",),
+    "test_shared_utils_extra.py": ("component_shared",),
+    "test_smoke_ci.py": ("component_adapters", "component_analyzer", "component_api"),
+    "test_state_store.py": ("component_analyzer", "component_emulator"),
+}
+
+_TYPE_MARKERS_BY_FILE: dict[str, tuple[str, ...]] = {
+    "test_actions_loop.py": ("type_integration",),
+    "test_api_endpoints.py": ("type_api", "type_integration"),
+    "test_cli_and_reporter.py": ("type_cli", "type_unit"),
+    "test_closed_loop.py": ("type_integration",),
+    "test_contracts.py": ("type_contract", "type_unit"),
+    "test_correlator.py": ("type_unit",),
+    "test_db_restore.py": ("type_integration",),
+    "test_detector.py": ("type_unit",),
+    "test_emulator.py": ("type_unit",),
+    "test_file_adapter_resilience.py": ("type_resilience", "type_unit"),
+    "test_filters.py": ("type_unit",),
+    "test_hybrid_and_interfaces.py": ("type_contract", "type_unit"),
+    "test_integration.py": ("type_integration",),
+    "test_jsonl_live.py": ("type_integration",),
+    "test_metrics.py": ("type_unit",),
+    "test_noise_and_scenarios.py": ("type_unit",),
+    "test_normalizer_pipeline.py": ("type_integration",),
+    "test_normalizer.py": ("type_unit",),
+    "test_parser.py": ("type_unit",),
+    "test_policy_engine.py": ("type_unit",),
+    "test_shared_utils_extra.py": ("type_unit",),
+    "test_smoke_ci.py": ("type_integration", "type_smoke"),
+    "test_state_store.py": ("type_unit",),
+}
+
+_SPECIAL_MARKERS_BY_FILE: dict[str, tuple[str, ...]] = {
+    "test_db_restore.py": ("external", "slow"),
+}
+
+_PRIORITY_MARKERS = {"priority_p0", "priority_p1", "priority_p2", "priority_p3"}
+
+
+def _item_file_name(item: pytest.Item) -> str:
+    path = getattr(item, "path", None)
+    if path is not None:
+        return path.name
+    return Path(str(item.fspath)).name
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    del config
+    for item in items:
+        file_name = _item_file_name(item)
+
+        for marker in _COMPONENT_MARKERS_BY_FILE.get(file_name, ()):
+            item.add_marker(marker)
+        for marker in _TYPE_MARKERS_BY_FILE.get(file_name, ()):
+            item.add_marker(marker)
+        for marker in _SPECIAL_MARKERS_BY_FILE.get(file_name, ()):
+            item.add_marker(marker)
+
+        marker_names = {mark.name for mark in item.iter_markers()}
+        if marker_names.intersection(_PRIORITY_MARKERS):
+            continue
+
+        if "type_smoke" in marker_names:
+            item.add_marker("priority_p0")
+            continue
+        if "external" in marker_names or "slow" in marker_names:
+            item.add_marker("priority_p3")
+            continue
+        if marker_names.intersection(
+            {"type_integration", "type_api", "type_contract", "type_resilience"}
+        ):
+            item.add_marker("priority_p1")
+            continue
+
+        item.add_marker("priority_p2")
 
 
 def make_event(
