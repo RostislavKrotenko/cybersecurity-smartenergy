@@ -11,10 +11,12 @@ from src.analyzer import cli as analyzer_cli
 from src.analyzer.metrics import PolicyMetrics
 from src.analyzer.reporter import (
     write_incidents_csv,
+    write_plots,
     write_report_html,
     write_report_txt,
     write_results_csv,
 )
+from src.contracts.event import Event
 from src.emulator import cli as emulator_cli
 from src.normalizer import cli as normalizer_cli
 from tests.conftest import make_incident
@@ -27,6 +29,8 @@ def test_analyzer_build_parser_defaults_and_invalid_choice():
     assert args.out_dir == "out"
     assert args.policies == "all"
     assert args.watch is False
+    assert args.integration_mode == "active"
+    assert args.shadow_actions_path is None
 
     with pytest.raises(SystemExit):
         parser.parse_args(["--log-level", "INVALID"])
@@ -51,15 +55,32 @@ def test_analyzer_main_watch_and_batch_modes(monkeypatch):
     monkeypatch.setattr(analyzer_cli, "create_file_adapters", fake_create_file_adapters)
     monkeypatch.setattr(analyzer_cli, "run_pipeline_with_adapters", fake_run_pipeline_with_adapters)
 
-    analyzer_cli.main(["--watch", "--input", "data/live/events.jsonl", "--poll-interval-ms", "500"])
+    analyzer_cli.main(
+        [
+            "--watch",
+            "--input",
+            "data/live/events.jsonl",
+            "--poll-interval-ms",
+            "500",
+            "--integration-mode",
+            "shadow",
+            "--shadow-actions-path",
+            "out/custom_shadow.csv",
+        ]
+    )
     assert "watch" in calls
     assert calls["watch"]["input_path"] == "data/live/events.jsonl"
     assert calls["watch"]["poll_interval_sec"] == 0.5
+    assert calls["watch"]["integration_mode"] == "shadow"
+    assert calls["watch"]["shadow_actions_path"] == "out/custom_shadow.csv"
 
     calls.clear()
-    analyzer_cli.main(["--input", "data/events.csv", "--out-dir", "out"])
+    analyzer_cli.main(
+        ["--input", "data/events.csv", "--out-dir", "out", "--integration-mode", "active"]
+    )
     assert "adapters" in calls and "run" in calls
     assert calls["run"]["event_source"] == "EVENT_SOURCE"
+    assert calls["run"]["integration_mode"] == "active"
 
 
 def test_normalizer_build_parser_defaults_and_invalid_choice():
@@ -129,6 +150,125 @@ def test_emulator_parse_args_defaults_and_invalid_choice():
         emulator_cli._parse_args(["--format", "xml"])
 
 
+def test_emulator_main_routes_batch_and_live_modes(monkeypatch, tmp_path: Path):
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(emulator_cli, "setup_logging", lambda *_: None)
+    monkeypatch.setattr(emulator_cli, "load_yaml", lambda *_: {})
+
+    class FakeEngine:
+        def __init__(self, *args, **kwargs):
+            calls.setdefault("engine_inits", []).append({"args": args, "kwargs": kwargs})
+
+        def run(self):
+            return [
+                Event(
+                    timestamp="2026-03-01T10:00:00Z",
+                    source="api-gw-01",
+                    component="api",
+                    event="http_request",
+                    key="endpoint",
+                    value="/health",
+                    severity="low",
+                )
+            ]
+
+    class FakeSink:
+        def __init__(self, path: str):
+            self.path = path
+            calls.setdefault("sink_paths", []).append(path)
+
+        def emit_batch(self, events):
+            calls.setdefault("batch_events", []).append(len(events))
+
+        def flush(self):
+            calls["sink_flushed"] = True
+
+        def close(self):
+            calls.setdefault("sink_closed", 0)
+            calls["sink_closed"] += 1
+
+    monkeypatch.setattr(emulator_cli, "EmulatorEngine", FakeEngine)
+    monkeypatch.setattr(emulator_cli, "FileEventSink", FakeSink)
+
+    monkeypatch.setattr(
+        emulator_cli,
+        "stream_to_sink",
+        lambda **kwargs: calls.__setitem__("stream_to_sink", kwargs) or 2,
+    )
+    monkeypatch.setattr(
+        emulator_cli,
+        "_stream_to_sink_infinite",
+        lambda **kwargs: calls.__setitem__("stream_to_sink_infinite", kwargs),
+    )
+    monkeypatch.setattr(
+        emulator_cli,
+        "stream_demo_highrate",
+        lambda **kwargs: calls.__setitem__("stream_demo_highrate", kwargs),
+    )
+    monkeypatch.setattr(
+        emulator_cli,
+        "stream_jsonl",
+        lambda **kwargs: calls.__setitem__("stream_jsonl", kwargs) or 3,
+    )
+    monkeypatch.setattr(
+        emulator_cli,
+        "stream_jsonl_infinite",
+        lambda **kwargs: calls.__setitem__("stream_jsonl_infinite", kwargs),
+    )
+
+    # Batch mode -> FileEventSink path + emit_batch
+    emulator_cli.main(["--out", str(tmp_path / "batch_events")])
+    assert calls["batch_events"][-1] == 1
+    assert calls["sink_paths"][-1].endswith(".csv")
+
+    # Live + sink mode + finite max events
+    emulator_cli.main(["--live", "--out", str(tmp_path / "live_sink.jsonl"), "--max-events", "5"])
+    assert "stream_to_sink" in calls
+
+    # Live + sink mode + infinite stream loop wrapper
+    emulator_cli.main(["--live", "--out", str(tmp_path / "live_sink_infinite.jsonl")])
+    assert "stream_to_sink_infinite" in calls
+
+    # Live + demo profile path
+    emulator_cli.main(
+        [
+            "--live",
+            "--profile",
+            "demo_high_rate",
+            "--out",
+            str(tmp_path / "live_demo.jsonl"),
+        ]
+    )
+    assert "stream_demo_highrate" in calls
+
+    # Live + legacy finite JSONL path (sink_mode=False via raw_log_dir)
+    emulator_cli.main(
+        [
+            "--live",
+            "--out",
+            str(tmp_path / "live_legacy.jsonl"),
+            "--raw-log-dir",
+            str(tmp_path / "raw"),
+            "--max-events",
+            "2",
+        ]
+    )
+    assert "stream_jsonl" in calls
+
+    # Live + legacy infinite JSONL path (sink_mode=False via csv_out)
+    emulator_cli.main(
+        [
+            "--live",
+            "--out",
+            str(tmp_path / "live_legacy_infinite.jsonl"),
+            "--csv-out",
+            str(tmp_path / "live.csv"),
+        ]
+    )
+    assert "stream_jsonl_infinite" in calls
+
+
 def test_api_module_entrypoint_workers_logic(monkeypatch):
     from src.api import __main__ as api_main
 
@@ -155,7 +295,6 @@ def test_api_module_entrypoint_workers_logic(monkeypatch):
     assert calls["kwargs"]["host"] == "127.0.0.1"
     assert calls["kwargs"]["port"] == 9000
     assert calls["kwargs"]["reload"] is True
-    # In reload mode workers are forced to 1.
     assert calls["kwargs"]["workers"] == 1
 
 
@@ -217,3 +356,34 @@ def test_report_generation_fields_format_and_empty_inputs(tmp_path: Path):
     write_report_txt([], [], [], str(empty_txt))
     write_report_html([], [], [], str(empty_html))
     assert empty_txt.exists() and empty_html.exists()
+
+
+def test_report_plots_are_generated(tmp_path: Path):
+    metrics = [
+        PolicyMetrics(
+            policy="baseline",
+            availability_pct=99.9,
+            total_downtime_hr=0.1,
+            mean_mttd_min=1.2,
+            mean_mttr_min=2.3,
+            incidents_total=2,
+            incidents_by_severity={"high": 1, "critical": 1},
+            incidents_by_threat={"credential_attack": 1, "outage": 1},
+        ),
+        PolicyMetrics(
+            policy="hardening",
+            availability_pct=99.5,
+            total_downtime_hr=0.3,
+            mean_mttd_min=2.0,
+            mean_mttr_min=4.0,
+            incidents_total=3,
+            incidents_by_severity={"high": 2, "critical": 1},
+            incidents_by_threat={"availability_attack": 2, "outage": 1},
+        ),
+    ]
+
+    write_plots(metrics, str(tmp_path))
+
+    assert (tmp_path / "plots" / "availability.png").exists()
+    assert (tmp_path / "plots" / "downtime.png").exists()
+    assert (tmp_path / "plots" / "mttd_mttr.png").exists()

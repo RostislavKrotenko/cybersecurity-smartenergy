@@ -100,6 +100,25 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--integration-mode",
+        default="active",
+        choices=["dry-run", "shadow", "active"],
+        help=(
+            "Режим інтеграційного rollout: dry-run (лише план), "
+            "shadow (план + shadow CSV) або active (емісія у ActionSink). "
+            "За замовчуванням: active"
+        ),
+    )
+    p.add_argument(
+        "--shadow-actions-path",
+        type=str,
+        default=None,
+        help=(
+            "Опційний шлях CSV для запланованих дій у режимі dry-run/shadow. "
+            "За замовчуванням: out/actions_dry_run.csv або out/actions_shadow.csv."
+        ),
+    )
+    p.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -129,6 +148,8 @@ def main(argv: list[str] | None = None) -> None:
             actions_path=args.actions_path,
             applied_path=args.applied_path,
             state_input_path=args.state_input,
+            integration_mode=args.integration_mode,
+            shadow_actions_path=args.shadow_actions_path,
         )
     else:
         event_source, action_sink = create_file_adapters(
@@ -144,6 +165,8 @@ def main(argv: list[str] | None = None) -> None:
             policy_names=policy_list,
             config_dir=args.config_dir,
             horizon_days=args.horizon_days,
+            integration_mode=args.integration_mode,
+            shadow_actions_path=args.shadow_actions_path,
         )
 
 

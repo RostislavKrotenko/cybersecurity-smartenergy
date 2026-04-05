@@ -95,6 +95,7 @@ markers = [
     "type_api: API endpoint and API behavior tests",
     "type_cli: CLI argument and entrypoint tests",
     "type_contract: interface and data contract tests",
+    "type_e2e: end-to-end scenarios across closed-loop system components",
     "type_integration: integration tests across multiple modules",
     "type_resilience: robustness tests for failures and malformed input",
     "type_smoke: fast smoke checks for CI",

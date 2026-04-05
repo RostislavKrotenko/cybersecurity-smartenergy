@@ -11,6 +11,3 @@ psycopg2-binary>=2.9
 
 # Lint & format
 ruff>=0.4
-
-# Type checking (optional — strict mode not enforced yet)
-# mypy>=1.10

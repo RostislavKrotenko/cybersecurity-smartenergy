@@ -39,6 +39,13 @@ from src.contracts.action import Action, ActionAck
 from src.contracts.event import Event
 from src.contracts.interfaces import ActionFeedback, ActionSink, EventSource
 from src.shared.config_loader import load_yaml
+from src.shared.reliability import (
+    AckDeduplicator,
+    IntegrationMode,
+    build_reliability_policy_from_env,
+    emit_actions_with_retry,
+    parse_integration_mode,
+)
 from src.shared.time_utils import parse_iso_ts as _ts
 
 log = logging.getLogger(__name__)
@@ -203,6 +210,8 @@ def watch_pipeline(
     actions_path: str | None = None,
     applied_path: str | None = None,
     state_input_path: str | None = None,
+    integration_mode: str = "active",
+    shadow_actions_path: str | None = None,
 ) -> None:
     """Зворотно сумісна обгортка над watch-конвеєром на адаптерах."""
     event_source, state_source, action_sink, action_feedback = create_file_live_adapters(
@@ -224,6 +233,8 @@ def watch_pipeline(
         state_event_source=state_source,
         action_sink=action_sink,
         action_feedback=action_feedback,
+        integration_mode=integration_mode,
+        shadow_actions_path=shadow_actions_path,
     )
 
 
@@ -238,6 +249,8 @@ def watch_pipeline_with_adapters(
     state_event_source: EventSource | None = None,
     action_sink: ActionSink | None = None,
     action_feedback: ActionFeedback | None = None,
+    integration_mode: str = "active",
+    shadow_actions_path: str | None = None,
 ) -> None:
     """Live watch-конвеєр на основі абстрактних адаптерів.
 
@@ -252,6 +265,15 @@ def watch_pipeline_with_adapters(
     else:
         selected = [p for p in policy_names if p in available]
 
+    mode = parse_integration_mode(
+        integration_mode,
+        default_mode=IntegrationMode.ACTIVE,
+    )
+    reliability_policy = build_reliability_policy_from_env()
+    ack_deduplicator = AckDeduplicator(
+        max_entries=reliability_policy.ack_dedup_max_entries,
+    )
+
     iteration = 0
     tick_counter = 0
     rolling_sec = rolling_window_min * 60.0
@@ -264,6 +286,7 @@ def watch_pipeline_with_adapters(
     actions_by_cor_id: dict[str, list[Action]] = {}
     actions_by_id: dict[str, Action] = {}
     feedback_offset: Any = None
+    warned_no_action_sink = False
 
     if horizon_days is not None and horizon_days > 0:
         horizon_sec = horizon_days * 86400
@@ -307,12 +330,15 @@ def watch_pipeline_with_adapters(
         f"rolling window: {rolling_window_min:.0f} min, "
         f"policies: {', '.join(selected)}"
     )
-    if action_sink is not None:
+    print(f"  integration mode: {mode.value}")
+    if action_sink is not None and mode == IntegrationMode.ACTIVE:
         print("  actions -> ActionSink")
-    if action_feedback is not None:
+    if action_feedback is not None and mode == IntegrationMode.ACTIVE:
         print("  applied <- ActionFeedback")
     if state_event_source is not None:
         print("  state   <- EventSource (state stream)")
+    if mode != IntegrationMode.ACTIVE:
+        print("  безпечний режим увімкнено: дії лише плануються і пишуться у CSV")
     print("  Press Ctrl+C to stop.")
 
     event_iter = event_source.read_stream(poll_interval_sec=poll_interval_sec)
@@ -329,11 +355,15 @@ def watch_pipeline_with_adapters(
             state_events = next(state_iter) if state_iter is not None else []
 
             acks_changed = False
-            if action_feedback is not None:
+            if mode == IntegrationMode.ACTIVE and action_feedback is not None:
                 acks, feedback_offset = action_feedback.read_acks(since=feedback_offset)
                 if acks:
+                    unique_acks = ack_deduplicator.filter_new(acks)
+                    dropped = len(acks) - len(unique_acks)
+                    if dropped:
+                        log.info("ACK DEDUP: відфільтровано %d дублікат(ів) ACK", dropped)
                     acks_changed = _apply_acks(
-                        acks,
+                        unique_acks,
                         actions_by_id,
                         all_actions,
                         state_store,
@@ -363,24 +393,54 @@ def watch_pipeline_with_adapters(
                 )
                 all_incidents.extend(new_incs)
 
-                if action_sink is not None and new_incs:
+                if new_incs:
                     new_actions = decide(new_incs, acted_incidents)
                     new_actions = _throttle_actions(new_actions, last_action_emit_ts)
                     new_actions = _apply_restore_lock(new_actions, all_actions)
                     if new_actions:
-                        tracking_ids = action_sink.emit_batch(new_actions)
-                        for action, tracking_id in zip(new_actions, tracking_ids):
-                            action.action_id = tracking_id
-                        all_actions.extend(new_actions)
-                        for a in new_actions:
-                            actions_by_cor_id.setdefault(a.correlation_id, []).append(a)
-                            actions_by_id[a.action_id] = a
-                        write_actions_csv(all_actions, str(out_p / "actions.csv"))
-                        log.info(
-                            "EMITTED %d new actions (%d total)",
-                            len(new_actions),
-                            len(all_actions),
-                        )
+                        if mode == IntegrationMode.ACTIVE:
+                            if action_sink is None:
+                                if not warned_no_action_sink:
+                                    log.warning(
+                                        "integration_mode=active, але ActionSink не налаштований; "
+                                        "нові дії не будуть емітовані"
+                                    )
+                                    warned_no_action_sink = True
+                            else:
+                                tracking_ids = emit_actions_with_retry(
+                                    action_sink,
+                                    new_actions,
+                                    policy=reliability_policy,
+                                    logger=log,
+                                )
+                                for action, tracking_id in zip(new_actions, tracking_ids):
+                                    action.action_id = tracking_id
+                                all_actions.extend(new_actions)
+                                for a in new_actions:
+                                    actions_by_cor_id.setdefault(a.correlation_id, []).append(a)
+                                    actions_by_id[a.action_id] = a
+                                write_actions_csv(all_actions, str(out_p / "actions.csv"))
+                                log.info(
+                                    "EMITTED %d new actions (%d total)",
+                                    len(new_actions),
+                                    len(all_actions),
+                                )
+                        else:
+                            _mark_actions_planned(new_actions)
+                            all_actions.extend(new_actions)
+                            plan_path = _resolve_action_plan_path(
+                                out_p,
+                                mode,
+                                shadow_actions_path,
+                            )
+                            write_actions_csv(all_actions, str(plan_path))
+                            log.info(
+                                "%s MODE: заплановано %d нових дій (%d всього) -> %s",
+                                mode.value.upper(),
+                                len(new_actions),
+                                len(all_actions),
+                                plan_path,
+                            )
 
                 if rolling_sec > 0 and all_incidents:
                     latest = max(_ts(i.start_ts) for i in all_incidents)
@@ -836,6 +896,8 @@ def run_pipeline_with_adapters(
     policy_names: list[str] | None = None,
     config_dir: str = "config",
     horizon_days: float | None = None,
+    integration_mode: str = "active",
+    shadow_actions_path: str | None = None,
 ) -> dict[str, Any]:
     """Запускає конвеєр аналізу через plug-and-play адаптери.
 
@@ -868,6 +930,11 @@ def run_pipeline_with_adapters(
 
     rules_cfg = load_yaml(f"{config_dir}/rules.yaml")
     policies_cfg = load_policies(config_dir)
+    mode = parse_integration_mode(
+        integration_mode,
+        default_mode=IntegrationMode.ACTIVE,
+    )
+    reliability_policy = build_reliability_policy_from_env()
 
     available = list_policy_names(policies_cfg)
     if policy_names is None or policy_names == ["all"]:
@@ -887,6 +954,8 @@ def run_pipeline_with_adapters(
         "actions": [],
         "control_ranking": [],
     }
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
 
     for pname in selected:
         modifiers = get_modifiers(policies_cfg, pname)
@@ -901,19 +970,45 @@ def run_pipeline_with_adapters(
         all_metrics.append(m)
         all_incidents.extend(incidents)
 
-    if action_sink and all_incidents:
+    if all_incidents:
         actions = decide(all_incidents, acted_incidents)
         if actions:
-            action_sink.emit_batch(actions)
-            all_actions.extend(actions)
-            results["actions"] = actions
-            log.info("Emitted %d actions via ActionSink", len(actions))
+            if mode == IntegrationMode.ACTIVE and action_sink is not None:
+                tracking_ids = emit_actions_with_retry(
+                    action_sink,
+                    actions,
+                    policy=reliability_policy,
+                    logger=log,
+                )
+                for action, tracking_id in zip(actions, tracking_ids):
+                    action.action_id = tracking_id
+                all_actions.extend(actions)
+                results["actions"] = actions
+                log.info("Емітовано %d дій через ActionSink", len(actions))
+            else:
+                fallback_mode = mode
+                if mode == IntegrationMode.ACTIVE and action_sink is None:
+                    fallback_mode = IntegrationMode.DRY_RUN
+                    log.warning(
+                        "integration_mode=active, але ActionSink не налаштований; "
+                        "дії буде збережено як план"
+                    )
+
+                _mark_actions_planned(actions)
+                all_actions.extend(actions)
+                results["actions"] = actions
+                plan_path = _resolve_action_plan_path(out, fallback_mode, shadow_actions_path)
+                write_actions_csv(all_actions, str(plan_path))
+                log.info(
+                    "%s MODE: заплановано %d дій -> %s",
+                    fallback_mode.value.upper(),
+                    len(actions),
+                    plan_path,
+                )
 
     control_ranking = rank_controls(policies_cfg, selected)
     results["control_ranking"] = control_ranking
 
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
     write_results_csv(all_metrics, str(out / "results.csv"))
     write_incidents_csv(all_incidents, str(out / "incidents.csv"))
     write_report_txt(all_metrics, all_incidents, control_ranking, str(out / "report.txt"))
@@ -926,6 +1021,28 @@ def run_pipeline_with_adapters(
 
     log.info("Pipeline (adapters) complete. Outputs in %s/", out_dir)
     return results
+
+
+def _resolve_action_plan_path(
+    out_dir: Path,
+    mode: IntegrationMode,
+    explicit_path: str | None,
+) -> Path:
+    """Визначає шлях CSV для запланованих дій у безпечних режимах інтеграції."""
+    if explicit_path:
+        path = Path(explicit_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    if mode == IntegrationMode.SHADOW:
+        return out_dir / "actions_shadow.csv"
+    return out_dir / "actions_dry_run.csv"
+
+
+def _mark_actions_planned(actions: list[Action]) -> None:
+    """Маркує дії як planned, коли вони не емітяться у зовнішні системи."""
+    for action in actions:
+        action.status = "planned"
 
 
 def create_file_adapters(

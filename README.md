@@ -179,6 +179,24 @@ pytest -m "priority_p1 and component_api"
 pytest -m "not external and not slow"
 ```
 
+## Інтеграційна готовність
+
+Пакет артефактів для підключення до реальної SmartEnergy системи:
+- `docs/integration/Integration_Readiness_Pack.md`
+
+Безпечні режими запуску аналізатора:
+
+```bash
+# dry-run: план дій без емісії в зовнішню систему
+python -m src.analyzer --watch --input data/live/events.jsonl --integration-mode dry-run
+
+# shadow: план дій у shadow-режимі (без емісії)
+python -m src.analyzer --watch --input data/live/events.jsonl --integration-mode shadow
+
+# active: активна емісія дій у ActionSink
+python -m src.analyzer --watch --input data/live/events.jsonl --integration-mode active
+```
+
 ## Ліцензія
 
 MIT (див. LICENSE)

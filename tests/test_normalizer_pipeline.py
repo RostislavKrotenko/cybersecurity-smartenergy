@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from src.contracts.event import Event
 from src.normalizer.pipeline import NormalizerPipeline, _resolve_tz
 
 
@@ -196,3 +197,89 @@ class TestNormalizerPipeline:
             rows = list(reader)
         # Dedup should have removed the second identical event
         assert len(rows) == 1
+
+    def test_run_with_sink_emits_events_and_writes_outputs(self, tmp_dirs, minimal_mapping):
+        input_dir, out_dir = tmp_dirs
+        log_file = input_dir / "api_gateway.log"
+        log_file.write_text(
+            "2026-02-26 10:00:00 INFO api-gw-01 GET /api/v1/health 200\n"
+            "2026-02-26 10:00:05 ERROR api-gw-01 POST /api/v1/command 500\n"
+        )
+
+        pipeline = NormalizerPipeline(minimal_mapping)
+
+        class FakeSink:
+            def __init__(self):
+                self.events: list[Event] = []
+                self.flush_called = 0
+
+            def emit(self, event: Event) -> None:
+                self.events.append(event)
+
+            def emit_batch(self, events: list[Event]) -> None:
+                self.events.extend(events)
+
+            def flush(self) -> None:
+                self.flush_called += 1
+
+            def close(self) -> None:
+                pass
+
+        sink = FakeSink()
+        emitted = pipeline.run_with_sink(
+            input_glob=str(input_dir / "*.log"),
+            event_sink=sink,
+            quarantine_path=str(out_dir / "quarantine.csv"),
+            stats_path=str(out_dir / "stats.json"),
+        )
+
+        assert emitted == 2
+        assert len(sink.events) == 2
+        assert sink.flush_called == 1
+        assert (out_dir / "quarantine.csv").exists()
+        assert (out_dir / "stats.json").exists()
+
+    def test_follow_with_sink_processes_events_and_stops_on_interrupt(
+        self,
+        tmp_dirs,
+        minimal_mapping,
+        monkeypatch,
+    ):
+        input_dir, _out_dir = tmp_dirs
+        log_file = input_dir / "api_gateway.log"
+        log_file.write_text("2026-02-26 10:00:00 INFO api-gw-01 GET /api/v1/health 200\n")
+
+        pipeline = NormalizerPipeline(minimal_mapping)
+
+        class FakeSink:
+            def __init__(self):
+                self.events: list[Event] = []
+                self.flush_called = 0
+
+            def emit(self, event: Event) -> None:
+                self.events.append(event)
+
+            def emit_batch(self, events: list[Event]) -> None:
+                self.events.extend(events)
+
+            def flush(self) -> None:
+                self.flush_called += 1
+
+            def close(self) -> None:
+                pass
+
+        sink = FakeSink()
+
+        def _interrupt(_interval: float) -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("src.normalizer.pipeline.time.sleep", _interrupt)
+
+        pipeline.follow_with_sink(
+            input_glob=str(input_dir / "*.log"),
+            event_sink=sink,
+            poll_interval_sec=0.01,
+        )
+
+        assert len(sink.events) == 1
+        assert sink.flush_called >= 1

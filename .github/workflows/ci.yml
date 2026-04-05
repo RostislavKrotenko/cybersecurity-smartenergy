@@ -1,13 +1,20 @@
 name: CI — Tests & Lint
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
 
     steps:
@@ -30,5 +37,172 @@ jobs:
       - name: Ruff format check
         run: ruff format --check src/ tests/
 
-      - name: Run all tests
-        run: pytest tests/ -v --tb=short -ra --cov=src --cov-report=term-missing
+  fast-tests:
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+    needs: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run fast PR suite with coverage gate
+        run: |
+          pytest tests/ -v --tb=short -ra \
+            -m "type_smoke or type_unit" \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-fail-under=58
+
+  coverage-full:
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run full non-external suite with coverage gate
+        run: |
+          pytest tests/ -v --tb=short -ra \
+            -m "not external" \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-fail-under=70
+
+  nightly-heavy:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    needs: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run nightly heavy suite (slow + e2e)
+        run: |
+          pytest tests/ -v --tb=short -ra -m "(slow or type_e2e) and not external"
+
+  external-integration:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: smartenergy
+          POSTGRES_PASSWORD: smartenergy
+          POSTGRES_DB: smartenergy
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smartenergy"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Install PostgreSQL client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Prepare runtime directories
+        run: |
+          mkdir -p data/live backups
+
+      - name: Initialize Postgres schema
+        env:
+          PGPASSWORD: smartenergy
+        run: |
+          psql -h localhost -p 5432 -U smartenergy -d smartenergy -f services/postgres/init.sql
+
+      - name: Build and run network-sim container
+        run: |
+          docker build -f services/network_sim/Dockerfile -t smartenergy-network-sim:ci .
+          docker run -d --name network-sim-ci \
+            -p 8090:8090 \
+            -e PORT=8090 \
+            -e EVENTS_JSONL=/work/data/live/events.jsonl \
+            -e ACTIONS_PATH=/work/data/live/actions.jsonl \
+            -e APPLIED_PATH=/work/data/live/actions_applied.jsonl \
+            -v "$GITHUB_WORKSPACE/data:/work/data" \
+            smartenergy-network-sim:ci
+
+      - name: Wait for network-sim health endpoint
+        run: |
+          python - <<'PY'
+          import time
+          import urllib.request
+
+          for i in range(30):
+              try:
+                  with urllib.request.urlopen("http://localhost:8090/healthz", timeout=2):
+                      print("network-sim is ready")
+                      break
+              except Exception:
+                  if i == 29:
+                      raise
+                  time.sleep(1)
+          PY
+
+      - name: Run external integration tests
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: smartenergy
+          PGPASSWORD: smartenergy
+          PGDATABASE: smartenergy
+          NETWORK_SIM_URL: http://localhost:8090
+          BACKUP_DIR: ./backups
+        run: |
+          pytest tests/test_db_restore.py -v --tb=short -ra
+
+      - name: Stop network-sim container
+        if: always()
+        run: docker rm -f network-sim-ci || true
