@@ -4,7 +4,7 @@
 # Кожне правило:
 #   id             — унікальний ідентифікатор
 #   name           — людська назва
-#   threat_type    — credential_attack | availability_attack | integrity_attack | outage
+#   threat_type    — credential_attack | availability_attack | integrity_attack | outage | network_failure
 #   description    — що детектується
 #   match          — умови спрацьовування (event type, поля, порогові значення)
 #   window_sec     — вікно часу для агрегації подій
@@ -249,6 +249,47 @@ rules:
         response_hint: initiate_rollback_and_failover
 
     response_hint: initiate_backup_rollback
+
+  # ===========================================================================
+  # RULE 6: Network Failure Detection (A6)
+  # ===========================================================================
+  - id: RULE-NET-001
+    name: "Network Failure Detection"
+    threat_type: network_failure
+    description: >
+      Деградація мережі, відмова портів, втрата зв'язку з мережевим
+      обладнанням (комутатори, файрволи, шлюзи).
+    enabled: true
+
+    match:
+      event: service_status
+      key: status
+      values: [degraded, down, packet_loss, timeout, unreachable]
+      component: network
+      group_by: [source]
+
+    window_sec: 60
+    threshold: 2                         # ≥ 2 події за 60с
+
+    severity: high
+    severity_override:
+      - { value: down, severity: critical }
+      - { value: unreachable, severity: critical }
+
+    confidence: 0.88
+
+    sub_rules:
+      - id: RULE-NET-002
+        name: "Port Failure Cascade"
+        description: "Відмова портів після деградації мережі — каскадна проблема"
+        match:
+          event: port_status
+          precondition: "RULE-NET-001 triggered within 120 sec"
+        severity: critical
+        confidence: 0.95
+        response_hint: reset_network_and_isolate
+
+    response_hint: reset_network
 
 # =============================================================================
 # Глобальні параметри детектора

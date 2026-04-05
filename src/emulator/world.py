@@ -4,6 +4,11 @@ Each infrastructure component has mutable runtime state that actions from
 the Analyzer can modify. The Emulator reads actions.jsonl, applies them
 via ``apply_action()``, and emits state-change events back into
 events.jsonl so the Analyzer can observe the effect.
+
+To use REAL execution instead of simulation:
+    Replace the body of apply_action() with real API calls when
+    SmartEnergy infrastructure is available. The function signature
+    stays the same - only the implementation changes.
 """
 
 from __future__ import annotations

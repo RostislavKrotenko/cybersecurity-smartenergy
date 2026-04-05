@@ -6,6 +6,7 @@ import csv
 import io
 import json
 from dataclasses import asdict, dataclass
+from typing import Any
 
 CSV_COLUMNS: list[str] = [
     "timestamp",
@@ -50,6 +51,24 @@ class Event:
     def to_json(self) -> str:
         """Повертає компактний JSON рядок."""
         return json.dumps(asdict(self), ensure_ascii=False, separators=(",", ":"))
+
+    @classmethod
+    def from_dict(cls, row: dict[str, Any]) -> Event:
+        """Створює Event зі словника (CSV row або JSON object)."""
+        return cls(
+            timestamp=row.get("timestamp", ""),
+            source=row.get("source", ""),
+            component=row.get("component", ""),
+            event=row.get("event", ""),
+            key=row.get("key", ""),
+            value=str(row.get("value", "")),
+            severity=row.get("severity", "low"),
+            actor=row.get("actor", ""),
+            ip=row.get("ip", ""),
+            unit=row.get("unit", ""),
+            tags=row.get("tags", ""),
+            correlation_id=row.get("correlation_id", ""),
+        )
 
     @staticmethod
     def csv_header() -> str:

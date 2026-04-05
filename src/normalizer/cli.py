@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 
+from src.adapters import FileEventSink
+from src.contracts.interfaces import EventSink
 from src.normalizer.pipeline import NormalizerPipeline
 from src.shared.logger import setup_logging
 
@@ -87,12 +89,16 @@ def main(argv: list[str] | None = None) -> None:
             poll_interval_sec=args.poll_interval_ms / 1000.0,
         )
     else:
-        pipeline.run(
-            input_glob=args.inputs,
-            out_path=args.out,
-            quarantine_path=args.quarantine,
-            stats_path=args.stats,
-        )
+        event_sink: EventSink = FileEventSink(args.out)
+        try:
+            pipeline.run_with_sink(
+                input_glob=args.inputs,
+                event_sink=event_sink,
+                quarantine_path=args.quarantine,
+                stats_path=args.stats,
+            )
+        finally:
+            event_sink.close()
 
 
 if __name__ == "__main__":

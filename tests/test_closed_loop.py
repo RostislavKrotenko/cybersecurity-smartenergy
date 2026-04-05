@@ -10,19 +10,18 @@ import time
 import pytest
 
 from src.analyzer.decision import decide, emit_actions, write_actions_csv
-from src.analyzer.reporter import _atomic_write
 from src.contracts.action import Action, ActionType
 from src.contracts.incident import Incident
 from src.emulator.world import (
+    WorldState,
     apply_action,
     expire_state,
     is_actor_blocked,
     is_isolated,
     is_rate_limited,
     read_new_actions,
-    WorldState,
 )
-
+from src.shared.file_utils import atomic_write as _atomic_write
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Action contract tests

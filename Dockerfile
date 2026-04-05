@@ -34,8 +34,4 @@ RUN mkdir -p data out logs
 # ── 6. Default command — show help ───────────────────────────────────────
 CMD ["python", "-c", "print('SmartEnergy image ready. Use docker compose to run services.')"]
 
-# ── Health-check for the UI service ──────────────────────────────────────
-HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8501/_stcore/health || exit 1
-
 EXPOSE 8501

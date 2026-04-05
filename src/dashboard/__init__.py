@@ -1,1 +1,0 @@
-"""Дашборд SmartEnergy на Streamlit."""

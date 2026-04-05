@@ -225,3 +225,60 @@ profiles:
         component: inverter
       - pattern: 'collector'
         component: collector
+
+  # ========================================================================
+  # System / infrastructure logs (db, network, edge service status)
+  # Format: YYYY-MM-DD HH:MM:SS LEVEL host message
+  # Example: 2026-03-19 14:28:10 ERROR db-primary status=down
+  # ========================================================================
+  system:
+    file_pattern: "system"
+    line_regex: '^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(?P<level>\w+)\s+(?P<host>\S+)\s+(?P<msg>.+)$'
+    timestamp_format: iso_space
+    source_field: host
+    level_field: level
+    message_field: msg
+
+    severity_map:
+      debug: low
+      info: low
+      warning: medium
+      warn: medium
+      error: high
+      critical: critical
+      crit: critical
+
+    ip_regex: '(?:addr[= ]|from )(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+    actor_regex: 'user[= ](\S+)'
+    kv_regex: '(\w+)=(\S+)'
+
+    event_rules:
+      - pattern: '(?i)\bport_status\b|\bflapping\b'
+        event: port_status
+        tags: "network,port"
+      - pattern: '(?i)\bstatus=(degraded|down|packet_loss|unreachable|healthy)\b|\bservice status\b|\bconnectivity\b'
+        event: service_status
+        tags: "system,health"
+      - pattern: '(?i)\bdb\b.*\berror\b|integrity_check|checksum|corrupt|wal_corruption|integrity_violation'
+        event: db_error
+        tags: "db,integrity"
+      - pattern: '(?i)\btelemetry\b|\bvoltage\b|\bpower\b|\bfrequency\b|\btemperature\b'
+        event: telemetry_read
+        tags: "edge,telemetry"
+      - pattern: '.*'
+        event: raw_log
+        tags: "system"
+
+    component_rules:
+      - pattern: 'db|postgres|replica'
+        component: db
+      - pattern: 'switch|firewall|fw|network'
+        component: network
+      - pattern: 'gateway|gw|meter|rtu'
+        component: edge
+      - pattern: 'api|hmi|scada|ui|web|nginx'
+        component: api
+      - pattern: 'collector'
+        component: collector
+      - pattern: 'inverter|pv'
+        component: inverter

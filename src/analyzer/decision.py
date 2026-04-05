@@ -5,20 +5,22 @@ severity, and affected component, it selects actions from a static mapping
 (response playbook). This keeps the logic deterministic and auditable.
 
 To port to production, replace this mapping with an external playbook store
-or a SOAR API adapter.
+or a SOAR API adapter. The ActionSink interface provides plug-and-play
+integration with different action execution backends.
 """
 
 from __future__ import annotations
 
 import logging
-import os
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from src.contracts.action import Action
 from src.contracts.incident import Incident
+from src.contracts.interfaces import ActionSink
+from src.shared.file_utils import atomic_write
+from src.shared.severity import SEV_ORDER as _SEV_ORDER
 
 log = logging.getLogger(__name__)
 
@@ -29,8 +31,6 @@ log = logging.getLogger(__name__)
 # threat_type -> list of action templates
 # Each template is (action, target_component, params_factory)
 # params_factory receives the incident and returns a dict.
-
-_SEV_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
 _PLAYBOOK: dict[str, list[dict[str, Any]]] = {
     "credential_attack": [
@@ -77,6 +77,17 @@ _PLAYBOOK: dict[str, list[dict[str, Any]]] = {
             "action": "reset_network",
             "target_component": "network",
             "params": {},
+        },
+    ],
+    "network_failure": [
+        {
+            "action": "degrade_network",
+            "target_component": "network",
+            "params": {
+                "latency_ms": 280,
+                "drop_rate": 0.25,
+                "ttl_sec": 180,
+            },
         },
     ],
 }
@@ -164,28 +175,10 @@ def emit_actions(actions: list[Action], path: str) -> None:
 
 def write_actions_csv(actions: list[Action], path: str) -> None:
     """Write actions to a CSV file (atomic write for dashboard)."""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
     lines = [Action.csv_header()]
     for a in actions:
         lines.append(a.to_csv_row())
-    content = "\n".join(lines) + "\n"
-
-    fd, tmp = tempfile.mkstemp(
-        dir=str(p.parent), prefix=f".{p.name}.", suffix=".tmp",
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(content)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        import contextlib
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
-
+    atomic_write(path, "\n".join(lines) + "\n")
     log.info("Wrote actions CSV -> %s (%d rows)", path, len(actions))
 
 
@@ -217,3 +210,69 @@ def _extract_target_id(inc: Incident, target_component: str) -> str:
         if c.strip() == target_component:
             return c.strip()
     return components[0].strip() if components else target_component
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Plug-and-Play Action Emission (interface-based)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def emit_actions_to_sink(
+    actions: list[Action],
+    action_sink: ActionSink,
+) -> list[str]:
+    """Emit actions using an ActionSink adapter.
+
+    This is the plug-and-play version that supports custom action sinks
+    for integration with real SmartEnergy systems (SOAR, SCADA, etc.).
+
+    Args:
+        actions: List of actions to emit.
+        action_sink: ActionSink implementation (file, SOAR, SCADA, etc.)
+
+    Returns:
+        List of action tracking IDs.
+
+    Example:
+        # Using file adapter (simulation)
+        from src.adapters import FileActionSink
+
+        sink = FileActionSink("data/live/actions.jsonl")
+        ids = emit_actions_to_sink(actions, sink)
+
+        # Using SOAR adapter (production)
+        from your_adapters import XsoarActionSink
+
+        sink = XsoarActionSink(api_url="https://xsoar.example.com/api")
+        ids = emit_actions_to_sink(actions, sink)
+    """
+    if not actions:
+        return []
+
+    tracking_ids = action_sink.emit_batch(actions)
+    log.info("Emitted %d actions via ActionSink", len(actions))
+    return tracking_ids
+
+
+def decide_and_emit(
+    incidents: list[Incident],
+    already_acted: set[str],
+    action_sink: ActionSink,
+) -> list[Action]:
+    """Convenience function: decide on actions and emit them via sink.
+
+    Combines decide() and emit_actions_to_sink() for simpler usage.
+
+    Args:
+        incidents: Current active incidents.
+        already_acted: Set of incident_ids already handled.
+        action_sink: ActionSink implementation.
+
+    Returns:
+        List of emitted Action objects.
+    """
+    actions = decide(incidents, already_acted)
+    if actions:
+        emit_actions_to_sink(actions, action_sink)
+    return actions
+

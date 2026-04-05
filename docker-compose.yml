@@ -2,16 +2,21 @@
 #  SmartEnergy Cyber-Resilience Analyzer -- Docker Compose
 # ---------------------------------------------------------------------------
 #  Profiles:
-#    demo            -- one-shot: emulator -> analyzer -> UI (batch CSV)
-#    live_direct     -- closed-loop: emulator -> events.jsonl -> analyzer -> actions.jsonl -> emulator + dashboard
-#                       + pg-ops (real Postgres executor) + network-sim (real network executor)
-#    live_normalized -- closed-loop: emulator -> raw logs -> normalizer -> normalized.jsonl -> analyzer
-#                       + pg-ops + network-sim + dashboard
+#    live    -- full closed-loop: emulator -> analyzer -> API + React frontend
+#               includes: postgres, db-writer, network-sim
+#    api     -- standalone API server only (requires pre-generated data in out/)
 #
 #  Quick start:
-#    docker compose --profile live_direct up --build
-#    docker compose --profile live_normalized up --build
-#    docker compose --profile demo up --build
+#    docker compose --profile live up --build
+#    docker compose --profile api up --build
+#
+#  Endpoints:
+#    http://localhost:5173              -- React dashboard (main UI)
+#    http://localhost:8000/api/docs     -- Swagger UI (API documentation)
+#    http://localhost:8000/api/incidents
+#    http://localhost:8000/api/actions
+#    http://localhost:8000/api/state
+#    http://localhost:8000/api/metrics
 # ---------------------------------------------------------------------------
 
 x-common: &common
@@ -33,10 +38,39 @@ x-pg-env: &pg-env
   PGDATABASE: smartenergy
 
 services:
-  # -- 0. Init -- clear runtime data from previous runs -----------------------
-  init-live:
+  # ===========================================================================
+  #  STANDALONE API (profile: api)
+  #  Use when you have pre-generated data in out/ directory
+  # ===========================================================================
+
+  api:
     <<: *common
-    container_name: smartenergy-init-live
+    container_name: smartenergy-api
+    command: >-
+      python -m src.api
+        --host 0.0.0.0
+        --port 8000
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    profiles: ["api"]
+
+  # ===========================================================================
+  #  LIVE MODE (profile: live)
+  #  Full closed-loop: Emulator -> Analyzer -> Actions -> Emulator
+  #  Includes: Postgres, DB Writer, Network Simulator, API, React
+  # ===========================================================================
+
+  # -- Init: clear runtime data from previous runs ----------------------------
+  init:
+    <<: *common
+    container_name: smartenergy-init
     entrypoint: ["sh", "-c"]
     command:
       - >-
@@ -44,79 +78,9 @@ services:
         && mkdir -p data/live out logs/live
         && echo 'Runtime data cleared.'
     restart: "no"
-    profiles: ["live_direct", "live_normalized"]
+    profiles: ["live"]
 
-  # -- 1. Emulator -- batch CSV (demo profile) --------------------------------
-  emulator:
-    <<: *common
-    container_name: smartenergy-emulator
-    command: >-
-      python -m src.emulator
-        --seed 42
-        --out data/events.csv
-        --log-level INFO
-    profiles: ["generate", "demo"]
-
-  # -- 2. Normalizer -- batch: raw logs -> events.csv -------------------------
-  normalizer:
-    <<: *common
-    container_name: smartenergy-normalizer
-    command: >-
-      python -m src.normalizer
-        --inputs "logs/*.log"
-        --mapping config/mapping.yaml
-        --out data/events.csv
-        --quarantine out/quarantine.csv
-        --log-level INFO
-    profiles: ["normalize"]
-
-  # -- 3. Analyzer -- batch: events.csv -> results ----------------------------
-  analyzer:
-    <<: *common
-    container_name: smartenergy-analyzer
-    command: >-
-      python -m src.analyzer
-        --input data/events.csv
-        --out-dir out
-        --policies all
-        --horizon-days 1
-        --log-level INFO
-    depends_on:
-      emulator:
-        condition: service_completed_successfully
-        required: false
-    profiles: ["analyze", "demo"]
-
-  # -- 4. UI -- batch dashboard -----------------------------------------------
-  ui:
-    <<: *common
-    container_name: smartenergy-ui
-    command: >-
-      streamlit run src/dashboard/app.py
-        --server.headless true
-        --server.port 8501
-        --server.address 0.0.0.0
-        --browser.gatherUsageStats false
-    ports:
-      - "8501:8501"
-    depends_on:
-      analyzer:
-        condition: service_completed_successfully
-        required: false
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
-      interval: 15s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
-    restart: unless-stopped
-    profiles: ["ui", "demo"]
-
-  # ===========================================================================
-  #  INFRASTRUCTURE: Postgres + pg-ops (DB executor) + network-sim
-  #  Shared across live_direct and live_normalized profiles
-  # ===========================================================================
-
+  # -- Infrastructure: Postgres -----------------------------------------------
   postgres:
     image: postgres:16-alpine
     container_name: smartenergy-postgres
@@ -135,8 +99,9 @@ services:
       start_period: 10s
       retries: 5
     restart: unless-stopped
-    profiles: ["live_direct", "live_normalized"]
+    profiles: ["live"]
 
+  # -- Infrastructure: DB Writer (executes backup/restore actions) ------------
   db-writer:
     build:
       context: .
@@ -157,11 +122,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      init-live:
+      init:
         condition: service_completed_successfully
     restart: unless-stopped
-    profiles: ["live_direct", "live_normalized"]
+    profiles: ["live"]
 
+  # -- Infrastructure: Network Simulator --------------------------------------
   network-sim:
     build:
       context: .
@@ -181,21 +147,15 @@ services:
       start_period: 5s
       retries: 3
     depends_on:
-      init-live:
+      init:
         condition: service_completed_successfully
     restart: unless-stopped
-    profiles: ["live_direct", "live_normalized"]
+    profiles: ["live"]
 
-  # ===========================================================================
-  #  MODE A: live_direct
-  #    Emulator -> events.jsonl -> Analyzer (direct, skips normalizer)
-  #    Closed-loop: Analyzer -> actions.jsonl -> Emulator
-  #    Real executors: pg-ops (DB) + network-sim (Network)
-  # ===========================================================================
-
-  emulator-live-direct:
+  # -- Emulator: generates events ---------------------------------------------
+  emulator:
     <<: *common
-    container_name: smartenergy-emulator-live-direct
+    container_name: smartenergy-emulator
     environment:
       NETWORK_SIM_URL: "http://network-sim:8090"
     command: >-
@@ -214,18 +174,19 @@ services:
         --applied-path data/live/actions_applied.jsonl
         --log-level INFO
     depends_on:
-      init-live:
+      init:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
       network-sim:
         condition: service_healthy
     restart: unless-stopped
-    profiles: ["live_direct"]
+    profiles: ["live"]
 
-  analyzer-live-direct:
+  # -- Analyzer: detects incidents, emits actions -----------------------------
+  analyzer:
     <<: *common
-    container_name: smartenergy-analyzer-live-direct
+    container_name: smartenergy-analyzer
     environment:
       NETWORK_SIM_URL: "http://network-sim:8090"
     command: >-
@@ -240,136 +201,51 @@ services:
         --applied-path data/live/actions_applied.jsonl
         --log-level INFO
     depends_on:
-      emulator-live-direct:
+      emulator:
         condition: service_started
     restart: unless-stopped
-    profiles: ["live_direct"]
+    profiles: ["live"]
 
-  ui-live-direct:
+  # -- API: REST backend for React frontend -----------------------------------
+  api-live:
     <<: *common
-    container_name: smartenergy-ui-live-direct
+    container_name: smartenergy-api-live
     environment:
       - SMARTENERGY_LIVE_MODE=1
     command: >-
-      streamlit run src/dashboard/app.py
-        --server.headless true
-        --server.port 8501
-        --server.address 0.0.0.0
-        --browser.gatherUsageStats false
+      python -m src.api
+        --host 0.0.0.0
+        --port 8000
     ports:
-      - "8501:8501"
+      - "8000:8000"
     depends_on:
-      analyzer-live-direct:
+      analyzer:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 15s
       timeout: 5s
       start_period: 10s
       retries: 3
     restart: unless-stopped
-    profiles: ["live_direct"]
+    profiles: ["live"]
 
-  # ===========================================================================
-  #  MODE B: live_normalized
-  #    Emulator -> raw logs -> Normalizer -> normalized.jsonl -> Analyzer
-  #    Closed-loop: Analyzer -> actions.jsonl -> Emulator
-  #    Real executors: pg-ops (DB) + network-sim (Network)
-  # ===========================================================================
-
-  emulator-live-normalized:
-    <<: *common
-    container_name: smartenergy-emulator-live-normalized
-    environment:
-      NETWORK_SIM_URL: "http://network-sim:8090"
-    command: >-
-      python -m src.emulator
-        --live
-        --live-interval-ms 250
-        --attack-every-sec 10
-        --background-events-per-tick 20
-        --max-file-mb 50
-        --out data/live/events.jsonl
-        --raw-log-dir logs/live
-        --csv-out data/live/events.csv
-        --profile demo_high_rate
-        --seed 42
-        --actions-path data/live/actions.jsonl
-        --applied-path data/live/actions_applied.jsonl
-        --log-level INFO
-    depends_on:
-      init-live:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-      network-sim:
-        condition: service_healthy
-    restart: unless-stopped
-    profiles: ["live_normalized"]
-
-  normalizer-live:
-    <<: *common
-    container_name: smartenergy-normalizer-live
-    command: >-
-      python -m src.normalizer
-        --inputs "logs/live/*.log"
-        --mapping config/mapping.yaml
-        --out data/live/normalized.jsonl
-        --quarantine out/quarantine_live.csv
-        --follow
-        --poll-interval-ms 500
-        --log-level INFO
-    depends_on:
-      emulator-live-normalized:
-        condition: service_started
-    restart: unless-stopped
-    profiles: ["live_normalized"]
-
-  analyzer-live-normalized:
-    <<: *common
-    container_name: smartenergy-analyzer-live-normalized
-    environment:
-      NETWORK_SIM_URL: "http://network-sim:8090"
-    command: >-
-      python -m src.analyzer
-        --input data/live/normalized.jsonl
-        --watch
-        --poll-interval-ms 1000
-        --rolling-window-min 5
-        --out-dir out
-        --policies all
-        --actions-path data/live/actions.jsonl
-        --applied-path data/live/actions_applied.jsonl
-        --log-level INFO
-    depends_on:
-      emulator-live-normalized:
-        condition: service_started
-      normalizer-live:
-        condition: service_started
-    restart: unless-stopped
-    profiles: ["live_normalized"]
-
-  ui-live-normalized:
-    <<: *common
-    container_name: smartenergy-ui-live-normalized
-    environment:
-      - SMARTENERGY_LIVE_MODE=1
-    command: >-
-      streamlit run src/dashboard/app.py
-        --server.headless true
-        --server.port 8501
-        --server.address 0.0.0.0
-        --browser.gatherUsageStats false
+  # -- React Frontend Dashboard -----------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: smartenergy-frontend
     ports:
-      - "8501:8501"
+      - "5173:5173"
     depends_on:
-      analyzer-live-normalized:
-        condition: service_started
+      api-live:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5173"]
       interval: 15s
       timeout: 5s
-      start_period: 10s
+      start_period: 30s
       retries: 3
     restart: unless-stopped
-    profiles: ["live_normalized"]
+    profiles: ["live"]

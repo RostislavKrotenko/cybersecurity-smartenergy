@@ -13,6 +13,7 @@ from typing import Any
 
 from src.contracts.action import ActionAck
 from src.contracts.event import Event
+from src.contracts.interfaces import EventSink
 from src.emulator.devices import build_device_index
 from src.emulator.noise import (
     AccessGenerator,
@@ -22,6 +23,7 @@ from src.emulator.noise import (
 )
 from src.emulator.scenarios.brute_force import BruteForceScenario
 from src.emulator.scenarios.ddos_abuse import DDoSAbuseScenario
+from src.emulator.scenarios.network_failure import NetworkFailureScenario
 from src.emulator.scenarios.outage import OutageScenario
 from src.emulator.scenarios.telemetry_spoof import TelemetrySpoofScenario
 from src.emulator.scenarios.unauthorized_cmd import UnauthorizedCmdScenario
@@ -45,6 +47,7 @@ SCENARIO_REGISTRY: dict[str, type] = {
     "telemetry_spoofing": TelemetrySpoofScenario,
     "unauthorized_command": UnauthorizedCmdScenario,
     "outage_db_corruption": OutageScenario,
+    "network_failure": NetworkFailureScenario,
 }
 
 # ── demo_high_rate overrides ─────────────────────────────────────────────
@@ -70,6 +73,10 @@ _DEMO_SCHEDULE_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "outage_db_corruption": {
         "schedule": {"start_offset_sec": [35, 45], "duration_sec": [15, 30]},
+        "injection_count_mult": 2.0,
+    },
+    "network_failure": {
+        "schedule": {"start_offset_sec": [45, 55], "duration_sec": [10, 25]},
         "injection_count_mult": 2.0,
     },
 }
@@ -310,6 +317,57 @@ def stream_jsonl(
             time.sleep(interval_sec)
 
     log.info("Live streaming complete: %d events -> %s", count, path)
+    return count
+
+
+def stream_to_sink(
+    engine: EmulatorEngine,
+    event_sink: EventSink,
+    interval_sec: float = 1.0,
+    max_events: int | None = None,
+) -> int:
+    """Stream events to an EventSink interface (live mode).
+
+    This is the interface-based alternative to stream_jsonl().
+    Use this for plug-and-play integration with different backends.
+
+    Args:
+        engine: EmulatorEngine instance.
+        event_sink: EventSink implementation (file, Kafka, etc.)
+        interval_sec: Delay between events.
+        max_events: Optional limit on number of events.
+
+    Returns:
+        Number of events streamed.
+
+    Example:
+        from src.adapters import FileEventSink
+
+        sink = FileEventSink("data/live/events.jsonl")
+        stream_to_sink(engine, sink, interval_sec=0.5)
+        sink.close()
+    """
+    all_events = engine.run()
+    if max_events is not None and len(all_events) > max_events:
+        all_events = all_events[:max_events]
+
+    all_events.sort(key=lambda e: e.timestamp)
+    log.info(
+        "Live mode: streaming %d events via EventSink (interval=%.3fs)",
+        len(all_events),
+        interval_sec,
+    )
+
+    count = 0
+    for ev in all_events:
+        event_sink.emit(ev)
+        count += 1
+        if count % 50 == 0:
+            log.info("  streamed %d / %d events", count, len(all_events))
+        time.sleep(interval_sec)
+
+    event_sink.flush()
+    log.info("EventSink streaming complete: %d events", count)
     return count
 
 
@@ -597,6 +655,7 @@ _ATTACK_SEQUENCE: list[str] = [
     "telemetry_spoofing",
     "unauthorized_command",
     "outage_db_corruption",
+    "network_failure",
 ]
 
 # ── Attack burst specifications ──────────────────────────────────────────
@@ -734,6 +793,32 @@ _DEMO_BURSTS: dict[str, dict[str, Any]] = {
                 "source_pool": ["db-primary"],
                 "keys": [{"key": "status", "values": ["degraded", "down"]}],
                 "tags": "system;outage",
+            },
+        ],
+    },
+    "network_failure": {
+        "phases": [
+            {
+                "event": "service_status",
+                "count": 4,
+                "interval_ms": 500,
+                "actor": "system",
+                "severity": "critical",
+                "source_pool": ["switch-core-01", "firewall-01"],
+                "keys": [
+                    {"key": "status", "values": ["degraded", "down", "packet_loss", "unreachable"]},
+                ],
+                "tags": "network;failure",
+            },
+            {
+                "event": "port_status",
+                "count": 2,
+                "interval_ms": 800,
+                "actor": "system",
+                "severity": "high",
+                "source_pool": ["switch-core-01"],
+                "keys": [{"key": "port_status", "values": ["down", "flapping"]}],
+                "tags": "network;port",
             },
         ],
     },

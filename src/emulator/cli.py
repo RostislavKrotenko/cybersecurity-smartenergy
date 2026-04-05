@@ -1,4 +1,9 @@
-"""Командний інтерфейс емулятора SmartEnergy."""
+"""Командний інтерфейс емулятора SmartEnergy.
+
+Використовує EventSink інтерфейс для plug-and-play виводу подій.
+За замовчуванням використовується FileEventSink, але можна замінити
+на KafkaEventSink, MqttEventSink тощо.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +11,14 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+from src.adapters import FileEventSink
+from src.contracts.interfaces import EventSink
 from src.emulator.engine import (
     EmulatorEngine,
     stream_demo_highrate,
     stream_jsonl,
     stream_jsonl_infinite,
+    stream_to_sink,
     write_csv,
     write_jsonl,
 )
@@ -166,6 +174,24 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _stream_to_sink_infinite(
+    engine: EmulatorEngine,
+    event_sink: EventSink,
+    interval_sec: float,
+) -> None:
+    """Run endless live streaming via EventSink in simulation cycles."""
+    total = 0
+    while True:
+        count = stream_to_sink(
+            engine=engine,
+            event_sink=event_sink,
+            interval_sec=interval_sec,
+            max_events=None,
+        )
+        total += count
+        print(f"  cycle complete: +{count} events (total={total})")
+
+
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     setup_logging(args.log_level)
@@ -220,7 +246,33 @@ def main(argv: list[str] | None = None) -> None:
             print(f"  applied  -> {applied_path} (ACK)")
         print("  Press Ctrl+C to stop.")
         try:
-            if args.profile == "demo_high_rate":
+            sink_mode = (
+                args.profile != "demo_high_rate"
+                and raw_log_dir is None
+                and csv_out is None
+            )
+
+            if sink_mode:
+                print("  mode: EventSink")
+                event_sink: EventSink = FileEventSink(str(out_path))
+                try:
+                    if args.max_events is not None:
+                        count = stream_to_sink(
+                            engine=engine,
+                            event_sink=event_sink,
+                            interval_sec=interval_sec,
+                            max_events=args.max_events,
+                        )
+                        print(f"Emulator live mode complete: {count} events -> {out_path}")
+                    else:
+                        _stream_to_sink_infinite(
+                            engine=engine,
+                            event_sink=event_sink,
+                            interval_sec=interval_sec,
+                        )
+                finally:
+                    event_sink.close()
+            elif args.profile == "demo_high_rate":
                 # Purpose-built high-rate demo loop
                 stream_demo_highrate(
                     engine=engine,
@@ -255,21 +307,25 @@ def main(argv: list[str] | None = None) -> None:
         except KeyboardInterrupt:
             print("\nEmulator stopped by user.")
     else:
-        # ---- Batch mode: generate all then write ----
+        # ---- Batch mode: generate all then write via EventSink ----
         events = engine.run()
         if args.max_events and len(events) > args.max_events:
             events = events[: args.max_events]
 
+        # Determine output path and format
         if args.format == "jsonl":
             if out_path.suffix not in (".jsonl", ".ndjson", ".json"):
                 out_path = out_path.with_suffix(".jsonl")
-            write_jsonl(events, out_path)
         else:
             if out_path.suffix != ".csv":
                 out_path = out_path.with_suffix(".csv")
-            write_csv(events, out_path)
 
-        print(f"Emulator batch complete: {len(events)} events -> {out_path}")
+        # Use EventSink interface for output
+        event_sink: EventSink = FileEventSink(str(out_path))
+        event_sink.emit_batch(events)
+        event_sink.close()
+
+        print(f"Emulator batch complete: {len(events)} events -> {out_path} (via EventSink)")
 
 
 if __name__ == "__main__":

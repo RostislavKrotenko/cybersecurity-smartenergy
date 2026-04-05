@@ -1,170 +1,164 @@
 # SmartEnergy Cyber-Resilience Analyzer
 
-**Система аналізу кіберстійкості розумних енергомереж** — прототип для магістерської роботи.
+Прототип closed-loop системи кіберреагування для SmartEnergy: генерація подій, детекція інцидентів, автоматичні дії та live-візуалізація стану інфраструктури.
 
-## Про проєкт
+## Призначення
 
-SmartEnergy Cyber-Resilience Analyzer — платформа для моделювання кібератак на компоненти розумної енергомережі та оцінки ефективності різних політик безпеки.
+Проєкт моделює кібератаки і реакції на них для таких зон:
+- Gateway
+- API
+- Auth
+- Database (Postgres)
+- Network
 
-Система складається з чотирьох модулів:
+Система оцінює ефективність політик безпеки `minimal`, `baseline`, `standard` через метрики Availability / MTTD / MTTR.
 
-| Модуль | Опис |
-|--------|------|
-| **Emulator** | Генерує синтетичні події безпеки (brute-force, DDoS, спуфінг телеметрії тощо) |
-| **Normalizer** | Перетворює сирі логи у єдиний нормалізований формат |
-| **Analyzer** | Детекція загроз, кореляція алертів в інциденти, розрахунок метрик (Availability, MTTD, MTTR) |
-| **Dashboard** | Streamlit-дашборд з графіками та таблицями в реальному часі |
+## Архітектура
 
-Оцінювання проводиться по трьох політиках безпеки: **baseline**, **minimal**, **standard**.
+| Модуль | Роль |
+|---|---|
+| Emulator | Генерує фонові й атакуючі події, підтримує live-потік і closed-loop |
+| Analyzer | Детекція -> кореляція -> інциденти -> рішення (actions) -> ACK/state update |
+| API | REST API бекенд (FastAPI) |
+| Frontend | React дашборд з Tailwind CSS |
 
-> **Примітка:** усі захисні контролі (MFA, RBAC, rate limiting, сегментація тощо) моделюються через параметри детекції та коефіцієнти впливу у `policies.yaml`. Реальна інтеграція з IAM/MFA-провайдером не виконується. Часові мітки зберігаються в UTC; дашборд конвертує їх у обрану timezone (за замовчуванням `Europe/Kyiv`) лише для відображення. Downtime розраховується як інтервал `start_ts -> recover_ts` (включає MTTD + MTTR) для інцидентів severity >= high з об'єднанням перекриттів.
+## Docker профілі
+
+| Профіль | Опис |
+|---------|------|
+| `live` | Повний closed-loop: Emulator → Analyzer → API + React Frontend + Postgres |
+| `api` | Тільки REST API (потребує готових даних в `out/`) |
 
 ## Вимоги
 
 - Python 3.11+
-- Docker та Docker Compose (для контейнеризованого запуску)
+- Node.js 20+
+- Docker + Docker Compose
 
-## Локальний запуск
+## Швидкий старт
 
-### 1. Встановлення залежностей
+### Через Docker (рекомендовано)
 
 ```bash
-git clone https://github.com/RostislavKrotenko/cybersecurity-smartenergy.git
-cd cybersecurity-smartenergy
+docker compose --profile live up --build
+```
+
+Або через Makefile:
+
+```bash
+make docker-live
+```
+
+### Локально (без Docker)
+
+```bash
+# Backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
-```
 
-### 2. Запуск через Make (пакетний режим)
+# Frontend
+cd frontend && npm install && cd ..
 
-```bash
-# Генерація подій → аналіз → дашборд
-make demo-local
-```
-
-Або покроково:
-
-```bash
-make generate    # Емуляція подій → data/events.csv
-make analyze     # Аналіз → out/results.csv, out/incidents.csv
-make ui          # Дашборд → http://localhost:8501
-```
-
-### 3. Запуск у live-режимі (без Docker)
-
-```bash
+# Запуск
 make demo-live
 ```
 
-Емулятор безперервно генерує події, аналізатор обробляє їх у реальному часі, дашборд оновлюється автоматично.
-
-### 4. Запуск через Docker Compose
+В окремому терміналі для фронтенду:
 
 ```bash
-# Live-режим (рекомендовано)
-docker compose --profile live up --build
-
-# Пакетний режим
-make demo
+make frontend-dev
 ```
 
-Дашборд доступний за адресою: [http://localhost:8501](http://localhost:8501)
+## Endpoints
 
-## Тестування
+| URL | Опис |
+|-----|------|
+| http://localhost:5173 | React Dashboard (основний UI) |
+| http://localhost:8000/api/docs | Swagger UI (API документація) |
+| http://localhost:8000/api/incidents | Інциденти |
+| http://localhost:8000/api/actions | Дії |
+| http://localhost:8000/api/state | Стан компонентів |
+| http://localhost:8000/api/metrics | Метрики |
+
+## REST API
+
+API побудовано на FastAPI з автоматичною документацією.
+
+### Основні endpoints
+
+```
+GET /api/incidents           - список інцидентів (з фільтрами)
+GET /api/incidents/count     - кількість інцідентів
+GET /api/actions             - список дій + статистика
+GET /api/actions/summary     - статистика дій
+GET /api/state               - стан усіх компонентів
+GET /api/state/components/{id}     - стан конкретного компонента
+GET /api/metrics             - метрики по політиках
+GET /api/metrics/overall     - загальні метрики
+GET /api/health              - health check
+```
+
+## Frontend (React)
+
+Фронтенд побудовано на:
+- React 18 + TypeScript
+- Vite (збірка)
+- Tailwind CSS (стилі)
+- Recharts (графіки)
+- TanStack Query (data fetching)
+
+### Компоненти UI
+
+- **Policy KPI Cards** — доступність, простій, MTTD/MTTR для кожної політики
+- **Component Status Cards** — стан Gateway, API, Auth, DB, Network
+- **Action Summary Card** — статус виконаних/невдалих дій
+- **Charts** — Availability, Downtime, Incidents/min, Actions/min
+- **Tables** — інциденти та дії з пагінацією
+
+### Команди
 
 ```bash
-make test        # Запуск тестів
-make test-cov    # Тести з покриттям
-make lint        # Перевірка якості коду (ruff)
+make frontend-install   # Встановити залежності
+make frontend-dev       # Dev сервер (localhost:5173)
+make frontend-build     # Production build
 ```
 
-## Demo High-Rate профіль (швидке демо)
+## Closed-loop реагування
 
-Профіль `demo_high_rate` генерує 1 інцидент кожні 10 секунд (3--6 інц./хв)
-завдяки tick-орієнтованому потоку з періодичними attack-burst-ами.
+### Gateway / API / Auth
 
-### Параметри CLI емулятора
+- `availability_attack` -> `enable_rate_limit` (Gateway)
+- `availability_attack` + critical -> `isolate_component` (API)
+- `credential_attack` -> `block_actor` (Auth)
 
-| Параметр | Default | Опис |
-|----------|---------|------|
-| `--profile demo_high_rate` | `default` | Активує high-rate потік |
-| `--live-interval-ms` | `250` | Інтервал між тіками (мс) |
-| `--attack-every-sec` | `10` | Секунди між burst-ін'єкціями (round-robin через 5 сценаріїв) |
-| `--background-events-per-tick` | `20` | Фонових подій за тік |
-| `--max-file-mb` | `50` | Ротація файлу при перевищенні (MB) |
+### Database / Network
 
-### Запуск (Docker, рекомендовано)
+- `outage` -> `backup_db`, `restore_db`
+- `network_failure` -> `degrade_network`
+
+## Дані та часові мітки
+
+- Усі timestamp зберігаються в UTC.
+- Dashboard/API конвертує час лише для відображення.
+
+Основні live-файли:
+- `data/live/events.jsonl`
+- `data/live/actions.jsonl`
+- `data/live/actions_applied.jsonl`
+- `out/incidents.csv`
+- `out/actions.csv`
+- `out/state.csv`
+
+## Тести та якість
 
 ```bash
-docker compose --profile live up --build
+make test
+make test-cov
+make lint
 ```
-
-Емулятор автоматично використовує `demo_high_rate` профіль
-(див. `docker-compose.yml`, сервіс `emulator-live`).
-
-### Запуск вручну (без Docker)
-
-```bash
-# Термінал 1 — емулятор
-python -m src.emulator \
-  --live \
-  --profile demo_high_rate \
-  --live-interval-ms 250 \
-  --attack-every-sec 10 \
-  --background-events-per-tick 20 \
-  --max-file-mb 50 \
-  --out data/live/events.jsonl \
-  --raw-log-dir logs/live \
-  --csv-out data/live/events.csv
-
-# Термінал 2 — аналізатор (watch mode)
-python -m src.analyzer \
-  --input data/live/events.jsonl \
-  --watch \
-  --poll-interval-ms 1000 \
-  --out-dir out \
-  --policies all
-
-# Термінал 3 — дашборд (auto-refresh 3 сек)
-SMARTENERGY_LIVE_MODE=1 streamlit run src/dashboard/app.py
-```
-
-### Перевірка
-
-За 60 секунд після старту:
-
-```bash
-# Має бути >= 3-6 інцидентів
-wc -l out/incidents.csv
-
-# Перевірити типи загроз
-cut -d, -f3 out/incidents.csv | sort | uniq -c
-```
-
-Очікуваний результат: credential_attack, availability_attack,
-integrity_attack, outage -- всі типи мають з'явитися протягом 50 секунд.
-Метрика "Incidents per Minute" на дашборді змінюється в реальному часі.
-Часова вісь на графіках відповідає timezone, обраній у sidebar (UTC / Europe/Kyiv).
-
-### Як працює burst-ін'єкція
-
-Кожні `--attack-every-sec` секунд емулятор генерує пакет подій (burst)
-для одного зі сценаріїв (round-robin):
-
-| Сценарій | Подій у burst | Правило | Поріг |
-|----------|--------------|---------|-------|
-| brute_force | 8 auth_failure | RULE-BF-001 | >= 5 / 60s |
-| ddos_abuse | 15 rate_exceeded + 2 svc | RULE-DDOS-001 | >= 10 / 30s |
-| telemetry_spoofing | 6 anomalous telemetry | RULE-SPOOF-001 | >= 3 / 60s |
-| unauthorized_command | 3 cmd_exec | RULE-UCMD-001 | >= 1 |
-| outage_db_corruption | 3 db_error + 2 svc | RULE-OUT-001/002 | >= 2 / 120s |
-
-Кожен burst калібрований з запасом: кількість подій перевищує поріг
-детекції, тому інцидент з'являється гарантовано.
 
 ## Ліцензія
 
-MIT -- див. [LICENSE](LICENSE).
-
+MIT (див. LICENSE)

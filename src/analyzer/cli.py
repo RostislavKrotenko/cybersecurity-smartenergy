@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import argparse
 
-from src.analyzer.pipeline import run_pipeline, watch_pipeline
+from src.analyzer.pipeline import (
+    create_file_adapters,
+    run_pipeline_with_adapters,
+    watch_pipeline,
+)
 from src.shared.logger import setup_logging
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Створює та налаштовує CLI-парсер аргументів аналізатора."""
     p = argparse.ArgumentParser(
         prog="analyzer",
         description="SmartEnergy Analyzer — light SIEM: detect, correlate, report",
@@ -49,7 +54,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Random seed (reserved for stochastic response simulation).",
     )
-    # Watch / live mode flags
     p.add_argument(
         "--watch",
         action="store_true",
@@ -87,6 +91,15 @@ def build_parser() -> argparse.ArgumentParser:
         "Analyzer reads this to update action statuses and component state.",
     )
     p.add_argument(
+        "--state-input",
+        type=str,
+        default=None,
+        help=(
+            "Optional JSONL path with raw state-change events (e.g. data/live/events.jsonl). "
+            "Used only to update component state.csv in watch mode."
+        ),
+    )
+    p.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -96,6 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Запускає аналізатор у разовому або watch-режимі залежно від параметрів."""
     args = build_parser().parse_args(argv)
     setup_logging(args.log_level)
 
@@ -114,10 +128,18 @@ def main(argv: list[str] | None = None) -> None:
             rolling_window_min=args.rolling_window_min,
             actions_path=args.actions_path,
             applied_path=args.applied_path,
+            state_input_path=args.state_input,
         )
     else:
-        run_pipeline(
-            input_path=args.input,
+        event_source, action_sink = create_file_adapters(
+            events_path=args.input,
+            actions_path=args.actions_path,
+            actions_csv_path=f"{args.out_dir}/actions.csv" if args.actions_path else None,
+        )
+
+        run_pipeline_with_adapters(
+            event_source=event_source,
+            action_sink=action_sink,
             out_dir=args.out_dir,
             policy_names=policy_list,
             config_dir=args.config_dir,

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from src.contracts.event import Event
+from src.contracts.interfaces import EventSink
 from src.normalizer.filters import deduplicate
 from src.normalizer.parser import Profile, build_profiles, parse_line, select_profile
 from src.shared.config_loader import load_yaml
@@ -95,6 +96,80 @@ class NormalizerPipeline:
             stats["total_lines"],
             len(files),
         )
+
+    def run_with_sink(
+        self,
+        input_glob: str,
+        event_sink: EventSink,
+        quarantine_path: str,
+        stats_path: str,
+    ) -> int:
+        """Execute the full normalisation pipeline using EventSink interface.
+
+        This is the interface-based alternative to run().
+        Use this for plug-and-play integration with different backends.
+
+        Args:
+            input_glob: Pattern for input log files.
+            event_sink: EventSink implementation (file, Kafka, etc.)
+            quarantine_path: Path for quarantined lines.
+            stats_path: Path for statistics output.
+
+        Returns:
+            Number of events emitted.
+
+        Example:
+            from src.adapters import FileEventSink
+
+            sink = FileEventSink("data/live/normalized.jsonl")
+            pipeline.run_with_sink("data/raw/*.log", sink, "out/quarantine.csv", "out/stats.json")
+            sink.close()
+        """
+        files = sorted(glob.glob(input_glob))
+        if not files:
+            log.warning("No files match pattern: %s", input_glob)
+            return 0
+
+        all_events: list[Event] = []
+        quarantine: list[dict[str, Any]] = []
+        stats: dict[str, Any] = {
+            "total_lines": 0,
+            "total_parsed": 0,
+            "total_quarantined": 0,
+            "by_source": {},
+        }
+
+        for fpath in files:
+            self._process_file(fpath, all_events, quarantine, stats)
+
+        # Sort by timestamp
+        all_events.sort(key=lambda e: e.timestamp)
+
+        # Dedup
+        if self.dedup_enabled and all_events:
+            before = len(all_events)
+            all_events = deduplicate(all_events, window_sec=self.dedup_window)
+            removed = before - len(all_events)
+            stats["dedup_removed"] = removed
+            stats["total_parsed"] -= removed
+
+        # Emit via EventSink
+        event_sink.emit_batch(all_events)
+        event_sink.flush()
+
+        # Write other outputs
+        self._write_quarantine(quarantine, quarantine_path)
+        self._write_stats(stats, stats_path)
+
+        log.info(
+            "Done: %d events emitted via EventSink, %d quarantined, %d total lines across %d files",
+            len(all_events),
+            stats["total_quarantined"],
+            stats["total_lines"],
+            len(files),
+        )
+
+        return len(all_events)
 
     # ── File processing ──────────────────────────────────────────────────
 
@@ -205,28 +280,35 @@ class NormalizerPipeline:
         out_path: str,
         poll_interval_sec: float = 1.0,
     ) -> None:
-        """Continuously tail log files matching *input_glob* and append
-        normalized events to *out_path* (JSONL if .jsonl, else CSV).
+        """Backward-compatible wrapper around adapter-based follow mode."""
+        from src.adapters import FileEventSink
 
-        Never returns under normal operation -- stop with Ctrl+C.
-        """
-        out_p = Path(out_path)
-        out_p.parent.mkdir(parents=True, exist_ok=True)
-        use_jsonl = out_p.suffix in (".jsonl", ".ndjson")
+        sink: EventSink = FileEventSink(out_path)
+        try:
+            self.follow_with_sink(
+                input_glob=input_glob,
+                event_sink=sink,
+                poll_interval_sec=poll_interval_sec,
+            )
+        finally:
+            sink.close()
 
-        # Track file offsets for tailing
+    def follow_with_sink(
+        self,
+        input_glob: str,
+        event_sink: EventSink,
+        poll_interval_sec: float = 1.0,
+    ) -> None:
+        """Continuously tail logs and emit normalized events via EventSink."""
         file_offsets: dict[str, int] = {}
         total_parsed = 0
         total_quarantined = 0
         iteration = 0
 
-        # Write CSV header once if CSV mode
-        if not use_jsonl and not out_p.exists():
-            with open(out_p, "w", encoding="utf-8", newline="") as fh:
-                fh.write(Event.csv_header() + "\n")
-
-        print(f"Normalizer follow mode: {input_glob} -> {out_path}")
+        print("Normalizer follow mode (adapter-based)")
+        print(f"  inputs: {input_glob}")
         print(f"  poll interval: {poll_interval_sec:.1f}s")
+        print("  output: EventSink")
         print("  Press Ctrl+C to stop.")
 
         try:
@@ -242,7 +324,6 @@ class NormalizerPipeline:
 
                     current_size = os.path.getsize(fpath)
                     prev_offset = file_offsets.get(fpath, 0)
-
                     if current_size <= prev_offset:
                         continue
 
@@ -260,15 +341,8 @@ class NormalizerPipeline:
 
                 if new_events:
                     iteration += 1
-                    # Append to output
-                    with open(out_p, "a", encoding="utf-8", newline="") as fh:
-                        for ev in new_events:
-                            if use_jsonl:
-                                fh.write(ev.to_json() + "\n")
-                            else:
-                                fh.write(ev.to_csv_row() + "\n")
-                        fh.flush()
-
+                    event_sink.emit_batch(new_events)
+                    event_sink.flush()
                     log.info(
                         "[tick %d] +%d events normalized, total=%d parsed, %d quarantined",
                         iteration,

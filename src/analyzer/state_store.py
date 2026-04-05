@@ -16,8 +16,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from src.analyzer.reporter import _atomic_write
 from src.contracts.event import Event
+from src.shared.file_utils import atomic_write as _atomic_write
 
 log = logging.getLogger(__name__)
 

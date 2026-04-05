@@ -263,3 +263,68 @@ attacks:
         tags: ["system", "recovery"]
 
     correlation_prefix: "COR-OUT"
+
+  # ===========================================================================
+  # 6. NETWORK FAILURE — відмова мережі / втрата зв'язку з edge (A6)
+  # ===========================================================================
+  network_failure:
+    enabled: true
+    description: "Мережева деградація: втрата пакетів, затримки, відключення зв'язку"
+    threat_type: network_failure
+    target_components: [network, edge]
+    target_sources: [switch-core-01, firewall-01, gateway-01]
+
+    schedule:
+      start_offset_sec: [3200, 3500]     # 53-58 хв
+      duration_sec: [60, 180]
+
+    injection:
+      # Фаза 1: деградація мережі (втрата пакетів, високий latency)
+      - event: service_status
+        source_pool: [switch-core-01, firewall-01]
+        keys:
+          - { key: status, values: [degraded, packet_loss] }
+          - { key: latency_ms, range: [200, 2000], unit: ms }
+        interval_ms: [2000, 5000]
+        count: [3, 6]
+        severity_progression:
+          - { threshold: 0, severity: medium }
+          - { threshold: 3, severity: high }
+        tags: ["network", "degradation"]
+
+      # Фаза 2: відмова портів
+      - event: port_status
+        delay_after_phase1_sec: [5, 15]
+        source_pool: [switch-core-01, gateway-01]
+        keys:
+          - { key: port, values: [eth0, eth1, ge-0/0/0] }
+          - { key: port_status, values: [down, flapping] }
+        count: [2, 4]
+        interval_ms: [1000, 3000]
+        severity: high
+        tags: ["network", "port_failure"]
+
+      # Фаза 3: повна втрата зв'язку
+      - event: service_status
+        delay_after_phase2_sec: [10, 30]
+        source_pool: [switch-core-01, firewall-01, gateway-01]
+        keys:
+          - { key: status, values: [down, unreachable] }
+        count: [2, 4]
+        interval_ms: [3000, 8000]
+        severity: critical
+        tags: ["network", "outage"]
+
+      # Фаза 4: відновлення (80% ймовірність)
+      - event: service_status
+        delay_after_phase3_sec: [30, 120]
+        probability: 0.8
+        source: switch-core-01
+        keys:
+          - { key: status, values: [recovering, healthy] }
+        count: 2
+        interval_ms: [5000, 10000]
+        severity: medium
+        tags: ["network", "recovery"]
+
+    correlation_prefix: "COR-NET"

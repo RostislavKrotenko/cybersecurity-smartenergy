@@ -55,6 +55,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from src.contracts.incident import Incident
+from src.shared.time_utils import parse_iso_ts as _ts
 
 log = logging.getLogger(__name__)
 
@@ -115,10 +116,6 @@ class PolicyMetrics:
     @staticmethod
     def csv_header() -> str:
         return ",".join(RESULTS_CSV_COLUMNS)
-
-
-def _ts(iso: str) -> datetime:
-    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
 
 
 def compute(

@@ -2,39 +2,15 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
 from src.analyzer.metrics import PolicyMetrics
 from src.contracts.incident import Incident
+from src.shared.file_utils import atomic_write as _atomic_write
 
 log = logging.getLogger(__name__)
-
-
-def _atomic_write(path: str, content: str) -> None:
-    """Атомарно записує content у файл path."""
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(
-        dir=str(target.parent),
-        prefix=f".{target.name}.",
-        suffix=".tmp",
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(content)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        # Clean up temp file on any failure
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
 
 
 # ═══════════════════════════════════════════════════════════════════════════

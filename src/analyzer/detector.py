@@ -4,21 +4,15 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime
 from typing import Any
 
 from src.contracts.alert import Alert
 from src.contracts.event import Event
+from src.shared.time_utils import parse_iso_ts as _ts
 
 log = logging.getLogger(__name__)
 
 _SEV_WEIGHT = {"low": 0.2, "medium": 0.4, "high": 0.7, "critical": 1.0}
-
-
-def _ts(iso: str) -> datetime:
-    """Парсить ISO-8601 timestamp у datetime (UTC)."""
-    s = iso.replace("Z", "+00:00")
-    return datetime.fromisoformat(s)
 
 
 def _diff_sec(a: str, b: str) -> float:
@@ -78,6 +72,8 @@ def detect(
             new_alerts = _detect_unauthorized_cmd(matched, rule, alert_counter)
         elif rule_id.startswith("RULE-OUT"):
             new_alerts = _detect_outage(matched, rule, window, threshold, events, alert_counter)
+        elif rule_id.startswith("RULE-NET"):
+            new_alerts = _detect_network_failure(matched, rule, window, threshold, events, alert_counter)
         else:
             log.debug("Unknown rule prefix for %s — skipped", rule_id)
             continue
@@ -404,6 +400,82 @@ def _detect_outage(
                         ),
                         event_count=len(buf),
                         event_ids=";".join(e.correlation_id or e.timestamp for e in buf),
+                        response_hint=rule.get("response_hint", ""),
+                    )
+                )
+                buf.clear()
+
+    return alerts
+
+
+def _detect_network_failure(
+    svc_events: list[Event],
+    rule: dict,
+    window: float,
+    threshold: int,
+    all_events: list[Event],
+    counter: int,
+) -> list[Alert]:
+    """RULE-NET-001 — network degradation / port failure / connectivity loss."""
+    alerts: list[Alert] = []
+    target_values = set(rule.get("match", {}).get("values", []))
+    target_component = rule.get("match", {}).get("component", "")
+
+    if target_values:
+        matched = [e for e in svc_events if e.value in target_values]
+    else:
+        matched = svc_events
+
+    if target_component:
+        matched = [e for e in matched if e.component == target_component]
+
+    groups: dict[str, list[Event]] = defaultdict(list)
+    for e in matched:
+        groups[e.source].append(e)
+
+    for source, evts in groups.items():
+        evts.sort(key=lambda e: e.timestamp)
+        buf: list[Event] = []
+        for e in evts:
+            buf = [b for b in buf if _diff_sec(b.timestamp, e.timestamp) <= window]
+            buf.append(e)
+            if len(buf) >= threshold:
+                sev = rule.get("severity", "high")
+                for ov in rule.get("severity_override", []):
+                    if any(b.value == ov["value"] for b in buf):
+                        sev = ov["severity"]
+                        break
+
+                # Sub-rule: port_status events escalate to critical
+                port_events = [
+                    s for s in all_events
+                    if s.event == "port_status"
+                    and 0 <= _diff_sec(buf[0].timestamp, s.timestamp) <= 120
+                ]
+                if port_events:
+                    sev = "critical"
+
+                counter += 1
+                alerts.append(
+                    Alert(
+                        alert_id=f"ALR-{counter:04d}",
+                        rule_id=rule["id"],
+                        rule_name=rule["name"],
+                        threat_type=rule["threat_type"],
+                        severity=sev,
+                        confidence=0.95 if port_events else rule.get("confidence", 0.88),
+                        timestamp=buf[0].timestamp,
+                        component=evts[0].component,
+                        source=source,
+                        description=(
+                            f"Network failure: {len(buf)} events on "
+                            f"{source} (values: {', '.join(e.value for e in buf)})"
+                            + (" + port failures" if port_events else "")
+                        ),
+                        event_count=len(buf),
+                        event_ids=";".join(
+                            e.correlation_id or e.timestamp for e in buf
+                        ),
                         response_hint=rule.get("response_hint", ""),
                     )
                 )

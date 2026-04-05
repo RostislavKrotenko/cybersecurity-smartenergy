@@ -17,7 +17,7 @@ LOGS_DIR := logs
 #   LOCAL (no Docker)
 # ═════════════════════════════════════════════════════════════════════════════
 
-.PHONY: venv install generate normalize analyze ui demo-local clean lint help
+.PHONY: venv install generate analyze api demo-local demo-live clean lint help
 
 venv:                          ## Create virtual-env
 	python3 -m venv .venv
@@ -32,15 +32,6 @@ generate:                      ## Run Emulator → data/events.csv
 	$(PYTHON) -m src.emulator --seed 42 --out $(DATA_DIR)/events.csv --log-level INFO
 	@echo "✓ Emulator done → $(DATA_DIR)/events.csv"
 
-normalize:                     ## Run Normalizer → data/events.csv + out/quarantine.csv
-	@mkdir -p $(DATA_DIR) $(OUT_DIR)
-	$(PYTHON) -m src.normalizer \
-		--inputs "$(LOGS_DIR)/*.log" \
-		--out $(DATA_DIR)/events.csv \
-		--quarantine $(OUT_DIR)/quarantine.csv \
-		--log-level INFO
-	@echo "✓ Normalizer done"
-
 analyze:                       ## Run Analyzer → out/*
 	@mkdir -p $(OUT_DIR)
 	$(PYTHON) -m src.analyzer \
@@ -51,69 +42,58 @@ analyze:                       ## Run Analyzer → out/*
 		--log-level INFO
 	@echo "✓ Analyzer done → $(OUT_DIR)/"
 
-ui:                            ## Launch Streamlit dashboard (localhost:8501)
-	$(PYTHON) -m streamlit run src/dashboard/app.py \
-		--server.headless true --server.port 8501
+api:                           ## Launch FastAPI server (localhost:8000)
+	$(PYTHON) -m src.api --port 8000
 
-demo-local: generate analyze ui ## Full local demo: generate → analyze → UI
+demo-local: generate analyze api ## Full local demo: generate → analyze → API
 
-demo-live:                     ## Live demo: emulator + analyzer + UI (real-time streaming)
+demo-live:                     ## Live demo (local): emulator + analyzer + API with closed-loop ACK
 	@echo "Starting live demo (Ctrl+C to stop all)..."
-	@rm -f $(DATA_DIR)/live/events.jsonl
+	@rm -f $(DATA_DIR)/live/events.jsonl $(DATA_DIR)/live/actions.jsonl $(DATA_DIR)/live/actions_applied.jsonl
 	@mkdir -p $(DATA_DIR)/live $(OUT_DIR) $(LOGS_DIR)/live
 	@trap 'kill 0' INT; \
-	$(PYTHON) -m src.emulator --live --live-interval-ms 500 --out $(DATA_DIR)/live/events.jsonl --raw-log-dir $(LOGS_DIR)/live --seed 42 & \
+	$(PYTHON) -m src.emulator --live --live-interval-ms 500 --out $(DATA_DIR)/live/events.jsonl --raw-log-dir $(LOGS_DIR)/live --seed 42 --actions-path $(DATA_DIR)/live/actions.jsonl --applied-path $(DATA_DIR)/live/actions_applied.jsonl & \
 	sleep 2 && \
-	$(PYTHON) -m src.analyzer --input $(DATA_DIR)/live/events.jsonl --watch --poll-interval-ms 1000 --out-dir $(OUT_DIR) --policies all & \
+	$(PYTHON) -m src.analyzer --input $(DATA_DIR)/live/events.jsonl --watch --poll-interval-ms 1000 --out-dir $(OUT_DIR) --policies all --actions-path $(DATA_DIR)/live/actions.jsonl --applied-path $(DATA_DIR)/live/actions_applied.jsonl & \
 	sleep 1 && \
-	$(PYTHON) -m streamlit run src/dashboard/app.py --server.headless true --server.port 8501
+	SMARTENERGY_LIVE_MODE=1 $(PYTHON) -m src.api --port 8000
 
 # ═════════════════════════════════════════════════════════════════════════════
 #   DOCKER
 # ═════════════════════════════════════════════════════════════════════════════
 
-.PHONY: docker-build docker-generate docker-normalize docker-analyze docker-ui \
-        docker-live demo docker-down docker-clean
+.PHONY: docker-build docker-live docker-api docker-down docker-clean
 
 docker-build:                  ## Build Docker image
-	$(COMPOSE) --profile demo --profile normalize build
+	$(COMPOSE) --profile live build
 
-docker-generate: docker-build  ## Docker: run emulator
-	@mkdir -p $(DATA_DIR)
-	$(COMPOSE) run --rm emulator
-	@echo "✓ Docker emulator done"
-
-docker-normalize: docker-build ## Docker: run normalizer
-	@mkdir -p $(DATA_DIR) $(OUT_DIR)
-	$(COMPOSE) run --rm normalizer
-	@echo "✓ Docker normalizer done"
-
-docker-analyze: docker-build   ## Docker: run analyzer
-	@mkdir -p $(OUT_DIR)
-	$(COMPOSE) run --rm analyzer
-	@echo "✓ Docker analyzer done"
-
-docker-ui: docker-build        ## Docker: start Streamlit
-	$(COMPOSE) up ui
-
-demo: docker-build             ## Full Docker demo: generate → analyze → UI
-	@echo "── Step 1/3: Generating synthetic data ──"
-	@mkdir -p $(DATA_DIR) $(OUT_DIR)
-	$(COMPOSE) run --rm emulator
-	@echo "── Step 2/3: Running analyzer ──"
-	$(COMPOSE) run --rm analyzer
-	@echo "── Step 3/3: Starting UI on http://localhost:8501 ──"
-	$(COMPOSE) up ui
-
-docker-live:                   ## Live Docker: emulator + analyzer + UI (one command)
+docker-live:                   ## Live Docker: full closed-loop with all services
 	@mkdir -p $(DATA_DIR)/live $(OUT_DIR) $(LOGS_DIR)/live
 	$(COMPOSE) --profile live up --build
+
+docker-api:                    ## Docker: standalone API server only
+	$(COMPOSE) --profile api up --build
 
 docker-down:                   ## Stop all containers
 	$(COMPOSE) down --remove-orphans
 
 docker-clean: docker-down      ## Stop + remove images & volumes
 	$(COMPOSE) down --rmi local --volumes --remove-orphans
+
+# ═════════════════════════════════════════════════════════════════════════════
+#   FRONTEND (React)
+# ═════════════════════════════════════════════════════════════════════════════
+
+.PHONY: frontend-install frontend-dev frontend-build
+
+frontend-install:              ## Install frontend dependencies
+	cd frontend && npm install
+
+frontend-dev:                  ## Run frontend dev server (localhost:5173)
+	cd frontend && npm run dev
+
+frontend-build:                ## Build frontend for production
+	cd frontend && npm run build
 
 # ═════════════════════════════════════════════════════════════════════════════
 #   MAINTENANCE

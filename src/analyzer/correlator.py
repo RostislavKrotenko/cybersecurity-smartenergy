@@ -4,19 +4,16 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from src.contracts.alert import Alert
 from src.contracts.incident import Incident
+from src.shared.severity import SEV_ORDER as _SEV_ORDER
+from src.shared.time_utils import parse_iso_ts as _ts
 
 log = logging.getLogger(__name__)
 
 _DEFAULT_MERGE_WINDOW_SEC = 120
-_SEV_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-
-
-def _ts(iso: str) -> datetime:
-    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
 
 
 def _max_sev(*sevs: str) -> str:
@@ -106,6 +103,7 @@ _BASE_TIMING: dict[str, dict[str, float]] = {
     "availability_attack": {"mttd": 15.0, "mttr": 180.0},
     "integrity_attack": {"mttd": 60.0, "mttr": 240.0},
     "outage": {"mttd": 10.0, "mttr": 300.0},
+    "network_failure": {"mttd": 15.0, "mttr": 240.0},
 }
 
 _SEV_IMPACT = {"low": 0.2, "medium": 0.4, "high": 0.7, "critical": 1.0}

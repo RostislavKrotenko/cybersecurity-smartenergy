@@ -7,7 +7,6 @@ import json
 import pytest
 
 from src.analyzer.pipeline import (
-    _parse_event,
     load_events,
     load_events_csv,
     load_events_jsonl,
@@ -32,7 +31,7 @@ class TestParseEvent:
             "tags": "normal",
             "correlation_id": "COR-001",
         }
-        ev = _parse_event(row)
+        ev = Event.from_dict(row)
         assert ev.source == "inv-01"
         assert ev.value == "220.5"
         assert ev.correlation_id == "COR-001"
@@ -47,13 +46,13 @@ class TestParseEvent:
             "value": "admin",
             "severity": "medium",
         }
-        ev = _parse_event(row)
+        ev = Event.from_dict(row)
         assert ev.actor == ""
         assert ev.ip == ""
         assert ev.tags == ""
 
     def test_empty_dict_defaults(self):
-        ev = _parse_event({})
+        ev = Event.from_dict({})
         assert ev.severity == "low"
         assert ev.timestamp == ""
 

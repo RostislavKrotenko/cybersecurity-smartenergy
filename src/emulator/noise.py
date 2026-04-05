@@ -9,6 +9,7 @@ from typing import Any
 
 from src.contracts.event import Event
 from src.emulator.devices import Device
+from src.shared.time_utils import format_iso_ts as _ts
 
 log = logging.getLogger(__name__)
 
@@ -24,10 +25,6 @@ def _pick(rng: _random_mod.Random, seq: list[Any]) -> Any:
 
 def _uniform(rng: _random_mod.Random, lo: float, hi: float) -> float:
     return round(rng.uniform(lo, hi), 2)
-
-
-def _ts(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ---------------------------------------------------------------------------

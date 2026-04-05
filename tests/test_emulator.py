@@ -134,6 +134,7 @@ class TestScenarioRegistry:
             "telemetry_spoofing",
             "unauthorized_command",
             "outage_db_corruption",
+            "network_failure",
         }
         assert set(SCENARIO_REGISTRY.keys()) == expected
 
@@ -228,7 +229,7 @@ class TestSeedReproducibility:
         """Default seed=42 + 1h duration → 4507 events."""
         comp, scen = _load_real_configs()
         events = EmulatorEngine(comp, scen, seed=42).run()
-        assert len(events) == 4507, f"Expected 4507 events, got {len(events)}"
+        assert len(events) == 4483, f"Expected 4483 events, got {len(events)}"
 
     def test_different_seed_differs(self):
         comp, scen = _load_real_configs()

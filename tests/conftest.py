@@ -210,6 +210,37 @@ def unauthorized_cmd_rule() -> dict:
 
 
 @pytest.fixture
+def network_failure_rule() -> dict:
+    """Мінімальна конфігурація network failure правила."""
+    return {
+        "rules": [
+            {
+                "id": "RULE-NET-001",
+                "name": "Network Failure Detection",
+                "threat_type": "network_failure",
+                "enabled": True,
+                "match": {
+                    "event": "service_status",
+                    "key": "status",
+                    "values": ["degraded", "down", "packet_loss", "timeout", "unreachable"],
+                    "component": "network",
+                    "group_by": ["source"],
+                },
+                "window_sec": 60,
+                "threshold": 2,
+                "severity": "high",
+                "confidence": 0.88,
+                "severity_override": [
+                    {"value": "down", "severity": "critical"},
+                    {"value": "unreachable", "severity": "critical"},
+                ],
+                "response_hint": "reset_network",
+            }
+        ]
+    }
+
+
+@pytest.fixture
 def outage_rule() -> dict:
     """Мінімальна конфігурація outage правила."""
     return {

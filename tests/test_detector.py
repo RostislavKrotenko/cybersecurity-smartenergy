@@ -9,6 +9,7 @@ import pytest
 from src.analyzer.detector import (
     _detect_brute_force,
     _detect_ddos,
+    _detect_network_failure,
     _detect_outage,
     _detect_telemetry_spoof,
     _detect_unauthorized_cmd,
@@ -571,3 +572,159 @@ class TestDetectOutage:
         assert len(alerts) == 2
         sources = {a.source for a in alerts}
         assert sources == {"db-01", "db-02"}
+
+
+class TestDetectNetworkFailure:
+    @pytest.fixture
+    def rule(self):
+        return {
+            "id": "RULE-NET-001",
+            "name": "Network Failure Detection",
+            "threat_type": "network_failure",
+            "severity": "high",
+            "confidence": 0.88,
+            "match": {
+                "event": "service_status",
+                "key": "status",
+                "values": ["degraded", "down", "packet_loss", "timeout", "unreachable"],
+                "component": "network",
+            },
+            "severity_override": [
+                {"value": "down", "severity": "critical"},
+                {"value": "unreachable", "severity": "critical"},
+            ],
+            "response_hint": "reset_network",
+        }
+
+    def test_fires_on_degraded_network(self, rule):
+        events = [
+            make_event(
+                event="service_status",
+                key="status",
+                value="degraded",
+                source="switch-core-01",
+                component="network",
+                timestamp=ts_offset(seconds=0),
+                correlation_id="COR-1",
+            ),
+            make_event(
+                event="service_status",
+                key="status",
+                value="packet_loss",
+                source="switch-core-01",
+                component="network",
+                timestamp=ts_offset(seconds=10),
+                correlation_id="COR-2",
+            ),
+        ]
+        alerts = _detect_network_failure(
+            events, rule, window=60, threshold=2, all_events=events, counter=0
+        )
+        assert len(alerts) == 1
+        assert alerts[0].rule_id == "RULE-NET-001"
+        assert alerts[0].severity == "high"
+
+    def test_severity_override_for_down(self, rule):
+        events = [
+            make_event(
+                event="service_status",
+                key="status",
+                value="down",
+                source="switch-core-01",
+                component="network",
+                timestamp=ts_offset(seconds=0),
+                correlation_id="COR-1",
+            ),
+            make_event(
+                event="service_status",
+                key="status",
+                value="degraded",
+                source="switch-core-01",
+                component="network",
+                timestamp=ts_offset(seconds=5),
+                correlation_id="COR-2",
+            ),
+        ]
+        alerts = _detect_network_failure(
+            events, rule, window=60, threshold=2, all_events=events, counter=0
+        )
+        assert len(alerts) == 1
+        assert alerts[0].severity == "critical"
+
+    def test_no_alert_for_non_network_component(self, rule):
+        events = [
+            make_event(
+                event="service_status",
+                key="status",
+                value="down",
+                source="db-01",
+                component="db",
+                timestamp=ts_offset(seconds=0),
+            ),
+            make_event(
+                event="service_status",
+                key="status",
+                value="down",
+                source="db-01",
+                component="db",
+                timestamp=ts_offset(seconds=5),
+            ),
+        ]
+        alerts = _detect_network_failure(
+            events, rule, window=60, threshold=2, all_events=events, counter=0
+        )
+        assert len(alerts) == 0
+
+    def test_escalates_on_port_status(self, rule):
+        net_events = [
+            make_event(
+                event="service_status",
+                key="status",
+                value="degraded",
+                source="switch-core-01",
+                component="network",
+                timestamp=ts_offset(seconds=0),
+                correlation_id="COR-1",
+            ),
+            make_event(
+                event="service_status",
+                key="status",
+                value="packet_loss",
+                source="switch-core-01",
+                component="network",
+                timestamp=ts_offset(seconds=10),
+                correlation_id="COR-2",
+            ),
+        ]
+        port_event = make_event(
+            event="port_status",
+            key="port",
+            value="eth0",
+            source="switch-core-01",
+            component="network",
+            timestamp=ts_offset(seconds=30),
+        )
+        all_events = [*net_events, port_event]
+        alerts = _detect_network_failure(
+            net_events, rule, window=60, threshold=2, all_events=all_events, counter=0
+        )
+        assert len(alerts) == 1
+        assert alerts[0].severity == "critical"
+        assert alerts[0].confidence == 0.95
+        assert "port failures" in alerts[0].description
+
+    def test_below_threshold_no_alert(self, rule):
+        events = [
+            make_event(
+                event="service_status",
+                key="status",
+                value="degraded",
+                source="switch-core-01",
+                component="network",
+                timestamp=ts_offset(seconds=0),
+            ),
+        ]
+        alerts = _detect_network_failure(
+            events, rule, window=60, threshold=2, all_events=events, counter=0
+        )
+        assert len(alerts) == 0

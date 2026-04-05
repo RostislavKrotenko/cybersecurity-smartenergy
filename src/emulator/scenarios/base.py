@@ -10,12 +10,9 @@ from typing import Any
 
 from src.contracts.event import Event
 from src.emulator.devices import Device
+from src.shared.time_utils import format_iso_ts as _ts  # noqa: F401 — re-exported for scenarios
 
 log = logging.getLogger(__name__)
-
-
-def _ts(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _pick(rng: _random_mod.Random, seq: list[Any]) -> Any:
