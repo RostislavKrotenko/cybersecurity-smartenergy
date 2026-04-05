@@ -15,6 +15,7 @@ To integrate with real SmartEnergy systems, create new adapters in this package:
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import json
 import logging
@@ -683,10 +684,8 @@ class FileStateSource(StateProvider):
                 # Parse details
                 details = {}
                 if isinstance(details_str, str) and details_str.strip():
-                    try:
+                    with contextlib.suppress(json.JSONDecodeError):
                         details = json.loads(details_str)
-                    except json.JSONDecodeError:
-                        pass
 
                 self._cache[comp_id] = ComponentState(
                     component_id=comp_id,

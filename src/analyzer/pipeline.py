@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from src.analyzer.correlator import correlate
-from src.analyzer.decision import decide, emit_actions, write_actions_csv
+from src.analyzer.decision import decide, write_actions_csv
 from src.analyzer.detector import detect
 from src.analyzer.metrics import compute
 from src.analyzer.policy_engine import (

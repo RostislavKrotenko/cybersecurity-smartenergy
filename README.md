@@ -40,7 +40,7 @@
 ### Через Docker (рекомендовано)
 
 ```bash
-docker compose --profile live up --build
+docker compose --profile live down -v && docker compose --profile live up -d --build --force-recreate
 ```
 
 Або через Makefile:
