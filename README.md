@@ -181,8 +181,8 @@ pytest -m "not external and not slow"
 
 ## Інтеграційна готовність
 
-Пакет артефактів для підключення до реальної SmartEnergy системи:
-- `docs/integration/Integration_Readiness_Pack.md`
+Пакет артефактів для підключення до реальної SmartEnergy системи винесено у wiki:
+- https://github.com/RostislavKrotenko/cybersecurity-smartenergy/wiki/Integration-Readiness
 
 Безпечні режими запуску аналізатора:
 
