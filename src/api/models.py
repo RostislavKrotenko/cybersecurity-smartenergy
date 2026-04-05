@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 class Incident(BaseModel):
     """Модель одного інциденту."""
+
     incident_id: str = Field(..., description="Unique incident identifier")
     policy: str = Field(..., description="Security policy (minimal/baseline/standard)")
     category: str = Field(..., description="Incident category")
@@ -26,12 +27,14 @@ class Incident(BaseModel):
 
 class IncidentListResponse(BaseModel):
     """Відповідь ендпоінта зі списком інцидентів."""
+
     total: int
     items: list[Incident]
 
 
 class Action(BaseModel):
     """Модель однієї дії реагування."""
+
     action_id: str = Field(..., description="Unique action identifier")
     action: str = Field(..., description="Action type (block_actor, isolate_component, etc)")
     target_component: str = Field(..., description="Target component")
@@ -44,6 +47,7 @@ class Action(BaseModel):
 
 class ActionSummary(BaseModel):
     """Зведена статистика за діями реагування."""
+
     total: int = 0
     applied: int = 0
     failed: int = 0
@@ -53,6 +57,7 @@ class ActionSummary(BaseModel):
 
 class ActionListResponse(BaseModel):
     """Відповідь ендпоінта зі списком дій."""
+
     total: int
     summary: ActionSummary
     items: list[Action]
@@ -60,6 +65,7 @@ class ActionListResponse(BaseModel):
 
 class ComponentState(BaseModel):
     """Стан окремого компонента інфраструктури."""
+
     component_id: str = Field(..., description="Component identifier")
     component_type: str = Field("", description="Component type")
     status: str = Field("healthy", description="Status (healthy/degraded/isolated/down)")
@@ -69,23 +75,27 @@ class ComponentState(BaseModel):
 
 class StateResponse(BaseModel):
     """Відповідь ендпоінта стану інфраструктури."""
+
     components: list[ComponentState]
 
 
 class ActorCheckResponse(BaseModel):
     """Відповідь перевірки блокування актора."""
+
     actor: str
     blocked: bool
 
 
 class ComponentCheckResponse(BaseModel):
     """Відповідь перевірки ізоляції компонента."""
+
     component_id: str
     isolated: bool
 
 
 class PolicyMetrics(BaseModel):
     """Метрики для однієї політики безпеки."""
+
     policy: str = Field(..., description="Policy name")
     availability_pct: float = Field(..., description="Availability percentage")
     total_downtime_hr: float = Field(0.0, description="Total downtime in hours")
@@ -96,6 +106,7 @@ class PolicyMetrics(BaseModel):
 
 class OverallMetrics(BaseModel):
     """Загальні метрики системи."""
+
     total_incidents: int = 0
     total_actions: int = 0
     avg_availability_pct: float = 0.0
@@ -105,12 +116,14 @@ class OverallMetrics(BaseModel):
 
 class MetricsResponse(BaseModel):
     """Відповідь ендпоінта метрик."""
+
     by_policy: list[PolicyMetrics]
     overall: OverallMetrics
 
 
 class HealthResponse(BaseModel):
     """Відповідь сервісу перевірки здоров'я API."""
+
     status: str = "ok"
     version: str = "1.0.0"
     timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")

@@ -30,20 +30,22 @@ def get_incidents(
 
     items = []
     for inc in raw_incidents:
-        items.append(Incident(
-            incident_id=inc.get("incident_id", ""),
-            policy=inc.get("policy", ""),
-            category=inc.get("category", ""),
-            severity=inc.get("severity", ""),
-            component=inc.get("component", ""),
-            start_ts=str(inc.get("start_ts", "")) if inc.get("start_ts") else None,
-            detect_ts=str(inc.get("detect_ts", "")) if inc.get("detect_ts") else None,
-            recover_ts=str(inc.get("recover_ts", "")) if inc.get("recover_ts") else None,
-            mttd_sec=inc.get("mttd_sec"),
-            mttr_sec=inc.get("mttr_sec"),
-            status=inc.get("status", "active"),
-            details=inc.get("details", {}),
-        ))
+        items.append(
+            Incident(
+                incident_id=inc.get("incident_id", ""),
+                policy=inc.get("policy", ""),
+                category=inc.get("category", ""),
+                severity=inc.get("severity", ""),
+                component=inc.get("component", ""),
+                start_ts=str(inc.get("start_ts", "")) if inc.get("start_ts") else None,
+                detect_ts=str(inc.get("detect_ts", "")) if inc.get("detect_ts") else None,
+                recover_ts=str(inc.get("recover_ts", "")) if inc.get("recover_ts") else None,
+                mttd_sec=inc.get("mttd_sec"),
+                mttr_sec=inc.get("mttr_sec"),
+                status=inc.get("status", "active"),
+                details=inc.get("details", {}),
+            )
+        )
 
     return IncidentListResponse(total=len(items), items=items)
 

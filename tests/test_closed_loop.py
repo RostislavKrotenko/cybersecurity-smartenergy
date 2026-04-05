@@ -80,10 +80,14 @@ class TestActionContract:
 
     def test_all_action_types_exist(self):
         expected = [
-            "enable_rate_limit", "disable_rate_limit",
-            "isolate_component", "release_isolation",
-            "block_actor", "unblock_actor",
-            "backup_db", "restore_db",
+            "enable_rate_limit",
+            "disable_rate_limit",
+            "isolate_component",
+            "release_isolation",
+            "block_actor",
+            "unblock_actor",
+            "backup_db",
+            "restore_db",
         ]
         for name in expected:
             assert ActionType(name) is not None
@@ -95,8 +99,9 @@ class TestActionContract:
 
 
 class TestWorldState:
-    def _make_action(self, action: str, target: str = "gateway",
-                     params: dict | None = None, cor_id: str = "") -> Action:
+    def _make_action(
+        self, action: str, target: str = "gateway", params: dict | None = None, cor_id: str = ""
+    ) -> Action:
         return Action(
             ts_utc="2026-03-01T12:00:00Z",
             action=action,
@@ -109,9 +114,14 @@ class TestWorldState:
     def test_enable_rate_limit(self):
         state = WorldState()
         assert not is_rate_limited(state)
-        action = self._make_action("enable_rate_limit", params={
-            "rps": 50, "burst": 100, "duration_sec": 300,
-        })
+        action = self._make_action(
+            "enable_rate_limit",
+            params={
+                "rps": 50,
+                "burst": 100,
+                "duration_sec": 300,
+            },
+        )
         events = apply_action(state, action)
         assert is_rate_limited(state)
         assert state.gateway.rate_limit_rps == 50
@@ -131,7 +141,8 @@ class TestWorldState:
         state = WorldState()
         assert not is_isolated(state, "api")
         action = self._make_action(
-            "isolate_component", target="api",
+            "isolate_component",
+            target="api",
             params={"duration_sec": 120},
         )
         events = apply_action(state, action)
@@ -149,9 +160,15 @@ class TestWorldState:
 
     def test_block_actor(self):
         state = WorldState()
-        action = self._make_action("block_actor", target="auth", params={
-            "actor": "attacker", "ip": "10.0.0.1", "duration_sec": 600,
-        })
+        action = self._make_action(
+            "block_actor",
+            target="auth",
+            params={
+                "actor": "attacker",
+                "ip": "10.0.0.1",
+                "duration_sec": 600,
+            },
+        )
         events = apply_action(state, action)
         assert is_actor_blocked(state, "attacker", "")
         assert is_actor_blocked(state, "", "10.0.0.1")
@@ -161,9 +178,13 @@ class TestWorldState:
     def test_unblock_actor(self):
         state = WorldState()
         state.auth.blocked_actors["attacker"] = time.monotonic() + 600
-        action = self._make_action("unblock_actor", target="auth", params={
-            "actor": "attacker",
-        })
+        action = self._make_action(
+            "unblock_actor",
+            target="auth",
+            params={
+                "actor": "attacker",
+            },
+        )
         events = apply_action(state, action)
         assert not is_actor_blocked(state, "attacker", "")
         assert events[0].event == "actor_unblocked"
@@ -171,9 +192,13 @@ class TestWorldState:
     def test_backup_db(self):
         state = WorldState()
         initial_snaps = len(state.db.snapshots)
-        action = self._make_action("backup_db", target="db", params={
-            "name": "snap_test",
-        })
+        action = self._make_action(
+            "backup_db",
+            target="db",
+            params={
+                "name": "snap_test",
+            },
+        )
         events = apply_action(state, action)
         assert len(state.db.snapshots) == initial_snaps + 1
         assert "snap_test" in state.db.snapshots
@@ -181,18 +206,26 @@ class TestWorldState:
 
     def test_restore_db(self):
         state = WorldState()
-        action = self._make_action("restore_db", target="db", params={
-            "snapshot": "snapshot_init",
-        })
+        action = self._make_action(
+            "restore_db",
+            target="db",
+            params={
+                "snapshot": "snapshot_init",
+            },
+        )
         events = apply_action(state, action)
         assert state.db.status == "restoring"
         assert events[0].event == "restore_started"
 
     def test_restore_db_missing_snapshot(self):
         state = WorldState()
-        action = self._make_action("restore_db", target="db", params={
-            "snapshot": "nonexistent",
-        })
+        action = self._make_action(
+            "restore_db",
+            target="db",
+            params={
+                "snapshot": "nonexistent",
+            },
+        )
         events = apply_action(state, action)
         assert state.db.status == "healthy"
         assert len(events) == 0
@@ -220,8 +253,9 @@ class TestWorldState:
 
 
 class TestDecisionEngine:
-    def _make_incident(self, inc_id: str, threat: str, sev: str = "high",
-                       component: str = "api", desc: str = "") -> Incident:
+    def _make_incident(
+        self, inc_id: str, threat: str, sev: str = "high", component: str = "api", desc: str = ""
+    ) -> Incident:
         return Incident(
             incident_id=inc_id,
             policy="baseline",
@@ -240,8 +274,9 @@ class TestDecisionEngine:
         )
 
     def test_decide_credential_attack(self):
-        inc = self._make_incident("INC-0001", "credential_attack",
-                                  desc="Brute-force: 8 auth failures from 10.0.0.1")
+        inc = self._make_incident(
+            "INC-0001", "credential_attack", desc="Brute-force: 8 auth failures from 10.0.0.1"
+        )
         acted = set()
         actions = decide([inc], acted)
         assert len(actions) >= 1
@@ -368,8 +403,7 @@ class TestAtomicWrite:
             path = os.path.join(tmpdir, "test.csv")
             _atomic_write(path, "complete content\n")
             # No .tmp files should remain
-            tmp_files = [f for f in os.listdir(tmpdir)
-                         if f.endswith(".tmp")]
+            tmp_files = [f for f in os.listdir(tmpdir) if f.endswith(".tmp")]
             assert len(tmp_files) == 0
 
     def test_actions_csv_atomic(self):
@@ -436,6 +470,7 @@ class TestMetricsWithActions:
 
     def test_metrics_empty_incidents(self):
         from src.analyzer.metrics import compute
+
         m = compute([], "baseline", horizon_sec=3600)
         assert m.availability_pct == 100.0
         assert m.total_downtime_hr == 0.0
@@ -461,19 +496,21 @@ class TestEndToEndClosedLoop:
         # 1. Generate brute-force events (8 auth_failure from same IP)
         events = []
         for i in range(8):
-            events.append(Event(
-                timestamp=f"2026-03-01T12:00:{i:02d}Z",
-                source="gateway-01",
-                component="api",
-                event="auth_failure",
-                key="username",
-                value="admin",
-                severity="high",
-                actor="unknown",
-                ip="192.168.8.55",
-                tags="auth;failure",
-                correlation_id="COR-DEMO-TEST",
-            ))
+            events.append(
+                Event(
+                    timestamp=f"2026-03-01T12:00:{i:02d}Z",
+                    source="gateway-01",
+                    component="api",
+                    event="auth_failure",
+                    key="username",
+                    value="admin",
+                    severity="high",
+                    actor="unknown",
+                    ip="192.168.8.55",
+                    tags="auth;failure",
+                    correlation_id="COR-DEMO-TEST",
+                )
+            )
 
         # 2. Detect -> should produce alerts
         alerts = detect(events, rules_cfg)
@@ -483,7 +520,7 @@ class TestEndToEndClosedLoop:
         incidents = correlate(alerts, "baseline")
         assert len(incidents) > 0
         for i, inc in enumerate(incidents):
-            inc.incident_id = f"INC-{i+1:04d}"
+            inc.incident_id = f"INC-{i + 1:04d}"
 
         # 4. Decide -> should produce block_actor action
         acted = set()
@@ -497,10 +534,7 @@ class TestEndToEndClosedLoop:
             apply_action(state, action)
 
         # The block_actor action should have blocked something
-        assert (
-            len(state.auth.blocked_actors) > 0
-            or len(state.auth.blocked_ips) > 0
-        )
+        assert len(state.auth.blocked_actors) > 0 or len(state.auth.blocked_ips) > 0
 
     def test_actions_roundtrip_through_file(self):
         """Write actions to JSONL, read them back, apply to world."""
@@ -588,4 +622,3 @@ class TestEndToEndClosedLoop:
         action_names = [a.action for a in actions]
         assert "enable_rate_limit" in action_names
         assert "isolate_component" not in action_names
-

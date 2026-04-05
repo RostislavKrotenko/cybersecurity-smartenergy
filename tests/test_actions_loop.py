@@ -73,19 +73,21 @@ def _ddos_events(n: int = 12) -> list[Event]:
         )
         for i in range(n)
     ]
-    events.append(Event(
-        timestamp="2026-03-01T12:01:15Z",
-        source="api-gw-01",
-        component="api",
-        event="service_status",
-        key="status",
-        value="degraded",
-        severity="critical",
-        actor="",
-        ip="",
-        tags="availability",
-        correlation_id="COR-DDOS-TEST",
-    ))
+    events.append(
+        Event(
+            timestamp="2026-03-01T12:01:15Z",
+            source="api-gw-01",
+            component="api",
+            event="service_status",
+            key="status",
+            value="degraded",
+            severity="critical",
+            actor="",
+            ip="",
+            tags="availability",
+            correlation_id="COR-DDOS-TEST",
+        )
+    )
     return events
 
 
@@ -115,10 +117,7 @@ class TestClosedLoopActionCycle:
             all_state_events.extend(evts)
 
         # Actor or IP should be blocked
-        assert (
-            len(state.auth.blocked_actors) > 0
-            or len(state.auth.blocked_ips) > 0
-        )
+        assert len(state.auth.blocked_actors) > 0 or len(state.auth.blocked_ips) > 0
         # State-change event should have been generated
         assert any(e.event == "actor_blocked" for e in all_state_events)
 
@@ -407,8 +406,12 @@ class TestActionAckMechanism:
             store = ComponentStateStore()
             out_p = Path(tmpdir)
             _new_offset, changed = _read_acks(
-                ack_path, 0,
-                actions_by_id, [action], store, out_p,
+                ack_path,
+                0,
+                actions_by_id,
+                [action],
+                store,
+                out_p,
             )
 
             # Action should be marked as applied
@@ -450,8 +453,12 @@ class TestActionAckMechanism:
 
             store = ComponentStateStore()
             _, changed = _read_acks(
-                ack_path, 0,
-                actions_by_id, [action], store, Path(tmpdir),
+                ack_path,
+                0,
+                actions_by_id,
+                [action],
+                store,
+                Path(tmpdir),
             )
 
             assert action.status == "failed"

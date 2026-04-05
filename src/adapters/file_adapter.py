@@ -514,6 +514,7 @@ class FileIncidentSource(IncidentSource):
 
         try:
             import pandas as pd
+
             df = pd.read_csv(self.path, nrows=limit)
             return df.to_dict("records")
         except Exception as e:
@@ -558,6 +559,7 @@ class FileActionSource(ActionSource):
 
         try:
             import pandas as pd
+
             df = pd.read_csv(self.path, nrows=limit)
             return df.to_dict("records")
         except Exception as e:
@@ -571,6 +573,7 @@ class FileActionSource(ActionSource):
 
         try:
             import pandas as pd
+
             df = pd.read_csv(self.path)
 
             if "status" not in df.columns:
@@ -614,6 +617,7 @@ class FileMetricsSource(MetricsSource):
 
         try:
             import pandas as pd
+
             df = pd.read_csv(self.path)
             return df.to_dict("records")
         except Exception as e:
@@ -627,6 +631,7 @@ class FileMetricsSource(MetricsSource):
 
         try:
             import pandas as pd
+
             df = pd.read_csv(self.path)
 
             # Aggregate metrics across all policies
@@ -670,6 +675,7 @@ class FileStateSource(StateProvider):
 
         try:
             import pandas as pd
+
             df = pd.read_csv(self.path)
 
             self._cache.clear()

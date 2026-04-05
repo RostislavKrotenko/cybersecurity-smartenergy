@@ -71,7 +71,9 @@ def _wait_for_pg() -> None:
         try:
             result = subprocess.run(
                 ["pg_isready", "-h", PG_HOST, "-p", PG_PORT, "-U", PG_USER],
-                capture_output=True, text=True, env=PG_ENV,
+                capture_output=True,
+                text=True,
+                env=PG_ENV,
             )
             if result.returncode == 0:
                 log.info("Postgres is ready (attempt %d)", i + 1)
@@ -84,8 +86,8 @@ def _wait_for_pg() -> None:
 
 # ── event / ACK emitters ────────────────────────────────────────────────────
 
-def _emit_event(event: str, value: str, severity: str = "medium",
-                correlation_id: str = "") -> None:
+
+def _emit_event(event: str, value: str, severity: str = "medium", correlation_id: str = "") -> None:
     ev = {
         "timestamp": _now_iso(),
         "source": "db-primary",
@@ -109,9 +111,15 @@ def _emit_event(event: str, value: str, severity: str = "medium",
         log.error("Failed to emit event: %s", exc)
 
 
-def _emit_ack(action_id: str, correlation_id: str, target_component: str,
-              action: str, result: str, state_event: str = "",
-              error: str = "") -> None:
+def _emit_ack(
+    action_id: str,
+    correlation_id: str,
+    target_component: str,
+    action: str,
+    result: str,
+    state_event: str = "",
+    error: str = "",
+) -> None:
     ack = {
         "action_id": action_id,
         "correlation_id": correlation_id,
@@ -133,19 +141,36 @@ def _emit_ack(action_id: str, correlation_id: str, target_component: str,
 
 # ── SQL helpers ──────────────────────────────────────────────────────────────
 
+
 def _psql(sql: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["psql", "-h", PG_HOST, "-p", PG_PORT, "-U", PG_USER, "-d", PG_DB,
-         "-c", sql],
-        capture_output=True, text=True, env=PG_ENV,
+        ["psql", "-h", PG_HOST, "-p", PG_PORT, "-U", PG_USER, "-d", PG_DB, "-c", sql],
+        capture_output=True,
+        text=True,
+        env=PG_ENV,
     )
 
 
 def _pg_dump(output_path: str) -> bool:
     result = subprocess.run(
-        ["pg_dump", "-h", PG_HOST, "-p", PG_PORT, "-U", PG_USER, "-d", PG_DB,
-         "-f", output_path, "--clean", "--if-exists"],
-        capture_output=True, text=True, env=PG_ENV,
+        [
+            "pg_dump",
+            "-h",
+            PG_HOST,
+            "-p",
+            PG_PORT,
+            "-U",
+            PG_USER,
+            "-d",
+            PG_DB,
+            "-f",
+            output_path,
+            "--clean",
+            "--if-exists",
+        ],
+        capture_output=True,
+        text=True,
+        env=PG_ENV,
     )
     if result.returncode != 0:
         log.error("pg_dump failed: %s", result.stderr)
@@ -155,9 +180,10 @@ def _pg_dump(output_path: str) -> bool:
 
 def _pg_restore(sql_path: str) -> bool:
     result = subprocess.run(
-        ["psql", "-h", PG_HOST, "-p", PG_PORT, "-U", PG_USER, "-d", PG_DB,
-         "-f", sql_path],
-        capture_output=True, text=True, env=PG_ENV,
+        ["psql", "-h", PG_HOST, "-p", PG_PORT, "-U", PG_USER, "-d", PG_DB, "-f", sql_path],
+        capture_output=True,
+        text=True,
+        env=PG_ENV,
     )
     if result.returncode != 0:
         log.error("psql restore failed: %s", result.stderr)
@@ -173,13 +199,12 @@ def _verify_integrity() -> bool:
 
 # ── latest snapshot helper ───────────────────────────────────────────────────
 
+
 def _list_snapshots() -> list[str]:
     """Return sorted list of snapshot filenames in BACKUP_DIR."""
     if not BACKUP_DIR.exists():
         return []
-    return sorted(
-        f.name for f in BACKUP_DIR.glob("snapshot_*.sql")
-    )
+    return sorted(f.name for f in BACKUP_DIR.glob("snapshot_*.sql"))
 
 
 def _resolve_snapshot(name: str) -> str | None:
@@ -201,6 +226,7 @@ def _resolve_snapshot(name: str) -> str | None:
 
 
 # ── telemetry writer thread ─────────────────────────────────────────────────
+
 
 def _telemetry_writer() -> None:
     """Insert synthetic telemetry rows periodically."""
@@ -227,6 +253,7 @@ def _telemetry_writer() -> None:
 
 # ── periodic backup thread ──────────────────────────────────────────────────
 
+
 def _backup_loop() -> None:
     """Periodic pg_dump to /backups/snapshot_<timestamp>.sql."""
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -250,6 +277,7 @@ def _do_backup(name: str) -> bool:
 
 
 # ── action listener thread ─────────────────────────────────────────────────
+
 
 def _action_listener() -> None:
     """Tail actions.jsonl for backup_db / restore_db / corrupt_db actions."""
@@ -286,19 +314,29 @@ def _handle_action(act: dict) -> None:
     if action == "backup_db" and target == "db":
         name = params.get("name", f"snapshot_{int(time.time())}")
         ok = _do_backup(name)
-        _emit_ack(action_id, cor_id, "db", "backup_db",
-                  "success" if ok else "failed",
-                  "backup_created" if ok else "")
+        _emit_ack(
+            action_id,
+            cor_id,
+            "db",
+            "backup_db",
+            "success" if ok else "failed",
+            "backup_created" if ok else "",
+        )
 
     elif action == "restore_db" and target == "db":
         snap_name = params.get("snapshot", "latest")
         snap_path = _resolve_snapshot(snap_name)
         if snap_path is None:
             log.error("RESTORE FAILED: snapshot '%s' not found", snap_name)
-            _emit_event("restore_failed", f"snapshot={snap_name} not_found",
-                        "critical", cor_id)
-            _emit_ack(action_id, cor_id, "db", "restore_db", "failed",
-                      error=f"snapshot {snap_name} not found")
+            _emit_event("restore_failed", f"snapshot={snap_name} not_found", "critical", cor_id)
+            _emit_ack(
+                action_id,
+                cor_id,
+                "db",
+                "restore_db",
+                "failed",
+                error=f"snapshot {snap_name} not found",
+            )
             return
 
         _emit_event("restore_started", f"snapshot={snap_name}", "critical", cor_id)
@@ -307,13 +345,18 @@ def _handle_action(act: dict) -> None:
         ok = _pg_restore(snap_path)
         if ok and _verify_integrity():
             _emit_event("restore_completed", f"snapshot={snap_name}", "medium", cor_id)
-            _emit_ack(action_id, cor_id, "db", "restore_db", "success",
-                      "restore_completed")
+            _emit_ack(action_id, cor_id, "db", "restore_db", "success", "restore_completed")
             log.info("RESTORE COMPLETED: integrity verified")
         else:
             _emit_event("restore_failed", f"snapshot={snap_name}", "critical", cor_id)
-            _emit_ack(action_id, cor_id, "db", "restore_db", "failed",
-                      error="restore or integrity check failed")
+            _emit_ack(
+                action_id,
+                cor_id,
+                "db",
+                "restore_db",
+                "failed",
+                error="restore or integrity check failed",
+            )
             log.error("RESTORE FAILED")
 
     elif action == "corrupt_db" and target == "db":
@@ -330,6 +373,7 @@ def _handle_action(act: dict) -> None:
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     _wait_for_pg()
 
@@ -344,7 +388,8 @@ def main() -> None:
 
     log.info(
         "db-writer running: write_interval=%.1fs backup_interval=%ds",
-        WRITE_INTERVAL, BACKUP_INTERVAL,
+        WRITE_INTERVAL,
+        BACKUP_INTERVAL,
     )
 
     # Keep main thread alive

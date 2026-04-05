@@ -244,11 +244,7 @@ def main(argv: list[str] | None = None) -> None:
             print(f"  applied  -> {applied_path} (ACK)")
         print("  Press Ctrl+C to stop.")
         try:
-            sink_mode = (
-                args.profile != "demo_high_rate"
-                and raw_log_dir is None
-                and csv_out is None
-            )
+            sink_mode = args.profile != "demo_high_rate" and raw_log_dir is None and csv_out is None
 
             if sink_mode:
                 print("  mode: EventSink")

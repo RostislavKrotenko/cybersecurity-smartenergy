@@ -86,31 +86,37 @@ def create_hybrid_executor() -> ActionExecutor | None:
 
     # Firewall
     firewall_backend = os.environ.get("FIREWALL_BACKEND", "iptables")
-    executors.append(FirewallExecutor(
-        backend=firewall_backend,
-        api_url=os.environ.get("FIREWALL_API_URL") or None,
-        api_key=os.environ.get("FIREWALL_API_KEY") or None,
-        config=config,
-    ))
+    executors.append(
+        FirewallExecutor(
+            backend=firewall_backend,
+            api_url=os.environ.get("FIREWALL_API_URL") or None,
+            api_key=os.environ.get("FIREWALL_API_KEY") or None,
+            config=config,
+        )
+    )
     log.info("  FirewallExecutor: %s", firewall_backend)
 
     # Rate limiting
     rate_backend = os.environ.get("RATE_LIMIT_BACKEND", "kong")
     rate_url = os.environ.get("RATE_LIMIT_API_URL", "http://localhost:8001")
-    executors.append(RateLimitExecutor(
-        backend=rate_backend,
-        api_url=rate_url,
-        config=config,
-    ))
+    executors.append(
+        RateLimitExecutor(
+            backend=rate_backend,
+            api_url=rate_url,
+            config=config,
+        )
+    )
     log.info("  RateLimitExecutor: %s @ %s", rate_backend, rate_url)
 
     # Network isolation
     net_backend = os.environ.get("NETWORK_BACKEND", "docker")
-    executors.append(NetworkIsolationExecutor(
-        backend=net_backend,
-        namespace=os.environ.get("NETWORK_NAMESPACE", "smartenergy"),
-        config=config,
-    ))
+    executors.append(
+        NetworkIsolationExecutor(
+            backend=net_backend,
+            namespace=os.environ.get("NETWORK_NAMESPACE", "smartenergy"),
+            config=config,
+        )
+    )
     log.info("  NetworkIsolationExecutor: %s", net_backend)
 
     if dry_run:
@@ -166,8 +172,11 @@ def apply_action_hybrid(
         # Return real events if available, otherwise simulated
         return result.state_events if result.state_events else sim_events
     else:
-        log.warning("HYBRID: %s -> real execution FAILED: %s (simulation still applied)",
-                   action.action, result.error)
+        log.warning(
+            "HYBRID: %s -> real execution FAILED: %s (simulation still applied)",
+            action.action,
+            result.error,
+        )
         return sim_events
 
 

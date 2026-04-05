@@ -13,7 +13,10 @@ from src.emulator.world import WorldState, apply_action
 
 
 def _state_event(
-    component: str, event: str, value: str, ts: str = "2026-03-01T12:00:00Z",
+    component: str,
+    event: str,
+    value: str,
+    ts: str = "2026-03-01T12:00:00Z",
 ) -> Event:
     return Event(
         timestamp=ts,

@@ -151,7 +151,9 @@ class ComponentStateStore:
                 self._blocked_ips += 1
             total = self._blocked_actors + self._blocked_ips
             self.auth.status = "blocking"
-            self.auth.details = f"blocked={total} (actors={self._blocked_actors} ips={self._blocked_ips})"
+            self.auth.details = (
+                f"blocked={total} (actors={self._blocked_actors} ips={self._blocked_ips})"
+            )
             self.auth.ttl_sec = float(dur)
             self.auth.expires_at_utc = _add_seconds(ts, dur)
             self.auth.last_updated = ts
@@ -167,7 +169,9 @@ class ComponentStateStore:
             total = self._blocked_actors + self._blocked_ips
             if total > 0:
                 self.auth.status = "blocking"
-                self.auth.details = f"blocked={total} (actors={self._blocked_actors} ips={self._blocked_ips})"
+                self.auth.details = (
+                    f"blocked={total} (actors={self._blocked_actors} ips={self._blocked_ips})"
+                )
             else:
                 self.auth.status = "healthy"
                 self.auth.details = ""
@@ -184,7 +188,9 @@ class ComponentStateStore:
             total = self._blocked_actors + self._blocked_ips
             if total > 0:
                 self.auth.status = "blocking"
-                self.auth.details = f"blocked={total} (actors={self._blocked_actors} ips={self._blocked_ips})"
+                self.auth.details = (
+                    f"blocked={total} (actors={self._blocked_actors} ips={self._blocked_ips})"
+                )
             else:
                 self.auth.status = "healthy"
                 self.auth.details = ""

@@ -28,7 +28,7 @@ import os
 import threading
 import time
 from datetime import datetime, timezone
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -54,8 +54,7 @@ def _now_iso() -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _emit_event(event: str, value: str, severity: str = "high",
-                correlation_id: str = "") -> None:
+def _emit_event(event: str, value: str, severity: str = "high", correlation_id: str = "") -> None:
     """Append a state-change event to the shared events.jsonl."""
     ev = {
         "timestamp": _now_iso(),
@@ -80,8 +79,14 @@ def _emit_event(event: str, value: str, severity: str = "high",
         log.error("Failed to write event: %s", exc)
 
 
-def _emit_ack(action_id: str, correlation_id: str, action: str,
-              result: str, state_event: str = "", error: str = "") -> None:
+def _emit_ack(
+    action_id: str,
+    correlation_id: str,
+    action: str,
+    result: str,
+    state_event: str = "",
+    error: str = "",
+) -> None:
     """Append an ACK to actions_applied.jsonl."""
     ack = {
         "action_id": action_id,
@@ -98,15 +103,21 @@ def _emit_ack(action_id: str, correlation_id: str, action: str,
         with open(APPLIED_PATH, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(ack, ensure_ascii=False, separators=(",", ":")) + "\n")
             fh.flush()
-        log.info("ACK emitted: action_id=%s result=%s state_event=%s",
-                 action_id, result, state_event)
+        log.info(
+            "ACK emitted: action_id=%s result=%s state_event=%s", action_id, result, state_event
+        )
     except OSError as exc:
         log.error("Failed to emit ACK: %s", exc)
 
 
-def _apply_degrade(latency_ms: int, drop_rate: float, ttl_sec: int,
-                   disconnected: bool = False, correlation_id: str = "",
-                   action_id: str = "") -> dict:
+def _apply_degrade(
+    latency_ms: int,
+    drop_rate: float,
+    ttl_sec: int,
+    disconnected: bool = False,
+    correlation_id: str = "",
+    action_id: str = "",
+) -> dict:
     with _state_lock:
         _state["latency_ms"] = latency_ms
         _state["drop_rate"] = drop_rate
@@ -114,15 +125,16 @@ def _apply_degrade(latency_ms: int, drop_rate: float, ttl_sec: int,
         _state["ttl_sec"] = ttl_sec
         _state["degraded_since"] = time.monotonic()
         snap = dict(_state)
-    val = (f"latency_ms={latency_ms},drop_rate={drop_rate},"
-           f"disconnected={disconnected},ttl_sec={ttl_sec}")
+    val = (
+        f"latency_ms={latency_ms},drop_rate={drop_rate},"
+        f"disconnected={disconnected},ttl_sec={ttl_sec}"
+    )
     _emit_event("network_degraded", val, "high", correlation_id)
     log.info("DEGRADED: %s", val)
 
     # Emit ACK if action_id provided (from action listener)
     if action_id:
-        _emit_ack(action_id, correlation_id, "degrade_network", "success",
-                  "network_degraded")
+        _emit_ack(action_id, correlation_id, "degrade_network", "success", "network_degraded")
 
     return snap
 
@@ -140,8 +152,7 @@ def _apply_reset(correlation_id: str = "", action_id: str = "") -> dict:
 
     # Emit ACK if action_id provided (from action listener)
     if action_id:
-        _emit_ack(action_id, correlation_id, "reset_network", "success",
-                  "network_reset_applied")
+        _emit_ack(action_id, correlation_id, "reset_network", "success", "network_reset_applied")
 
     return snap
 
@@ -154,6 +165,7 @@ def _get_status() -> dict:
 
 
 # -- TTL expiry thread --------------------------------------------------------
+
 
 def _ttl_watcher() -> None:
     """Background thread: auto-reset when TTL expires."""
@@ -170,6 +182,7 @@ def _ttl_watcher() -> None:
 
 
 # -- Action listener thread ---------------------------------------------------
+
 
 def _action_listener() -> None:
     """Tail actions.jsonl for degrade_network / reset_network actions."""
@@ -221,8 +234,12 @@ def _handle_action(act: dict) -> None:
             correlation_id=cor_id,
             action_id=action_id,
         )
-        log.info("ACTION degrade_network applied: latency=%dms drop=%.2f ttl=%ds",
-                 latency_ms, drop_rate, ttl_sec)
+        log.info(
+            "ACTION degrade_network applied: latency=%dms drop=%.2f ttl=%ds",
+            latency_ms,
+            drop_rate,
+            ttl_sec,
+        )
 
     elif action == "reset_network":
         _apply_reset(correlation_id=cor_id, action_id=action_id)
@@ -230,6 +247,7 @@ def _handle_action(act: dict) -> None:
 
 
 # -- HTTP handler -------------------------------------------------------------
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):

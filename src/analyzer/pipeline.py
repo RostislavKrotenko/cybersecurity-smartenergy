@@ -277,12 +277,20 @@ def watch_pipeline_with_adapters(
     if pre_events:
         state_store.process_events(pre_events)
         inc_counter, all_incidents = _incremental_detect(
-            pre_events, rules_cfg, policies_cfg, selected, inc_counter,
+            pre_events,
+            rules_cfg,
+            policies_cfg,
+            selected,
+            inc_counter,
         )
         state_store.tick()
         state_store.write_csv(str(out_p / "state.csv"))
         _write_live_output(
-            all_incidents, selected, policies_cfg, horizon_sec, out_p,
+            all_incidents,
+            selected,
+            policies_cfg,
+            horizon_sec,
+            out_p,
             actions_count=len(all_actions),
         )
 
@@ -347,7 +355,11 @@ def watch_pipeline_with_adapters(
                         write_actions_csv(all_actions, str(out_p / "actions.csv"))
 
                 inc_counter, new_incs = _incremental_detect(
-                    new_events, rules_cfg, policies_cfg, selected, inc_counter,
+                    new_events,
+                    rules_cfg,
+                    policies_cfg,
+                    selected,
+                    inc_counter,
                 )
                 all_incidents.extend(new_incs)
 
@@ -366,7 +378,8 @@ def watch_pipeline_with_adapters(
                         write_actions_csv(all_actions, str(out_p / "actions.csv"))
                         log.info(
                             "EMITTED %d new actions (%d total)",
-                            len(new_actions), len(all_actions),
+                            len(new_actions),
+                            len(all_actions),
                         )
 
                 if rolling_sec > 0 and all_incidents:
@@ -381,7 +394,11 @@ def watch_pipeline_with_adapters(
                 state_store.tick()
                 state_store.write_csv(str(out_p / "state.csv"))
                 _write_live_output(
-                    all_incidents, selected, policies_cfg, horizon_sec, out_p,
+                    all_incidents,
+                    selected,
+                    policies_cfg,
+                    horizon_sec,
+                    out_p,
                     actions_count=len(all_actions),
                 )
 
@@ -591,21 +608,23 @@ def _build_ack_value(ack: ActionAck, act: Action | None) -> str:
     return ack.action
 
 
-_CONFIRM_EVENTS = frozenset({
-    "rate_limit_enabled",
-    "rate_limit_disabled",
-    "isolation_enabled",
-    "isolation_released",
-    "actor_blocked",
-    "actor_unblocked",
-    "restore_started",
-    "restore_completed",
-    "backup_created",
-    "db_backup_created",
-    "network_degraded",
-    "network_reset_applied",
-    "network_recovered",
-})
+_CONFIRM_EVENTS = frozenset(
+    {
+        "rate_limit_enabled",
+        "rate_limit_disabled",
+        "isolation_enabled",
+        "isolation_released",
+        "actor_blocked",
+        "actor_unblocked",
+        "restore_started",
+        "restore_completed",
+        "backup_created",
+        "db_backup_created",
+        "network_degraded",
+        "network_reset_applied",
+        "network_recovered",
+    }
+)
 
 
 def _confirm_actions(
@@ -632,7 +651,8 @@ def _confirm_actions(
                 changed = True
                 log.info(
                     "ACTION CONFIRMED: %s (cor=%s) -> applied",
-                    act.action, cor_id,
+                    act.action,
+                    cor_id,
                 )
     return changed
 
@@ -680,7 +700,10 @@ def _write_live_output(
     write_results_csv(all_metrics, str(out_p / "results.csv"))
     write_incidents_csv(incidents, str(out_p / "incidents.csv"))
     write_report_txt(
-        all_metrics, incidents, control_ranking, str(out_p / "report.txt"),
+        all_metrics,
+        incidents,
+        control_ranking,
+        str(out_p / "report.txt"),
         actions_count=actions_count,
     )
 
@@ -750,7 +773,10 @@ def _apply_restore_lock(
         kept.append(a)
 
     if blocked:
-        log.info("RESTORE LOCK: blocked %d restore_db actions while previous restore is unresolved", blocked)
+        log.info(
+            "RESTORE LOCK: blocked %d restore_db actions while previous restore is unresolved",
+            blocked,
+        )
 
     return kept
 
@@ -951,4 +977,3 @@ def create_file_live_adapters(
         action_feedback = FileActionFeedback(applied_path)
 
     return event_source, state_source, action_sink, action_feedback
-

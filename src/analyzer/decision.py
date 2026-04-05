@@ -140,21 +140,26 @@ def decide(
             if tmpl["action"] == "backup_db":
                 params["name"] = f"snap_{inc.incident_id}"
 
-            actions.append(Action(
-                ts_utc=now,
-                action=tmpl["action"],
-                target_component=tmpl["target_component"],
-                target_id=_extract_target_id(inc, tmpl["target_component"]),
-                params=params,
-                reason=f"{inc.incident_id}: {inc.threat_type}/{inc.severity}",
-                correlation_id=inc.incident_id,
-                status="emitted",
-            ))
+            actions.append(
+                Action(
+                    ts_utc=now,
+                    action=tmpl["action"],
+                    target_component=tmpl["target_component"],
+                    target_id=_extract_target_id(inc, tmpl["target_component"]),
+                    params=params,
+                    reason=f"{inc.incident_id}: {inc.threat_type}/{inc.severity}",
+                    correlation_id=inc.incident_id,
+                    status="emitted",
+                )
+            )
 
         already_acted.add(inc.incident_id)
         log.info(
             "DECIDE: %s -> %d actions for %s/%s",
-            inc.incident_id, len(templates), inc.threat_type, inc.severity,
+            inc.incident_id,
+            len(templates),
+            inc.threat_type,
+            inc.severity,
         )
 
     return actions
@@ -275,4 +280,3 @@ def decide_and_emit(
     if actions:
         emit_actions_to_sink(actions, action_sink)
     return actions
-

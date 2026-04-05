@@ -28,6 +28,7 @@ BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "./backups"))
 
 try:
     import psycopg2
+
     _HAS_PG = True
 except ImportError:
     _HAS_PG = False
@@ -39,8 +40,11 @@ def _pg_available() -> bool:
         return False
     try:
         conn = psycopg2.connect(
-            host=PG_HOST, port=PG_PORT, user=PG_USER,
-            password=PG_PASSWORD, dbname=PG_DB,
+            host=PG_HOST,
+            port=PG_PORT,
+            user=PG_USER,
+            password=PG_PASSWORD,
+            dbname=PG_DB,
             connect_timeout=3,
         )
         conn.close()
@@ -57,8 +61,11 @@ requires_pg = pytest.mark.skipif(
 
 def _conn():
     return psycopg2.connect(
-        host=PG_HOST, port=PG_PORT, user=PG_USER,
-        password=PG_PASSWORD, dbname=PG_DB,
+        host=PG_HOST,
+        port=PG_PORT,
+        user=PG_USER,
+        password=PG_PASSWORD,
+        dbname=PG_DB,
     )
 
 
@@ -85,9 +92,24 @@ def _pg_dump(output_path: str) -> bool:
         "PGDATABASE": PG_DB,
     }
     result = subprocess.run(
-        ["pg_dump", "-h", PG_HOST, "-p", PG_PORT, "-U", PG_USER, "-d", PG_DB,
-         "-f", output_path, "--clean", "--if-exists"],
-        capture_output=True, text=True, env=env,
+        [
+            "pg_dump",
+            "-h",
+            PG_HOST,
+            "-p",
+            PG_PORT,
+            "-U",
+            PG_USER,
+            "-d",
+            PG_DB,
+            "-f",
+            output_path,
+            "--clean",
+            "--if-exists",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
     )
     return result.returncode == 0
 
@@ -102,9 +124,10 @@ def _pg_restore(sql_path: str) -> bool:
         "PGDATABASE": PG_DB,
     }
     result = subprocess.run(
-        ["psql", "-h", PG_HOST, "-p", PG_PORT, "-U", PG_USER, "-d", PG_DB,
-         "-f", sql_path],
-        capture_output=True, text=True, env=env,
+        ["psql", "-h", PG_HOST, "-p", PG_PORT, "-U", PG_USER, "-d", PG_DB, "-f", sql_path],
+        capture_output=True,
+        text=True,
+        env=env,
     )
     return result.returncode == 0
 
@@ -175,6 +198,7 @@ class TestNetworkSimIntegration:
 
     def _get(self, path: str) -> dict | None:
         import urllib.request
+
         try:
             with urllib.request.urlopen(f"{self._netsim_url()}{path}", timeout=3) as r:
                 return json.loads(r.read())
@@ -183,6 +207,7 @@ class TestNetworkSimIntegration:
 
     def _post(self, path: str, body: dict) -> dict | None:
         import urllib.request
+
         try:
             data = json.dumps(body).encode()
             req = urllib.request.Request(
@@ -210,11 +235,14 @@ class TestNetworkSimIntegration:
             pytest.skip("network-sim not running")
 
         # Degrade
-        result = self._post("/degrade", {
-            "latency_ms": 300,
-            "drop_rate": 0.2,
-            "ttl_sec": 60,
-        })
+        result = self._post(
+            "/degrade",
+            {
+                "latency_ms": 300,
+                "drop_rate": 0.2,
+                "ttl_sec": 60,
+            },
+        )
         assert result is not None
         assert result["latency_ms"] == 300
         assert result["drop_rate"] == 0.2

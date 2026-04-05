@@ -73,7 +73,9 @@ def detect(
         elif rule_id.startswith("RULE-OUT"):
             new_alerts = _detect_outage(matched, rule, window, threshold, events, alert_counter)
         elif rule_id.startswith("RULE-NET"):
-            new_alerts = _detect_network_failure(matched, rule, window, threshold, events, alert_counter)
+            new_alerts = _detect_network_failure(
+                matched, rule, window, threshold, events, alert_counter
+            )
         else:
             log.debug("Unknown rule prefix for %s — skipped", rule_id)
             continue
@@ -448,7 +450,8 @@ def _detect_network_failure(
 
                 # Sub-rule: port_status events escalate to critical
                 port_events = [
-                    s for s in all_events
+                    s
+                    for s in all_events
                     if s.event == "port_status"
                     and 0 <= _diff_sec(buf[0].timestamp, s.timestamp) <= 120
                 ]
@@ -473,9 +476,7 @@ def _detect_network_failure(
                             + (" + port failures" if port_events else "")
                         ),
                         event_count=len(buf),
-                        event_ids=";".join(
-                            e.correlation_id or e.timestamp for e in buf
-                        ),
+                        event_ids=";".join(e.correlation_id or e.timestamp for e in buf),
                         response_hint=rule.get("response_hint", ""),
                     )
                 )

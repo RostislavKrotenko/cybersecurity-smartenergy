@@ -101,7 +101,5 @@ class NetworkFailureScenario(BaseScenario):
 
             phase_end_times.append(t.timestamp())
 
-        log.info(
-            "network_failure: generated %d events, offset=%ds", len(events), self.start_offset
-        )
+        log.info("network_failure: generated %d events, offset=%ds", len(events), self.start_offset)
         return events

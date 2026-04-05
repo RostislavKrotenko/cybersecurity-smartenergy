@@ -39,16 +39,18 @@ def get_actions(
 
     items = []
     for act in raw_actions:
-        items.append(Action(
-            action_id=act.get("action_id", ""),
-            action=act.get("action", ""),
-            target_component=act.get("target_component", ""),
-            target_id=act.get("target_id"),
-            ts_utc=str(act.get("ts_utc", "")) if act.get("ts_utc") else None,
-            reason=act.get("reason"),
-            correlation_id=act.get("correlation_id"),
-            status=act.get("status", "emitted"),
-        ))
+        items.append(
+            Action(
+                action_id=act.get("action_id", ""),
+                action=act.get("action", ""),
+                target_component=act.get("target_component", ""),
+                target_id=act.get("target_id"),
+                ts_utc=str(act.get("ts_utc", "")) if act.get("ts_utc") else None,
+                reason=act.get("reason"),
+                correlation_id=act.get("correlation_id"),
+                status=act.get("status", "emitted"),
+            )
+        )
 
     return ActionListResponse(total=len(items), summary=summary, items=items)
 

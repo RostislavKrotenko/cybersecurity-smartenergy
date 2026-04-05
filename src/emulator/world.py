@@ -131,23 +131,40 @@ def apply_action(state: WorldState, action: Action) -> list[Event]:
         state.gateway.rate_limit_burst = action.params.get("burst", 200)
         dur = action.params.get("duration_sec", 300)
         state.gateway.rate_limit_expires = now + dur
-        events.append(_state_event(
-            ts, "gateway", "api-gw-01", "rate_limit_enabled",
-            f"rps={state.gateway.rate_limit_rps},burst={state.gateway.rate_limit_burst},dur={dur}",
-            "high", action.correlation_id,
-        ))
-        log.info("ACTION APPLIED: enable_rate_limit rps=%d burst=%d dur=%ds",
-                 state.gateway.rate_limit_rps, state.gateway.rate_limit_burst, dur)
+        events.append(
+            _state_event(
+                ts,
+                "gateway",
+                "api-gw-01",
+                "rate_limit_enabled",
+                f"rps={state.gateway.rate_limit_rps},burst={state.gateway.rate_limit_burst},dur={dur}",
+                "high",
+                action.correlation_id,
+            )
+        )
+        log.info(
+            "ACTION APPLIED: enable_rate_limit rps=%d burst=%d dur=%ds",
+            state.gateway.rate_limit_rps,
+            state.gateway.rate_limit_burst,
+            dur,
+        )
 
     elif act == "disable_rate_limit":
         state.gateway.rate_limit_enabled = False
         state.gateway.rate_limit_rps = 0
         state.gateway.rate_limit_burst = 0
         state.gateway.rate_limit_expires = 0.0
-        events.append(_state_event(
-            ts, "gateway", "api-gw-01", "rate_limit_disabled", "manual",
-            "medium", action.correlation_id,
-        ))
+        events.append(
+            _state_event(
+                ts,
+                "gateway",
+                "api-gw-01",
+                "rate_limit_disabled",
+                "manual",
+                "medium",
+                action.correlation_id,
+            )
+        )
         log.info("ACTION APPLIED: disable_rate_limit")
 
     elif act == "isolate_component":
@@ -156,10 +173,17 @@ def apply_action(state: WorldState, action: Action) -> list[Event]:
         if target in ("api", "collector"):
             state.api.status = "isolated"
             state.api.isolation_expires = now + dur
-            events.append(_state_event(
-                ts, target, action.target_id or target, "isolation_enabled",
-                f"duration={dur}", "critical", action.correlation_id,
-            ))
+            events.append(
+                _state_event(
+                    ts,
+                    target,
+                    action.target_id or target,
+                    "isolation_enabled",
+                    f"duration={dur}",
+                    "critical",
+                    action.correlation_id,
+                )
+            )
             log.info("ACTION APPLIED: isolate_component %s for %ds", target, dur)
 
     elif act == "release_isolation":
@@ -167,10 +191,17 @@ def apply_action(state: WorldState, action: Action) -> list[Event]:
         if target in ("api", "collector"):
             state.api.status = "healthy"
             state.api.isolation_expires = 0.0
-            events.append(_state_event(
-                ts, target, action.target_id or target, "isolation_released",
-                "manual", "medium", action.correlation_id,
-            ))
+            events.append(
+                _state_event(
+                    ts,
+                    target,
+                    action.target_id or target,
+                    "isolation_released",
+                    "manual",
+                    "medium",
+                    action.correlation_id,
+                )
+            )
             log.info("ACTION APPLIED: release_isolation %s", target)
 
     elif act == "block_actor":
@@ -182,10 +213,17 @@ def apply_action(state: WorldState, action: Action) -> list[Event]:
         if ip:
             state.auth.blocked_ips[ip] = now + dur
         target_str = f"actor={actor},ip={ip}"
-        events.append(_state_event(
-            ts, "auth", "gateway-01", "actor_blocked",
-            f"{target_str},duration={dur}", "high", action.correlation_id,
-        ))
+        events.append(
+            _state_event(
+                ts,
+                "auth",
+                "gateway-01",
+                "actor_blocked",
+                f"{target_str},duration={dur}",
+                "high",
+                action.correlation_id,
+            )
+        )
         log.info("ACTION APPLIED: block_actor %s for %ds", target_str, dur)
 
     elif act == "unblock_actor":
@@ -193,19 +231,33 @@ def apply_action(state: WorldState, action: Action) -> list[Event]:
         ip = action.params.get("ip", "")
         state.auth.blocked_actors.pop(actor, None)
         state.auth.blocked_ips.pop(ip, None)
-        events.append(_state_event(
-            ts, "auth", "gateway-01", "actor_unblocked",
-            f"actor={actor},ip={ip}", "medium", action.correlation_id,
-        ))
+        events.append(
+            _state_event(
+                ts,
+                "auth",
+                "gateway-01",
+                "actor_unblocked",
+                f"actor={actor},ip={ip}",
+                "medium",
+                action.correlation_id,
+            )
+        )
         log.info("ACTION APPLIED: unblock_actor actor=%s ip=%s", actor, ip)
 
     elif act == "backup_db":
         snap_name = action.params.get("name", f"snap_{int(time.time())}")
         state.db.snapshots.append(snap_name)
-        events.append(_state_event(
-            ts, "db", "db-primary", "backup_created",
-            snap_name, "medium", action.correlation_id,
-        ))
+        events.append(
+            _state_event(
+                ts,
+                "db",
+                "db-primary",
+                "backup_created",
+                snap_name,
+                "medium",
+                action.correlation_id,
+            )
+        )
         log.info("ACTION APPLIED: backup_db -> %s", snap_name)
 
     elif act == "restore_db":
@@ -214,10 +266,17 @@ def apply_action(state: WorldState, action: Action) -> list[Event]:
             state.db.status = "restoring"
             restore_dur = 10.0  # simulated restore time
             state.db.restoring_until = now + restore_dur
-            events.append(_state_event(
-                ts, "db", "db-primary", "restore_started",
-                f"snapshot={snap}", "critical", action.correlation_id,
-            ))
+            events.append(
+                _state_event(
+                    ts,
+                    "db",
+                    "db-primary",
+                    "restore_started",
+                    f"snapshot={snap}",
+                    "critical",
+                    action.correlation_id,
+                )
+            )
             log.info("ACTION APPLIED: restore_db from %s", snap)
         else:
             log.warning("ACTION FAILED: restore_db snapshot '%s' not found", snap)
@@ -232,19 +291,28 @@ def apply_action(state: WorldState, action: Action) -> list[Event]:
         state.network.disconnected = disconnected
         state.network.degraded_until = now + ttl
         # Call real network-sim container
-        _netsim_post("/degrade", {
-            "latency_ms": latency,
-            "drop_rate": drop,
-            "ttl_sec": ttl,
-            "disconnected": disconnected,
-            "correlation_id": action.correlation_id,
-        })
-        val = (f"latency_ms={latency},drop_rate={drop},"
-               f"disconnected={disconnected},ttl_sec={ttl}")
-        events.append(_state_event(
-            ts, "network", "network-sim", "network_degraded",
-            val, "high", action.correlation_id,
-        ))
+        _netsim_post(
+            "/degrade",
+            {
+                "latency_ms": latency,
+                "drop_rate": drop,
+                "ttl_sec": ttl,
+                "disconnected": disconnected,
+                "correlation_id": action.correlation_id,
+            },
+        )
+        val = f"latency_ms={latency},drop_rate={drop},disconnected={disconnected},ttl_sec={ttl}"
+        events.append(
+            _state_event(
+                ts,
+                "network",
+                "network-sim",
+                "network_degraded",
+                val,
+                "high",
+                action.correlation_id,
+            )
+        )
         log.info("ACTION APPLIED: degrade_network %s", val)
 
     elif act == "reset_network":
@@ -253,13 +321,23 @@ def apply_action(state: WorldState, action: Action) -> list[Event]:
         state.network.disconnected = False
         state.network.degraded_until = 0.0
         # Call real network-sim container
-        _netsim_post("/reset", {
-            "correlation_id": action.correlation_id,
-        })
-        events.append(_state_event(
-            ts, "network", "network-sim", "network_reset_applied",
-            "healthy", "medium", action.correlation_id,
-        ))
+        _netsim_post(
+            "/reset",
+            {
+                "correlation_id": action.correlation_id,
+            },
+        )
+        events.append(
+            _state_event(
+                ts,
+                "network",
+                "network-sim",
+                "network_reset_applied",
+                "healthy",
+                "medium",
+                action.correlation_id,
+            )
+        )
         log.info("ACTION APPLIED: reset_network")
 
     else:
@@ -275,52 +353,99 @@ def expire_state(state: WorldState) -> list[Event]:
     events: list[Event] = []
 
     # Rate limit expiry
-    if state.gateway.rate_limit_enabled and state.gateway.rate_limit_expires > 0 and now >= state.gateway.rate_limit_expires:
+    if (
+        state.gateway.rate_limit_enabled
+        and state.gateway.rate_limit_expires > 0
+        and now >= state.gateway.rate_limit_expires
+    ):
         state.gateway.rate_limit_enabled = False
         state.gateway.rate_limit_rps = 0
         state.gateway.rate_limit_burst = 0
         state.gateway.rate_limit_expires = 0.0
-        events.append(_state_event(
-            ts, "gateway", "api-gw-01", "rate_limit_expired", "auto",
-            "low", "",
-        ))
+        events.append(
+            _state_event(
+                ts,
+                "gateway",
+                "api-gw-01",
+                "rate_limit_expired",
+                "auto",
+                "low",
+                "",
+            )
+        )
         log.info("STATE EXPIRED: rate_limit on gateway")
 
     # Isolation expiry
-    if state.api.status == "isolated" and state.api.isolation_expires > 0 and now >= state.api.isolation_expires:
+    if (
+        state.api.status == "isolated"
+        and state.api.isolation_expires > 0
+        and now >= state.api.isolation_expires
+    ):
         state.api.status = "healthy"
         state.api.isolation_expires = 0.0
-        events.append(_state_event(
-            ts, "api", "api-gw-01", "isolation_expired", "auto",
-            "low", "",
-        ))
+        events.append(
+            _state_event(
+                ts,
+                "api",
+                "api-gw-01",
+                "isolation_expired",
+                "auto",
+                "low",
+                "",
+            )
+        )
         log.info("STATE EXPIRED: isolation on api")
 
     # Actor/IP block expiry
     expired_actors = [a for a, t in state.auth.blocked_actors.items() if now >= t]
     for a in expired_actors:
         del state.auth.blocked_actors[a]
-        events.append(_state_event(
-            ts, "auth", "gateway-01", "block_expired",
-            f"actor={a}", "low", "",
-        ))
+        events.append(
+            _state_event(
+                ts,
+                "auth",
+                "gateway-01",
+                "block_expired",
+                f"actor={a}",
+                "low",
+                "",
+            )
+        )
 
     expired_ips = [ip for ip, t in state.auth.blocked_ips.items() if now >= t]
     for ip in expired_ips:
         del state.auth.blocked_ips[ip]
-        events.append(_state_event(
-            ts, "auth", "gateway-01", "block_expired",
-            f"ip={ip}", "low", "",
-        ))
+        events.append(
+            _state_event(
+                ts,
+                "auth",
+                "gateway-01",
+                "block_expired",
+                f"ip={ip}",
+                "low",
+                "",
+            )
+        )
 
     # DB restore completion
-    if state.db.status == "restoring" and state.db.restoring_until > 0 and now >= state.db.restoring_until:
+    if (
+        state.db.status == "restoring"
+        and state.db.restoring_until > 0
+        and now >= state.db.restoring_until
+    ):
         state.db.status = "healthy"
         state.db.restoring_until = 0.0
-        events.append(_state_event(
-            ts, "db", "db-primary", "restore_completed", "auto",
-            "medium", "",
-        ))
+        events.append(
+            _state_event(
+                ts,
+                "db",
+                "db-primary",
+                "restore_completed",
+                "auto",
+                "medium",
+                "",
+            )
+        )
         log.info("STATE EXPIRED: db restore complete")
 
     # Network degradation expiry
@@ -329,10 +454,17 @@ def expire_state(state: WorldState) -> list[Event]:
         state.network.drop_rate = 0.0
         state.network.disconnected = False
         state.network.degraded_until = 0.0
-        events.append(_state_event(
-            ts, "network", "network-sim", "network_recovered",
-            "auto_ttl_expired", "low", "",
-        ))
+        events.append(
+            _state_event(
+                ts,
+                "network",
+                "network-sim",
+                "network_recovered",
+                "auto_ttl_expired",
+                "low",
+                "",
+            )
+        )
         log.info("STATE EXPIRED: network degradation TTL")
 
     return events
@@ -404,8 +536,13 @@ def read_new_actions(path: str, offset: int) -> tuple[list[Action], int]:
 
 
 def _state_event(
-    ts: str, component: str, source: str, event: str, value: str,
-    severity: str, correlation_id: str,
+    ts: str,
+    component: str,
+    source: str,
+    event: str,
+    value: str,
+    severity: str,
+    correlation_id: str,
 ) -> Event:
     return Event(
         timestamp=ts,

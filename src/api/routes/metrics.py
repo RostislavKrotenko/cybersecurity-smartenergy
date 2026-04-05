@@ -18,14 +18,16 @@ def get_metrics() -> MetricsResponse:
     raw_metrics = provider.get_metrics()
     by_policy = []
     for m in raw_metrics:
-        by_policy.append(PolicyMetrics(
-            policy=m.get("policy", ""),
-            availability_pct=m.get("availability_pct", 0.0),
-            total_downtime_hr=m.get("total_downtime_hr", 0.0),
-            mean_mttd_min=m.get("mean_mttd_min", 0.0),
-            mean_mttr_min=m.get("mean_mttr_min", 0.0),
-            incident_count=m.get("incident_count", 0),
-        ))
+        by_policy.append(
+            PolicyMetrics(
+                policy=m.get("policy", ""),
+                availability_pct=m.get("availability_pct", 0.0),
+                total_downtime_hr=m.get("total_downtime_hr", 0.0),
+                mean_mttd_min=m.get("mean_mttd_min", 0.0),
+                mean_mttr_min=m.get("mean_mttr_min", 0.0),
+                incident_count=m.get("incident_count", 0),
+            )
+        )
 
     raw_overall = provider.get_overall_metrics()
     overall = OverallMetrics(
@@ -47,14 +49,16 @@ def get_metrics_by_policy() -> list[PolicyMetrics]:
 
     result = []
     for m in raw_metrics:
-        result.append(PolicyMetrics(
-            policy=m.get("policy", ""),
-            availability_pct=m.get("availability_pct", 0.0),
-            total_downtime_hr=m.get("total_downtime_hr", 0.0),
-            mean_mttd_min=m.get("mean_mttd_min", 0.0),
-            mean_mttr_min=m.get("mean_mttr_min", 0.0),
-            incident_count=m.get("incident_count", 0),
-        ))
+        result.append(
+            PolicyMetrics(
+                policy=m.get("policy", ""),
+                availability_pct=m.get("availability_pct", 0.0),
+                total_downtime_hr=m.get("total_downtime_hr", 0.0),
+                mean_mttd_min=m.get("mean_mttd_min", 0.0),
+                mean_mttr_min=m.get("mean_mttr_min", 0.0),
+                incident_count=m.get("incident_count", 0),
+            )
+        )
 
     return result
 

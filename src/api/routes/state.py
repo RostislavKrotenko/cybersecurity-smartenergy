@@ -24,13 +24,15 @@ def get_state() -> StateResponse:
     components = []
     for state in raw_states:
         details = state.details if isinstance(state.details, dict) else {}
-        components.append(ComponentState(
-            component_id=state.component_id,
-            component_type=state.component_type,
-            status=state.status,
-            details=details,
-            last_updated=state.last_updated if state.last_updated else None,
-        ))
+        components.append(
+            ComponentState(
+                component_id=state.component_id,
+                component_type=state.component_type,
+                status=state.status,
+                details=details,
+                last_updated=state.last_updated if state.last_updated else None,
+            )
+        )
 
     return StateResponse(components=components)
 
