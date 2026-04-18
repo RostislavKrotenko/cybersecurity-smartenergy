@@ -1072,14 +1072,12 @@ def stream_demo_highrate(
         # 0. Read and apply actions from Analyzer -----------------------
         if actions_path is not None:
             new_actions, actions_offset = read_new_actions(
-                str(actions_path),
-                actions_offset,
+                str(actions_path), actions_offset,
             )
             if new_actions:
                 log.info(
                     "ACTIONS READ: %d new actions from %s",
-                    len(new_actions),
-                    actions_path,
+                    len(new_actions), actions_path,
                 )
             acks: list[ActionAck] = []
             for act in new_actions:
@@ -1088,45 +1086,36 @@ def stream_demo_highrate(
                     events.extend(state_events)
                     # Determine the primary state-change event name
                     se_name = state_events[0].event if state_events else act.action
-                    acks.append(
-                        ActionAck(
-                            action_id=act.action_id,
-                            correlation_id=act.correlation_id,
-                            target_component=act.target_component,
-                            action=act.action,
-                            applied_ts_utc=datetime.now(tz=timezone.utc).strftime(
-                                "%Y-%m-%dT%H:%M:%SZ",
-                            ),
-                            result="success",
-                            state_event=se_name,
-                        )
-                    )
+                    acks.append(ActionAck(
+                        action_id=act.action_id,
+                        correlation_id=act.correlation_id,
+                        target_component=act.target_component,
+                        action=act.action,
+                        applied_ts_utc=datetime.now(tz=timezone.utc).strftime(
+                            "%Y-%m-%dT%H:%M:%SZ",
+                        ),
+                        result="success",
+                        state_event=se_name,
+                    ))
                     log.info(
                         "APPLIED action_id=%s %s -> %s (cor=%s)",
-                        act.action_id,
-                        act.action,
-                        se_name,
-                        act.correlation_id,
+                        act.action_id, act.action, se_name, act.correlation_id,
                     )
                 except Exception as exc:
-                    acks.append(
-                        ActionAck(
-                            action_id=act.action_id,
-                            correlation_id=act.correlation_id,
-                            target_component=act.target_component,
-                            action=act.action,
-                            applied_ts_utc=datetime.now(tz=timezone.utc).strftime(
-                                "%Y-%m-%dT%H:%M:%SZ",
-                            ),
-                            result="failed",
-                            error=str(exc),
-                        )
-                    )
+                    acks.append(ActionAck(
+                        action_id=act.action_id,
+                        correlation_id=act.correlation_id,
+                        target_component=act.target_component,
+                        action=act.action,
+                        applied_ts_utc=datetime.now(tz=timezone.utc).strftime(
+                            "%Y-%m-%dT%H:%M:%SZ",
+                        ),
+                        result="failed",
+                        error=str(exc),
+                    ))
                     log.error(
                         "FAILED action_id=%s %s: %s",
-                        act.action_id,
-                        act.action,
-                        exc,
+                        act.action_id, act.action, exc,
                     )
             # Write ACKs to applied file
             if acks and applied_path is not None:
@@ -1137,14 +1126,12 @@ def stream_demo_highrate(
                     fh.flush()
                 log.info(
                     "ACKS WRITTEN: %d -> %s",
-                    len(acks),
-                    applied_path,
+                    len(acks), applied_path,
                 )
             if new_actions:
                 log.info(
                     "ACTIONS APPLIED: %d actions, %d state-change events generated",
-                    len(new_actions),
-                    len(events),
+                    len(new_actions), len(events),
                 )
 
         # 0b. Expire transient states -----------------------------------
@@ -1176,9 +1163,7 @@ def stream_demo_highrate(
             if len(filtered_burst) < len(burst):
                 log.info(
                     "World state suppressed %d/%d events from %s burst",
-                    len(burst) - len(filtered_burst),
-                    len(burst),
-                    name,
+                    len(burst) - len(filtered_burst), len(burst), name,
                 )
             events.extend(filtered_burst)
             attack_idx += 1
@@ -1257,12 +1242,8 @@ def _should_suppress(ev: Event, world: WorldState) -> bool:
         return True
 
     # Isolated component doesn't generate normal events
-    if is_isolated(world, ev.component) and ev.event not in (
-        "isolation_enabled",
-        "isolation_released",
-        "isolation_expired",
-        "action_result",
-    ):
+    if is_isolated(world, ev.component) and ev.event not in ("isolation_enabled", "isolation_released",
+                            "isolation_expired", "action_result"):
         return True
 
     # During DB restore, suppress db_error
@@ -1270,11 +1251,7 @@ def _should_suppress(ev: Event, world: WorldState) -> bool:
         return True
 
     # Network disconnected suppresses normal network-dependent events
-    return (
-        world.network.disconnected
-        and ev.component in ("api", "ui")
-        and ev.event in ("http_request", "auth_success")
-    )
+    return world.network.disconnected and ev.component in ("api", "ui") and ev.event in ("http_request", "auth_success")
 
 
 def _generate_network_errors(
@@ -1309,21 +1286,19 @@ def _generate_network_errors(
         tpl = rng.choice(error_templates)
         evt_type, val, comp, src = tpl
         sev = "critical" if world.network.disconnected else "high"
-        events.append(
-            Event(
-                timestamp=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                source=src,
-                component=comp,
-                event=evt_type,
-                key="status" if evt_type == "service_status" else "endpoint",
-                value=val,
-                severity=sev,
-                actor="system",
-                ip="",
-                unit="",
-                tags="network;degradation",
-                correlation_id="",
-            )
-        )
+        events.append(Event(
+            timestamp=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            source=src,
+            component=comp,
+            event=evt_type,
+            key="status" if evt_type == "service_status" else "endpoint",
+            value=val,
+            severity=sev,
+            actor="system",
+            ip="",
+            unit="",
+            tags="network;degradation",
+            correlation_id="",
+        ))
 
     return events
