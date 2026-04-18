@@ -135,6 +135,7 @@ class EventSink(ABC):
 
 class ActionStatus(str, Enum):
     """Status of an emitted action."""
+
     PENDING = "pending"
     EMITTED = "emitted"
     APPLIED = "applied"
@@ -144,6 +145,7 @@ class ActionStatus(str, Enum):
 @dataclass
 class ActionResult:
     """Result of action execution."""
+
     success: bool
     action_id: str
     status: ActionStatus
@@ -299,6 +301,7 @@ class ActionExecutor(ABC):
 @dataclass
 class ComponentState:
     """State of a single component."""
+
     component_id: str
     component_type: str
     status: str  # healthy, degraded, isolated, down
