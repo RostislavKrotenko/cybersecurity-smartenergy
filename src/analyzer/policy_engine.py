@@ -13,16 +13,16 @@ log = logging.getLogger(__name__)
 def load_policies(config_dir: str) -> dict[str, Any]:
     """Завантажує policies.yaml.
 
-    Args:
+    Аргументи:
         config_dir: Шлях до директорії конфігурації.
 
-    Returns:
+    Повертає:
         Словник політик.
     """
     path = f"{config_dir}/policies.yaml"
     cfg = load_yaml(path)
     names = list(cfg.get("policies", {}).keys())
-    log.info("Loaded %d policies from %s: %s", len(names), path, ", ".join(names))
+    log.info("Завантажено %d політик з %s: %s", len(names), path, ", ".join(names))
     return cfg
 
 
@@ -32,16 +32,16 @@ def get_modifiers(
 ) -> dict[str, dict[str, float]]:
     """Повертає модифікатори для вказаної політики.
 
-    Args:
+    Аргументи:
         policies_cfg: Конфіг політик.
         policy_name: Назва політики.
 
-    Returns:
+    Повертає:
         Словник модифікаторів по threat_type.
     """
     policy = policies_cfg.get("policies", {}).get(policy_name)
     if policy is None:
-        log.warning("Policy '%s' not found — using default multipliers (1.0)", policy_name)
+        log.warning("Політику '%s' не знайдено — використовуються типові множники (1.0)", policy_name)
         return {}
     return policy.get("modifiers", {})
 
@@ -65,11 +65,11 @@ def rank_controls(
 ) -> list[dict[str, Any]]:
     """Ранжує політики за ефективністю контролів.
 
-    Args:
+    Аргументи:
         policies_cfg: Конфіг політик.
         policy_names: Список назв політик.
 
-    Returns:
+    Повертає:
         Список, відсортований за ефективністю спадно.
     """
     results: list[dict[str, Any]] = []
@@ -79,7 +79,7 @@ def rank_controls(
         controls = policy.get("controls", {})
         modifiers = policy.get("modifiers", {})
 
-        # Average mttd+mttr reduction across all threat types
+        # Середнє зменшення mttd+mttr для всіх threat_type.
         mttd_vals = [m.get("mttd_multiplier", 1.0) for m in modifiers.values()]
         mttr_vals = [m.get("mttr_multiplier", 1.0) for m in modifiers.values()]
         avg_mttd = sum(mttd_vals) / len(mttd_vals) if mttd_vals else 1.0

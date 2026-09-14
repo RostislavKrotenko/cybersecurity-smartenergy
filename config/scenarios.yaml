@@ -1,7 +1,7 @@
 # =============================================================================
-# scenarios.yaml — Emulator: фоновий трафік + 5 сценаріїв атак
+# scenarios.yaml — емулятор: фоновий трафік + сценарії атак
 # =============================================================================
-# Emulator seed фіксує генерацію: однаковий seed → однакові дані.
+# Seed емулятора фіксує генерацію: однаковий seed → однакові дані.
 # Кожен сценарій описує: що генерується, коли, на яких компонентах, з якою
 # інтенсивністю та тривалістю.
 # =============================================================================
@@ -12,7 +12,7 @@
 simulation:
   duration_sec: 3600             # загальна тривалість (модельний час)
   time_step_ms: 100              # крок генератора
-  seed: 42                       # overridden через CLI --seed
+  seed: 42                       # може бути перевизначений через CLI --seed
   start_time: "2026-02-26T10:00:00Z"
 
 # -----------------------------------------------------------------------------
@@ -58,7 +58,7 @@ background:
     tags: ["auth", "success"]
 
   system_health:
-    description: "Heartbeat та status-перевірки"
+    description: "Heartbeat та перевірки статусу"
     sources: [db-primary, db-replica, switch-core-01, firewall-01]
     component: [db, network]
     event: service_status
@@ -78,7 +78,7 @@ attacks:
   # ===========================================================================
   brute_force:
     enabled: true
-    description: "Brute-force атака на аутентифікацію edge-шлюзу"
+    description: "Brute-force атака на автентифікацію edge-шлюзу"
     threat_type: credential_attack
     target_components: [edge, api]
     target_sources: [gateway-01, scada-hmi-01]
@@ -96,7 +96,7 @@ attacks:
           - { key: username, values: [admin, root, operator, test, guest] }
         interval_ms: [200, 1500]          # висока частота
         count: [15, 50]                   # кількість спроб
-        severity_progression:             # severity зростає з кількістю спроб
+        severity_progression:             # критичність зростає з кількістю спроб
           - { threshold: 0, severity: medium }
           - { threshold: 10, severity: high }
         tags: ["auth", "failure"]
@@ -115,7 +115,7 @@ attacks:
     correlation_prefix: "COR-BF"
 
   # ===========================================================================
-  # 2. DDoS / API ABUSE — флуд на REST API
+  # 2. DDoS / зловживання API — флуд на REST API
   # ===========================================================================
   ddos_abuse:
     enabled: true
@@ -153,7 +153,7 @@ attacks:
     correlation_prefix: "COR-DDOS"
 
   # ===========================================================================
-  # 3. TELEMETRY SPOOFING — підміна показань (MitM)
+  # 3. Підміна телеметрії — підміна показань (MitM)
   # ===========================================================================
   telemetry_spoofing:
     enabled: true
@@ -176,16 +176,16 @@ attacks:
           - { key: frequency_hz, range: [30.0, 45.0], unit: Hz }   # норма 49.8-50.2
         interval_ms: [500, 2000]
         count: [10, 30]
-        severity: low                     # severity низький (виглядає як звичайна телеметрія!)
+        severity: low                     # критичність низька, виглядає як звичайна телеметрія
         tags: ["telemetry", "periodic"]   # маскується під нормальні дані
 
-      # Детекція anomaly (якщо monitoring увімкнено) — генерується аналітиком
-      # Emulator НЕ видає "anomaly" тег — це завдання Analyzer/Detector
+      # Детекція аномалії за умови активного monitoring генерується аналітиком.
+      # Емулятор не видає тег "anomaly": це завдання Analyzer/Detector.
 
     correlation_prefix: "COR-SPOOF"
 
   # ===========================================================================
-  # 4. UNAUTHORIZED COMMAND — несанкціоноване управління
+  # 4. Несанкціонована команда — несанкціоноване управління
   # ===========================================================================
   unauthorized_command:
     enabled: true
@@ -200,7 +200,7 @@ attacks:
 
     injection:
       - event: cmd_exec
-        actor_pool: [readonly, unknown, guest]     # немають прав на команди
+        actor_pool: [readonly, unknown, guest]     # не мають прав на команди
         ip_pool: ["10.0.5.88", "10.0.5.89"]
         keys:
           - { key: command, values: [breaker_open, breaker_close, set_voltage, emergency_shutdown, firmware_update] }
@@ -212,11 +212,11 @@ attacks:
     correlation_prefix: "COR-UCMD"
 
   # ===========================================================================
-  # 5. OUTAGE / DB CORRUPTION — відмова сервісу або пошкодження БД
+  # 5. Відмова / пошкодження БД — відмова сервісу або пошкодження БД
   # ===========================================================================
   outage_db_corruption:
     enabled: true
-    description: "Каскадна відмова: DB corruption → service degradation → outage"
+    description: "Каскадна відмова: пошкодження БД → деградація сервісу → outage"
     threat_type: outage
     target_components: [db, api, collector]
     target_sources: [db-primary, api-gw-01, collector-01]
@@ -226,7 +226,7 @@ attacks:
       duration_sec: [120, 300]
 
     injection:
-      # Фаза 1: DB errors
+      # Фаза 1: помилки БД
       - event: db_error
         source: db-primary
         keys:
@@ -239,7 +239,7 @@ attacks:
           - { threshold: 3, severity: critical }
         tags: ["system", "db", "corruption"]
 
-      # Фаза 2: service degradation (каскад)
+      # Фаза 2: деградація сервісу (каскад)
       - event: service_status
         source_pool: [db-primary, api-gw-01, collector-01]
         delay_after_phase1_sec: [5, 15]
@@ -250,7 +250,7 @@ attacks:
         severity: critical
         tags: ["system", "outage"]
 
-      # Фаза 3: (якщо backup є) — rollback
+      # Фаза 3: якщо backup є, виконується rollback
       - event: service_status
         source: db-primary
         delay_after_phase2_sec: [30, 120]     # залежить від політики backup
@@ -265,7 +265,7 @@ attacks:
     correlation_prefix: "COR-OUT"
 
   # ===========================================================================
-  # 6. NETWORK FAILURE — відмова мережі / втрата зв'язку з edge (A6)
+  # 6. Відмова мережі — втрата зв'язку з edge (A6)
   # ===========================================================================
   network_failure:
     enabled: true
@@ -279,7 +279,7 @@ attacks:
       duration_sec: [60, 180]
 
     injection:
-      # Фаза 1: деградація мережі (втрата пакетів, високий latency)
+      # Фаза 1: деградація мережі (втрата пакетів, висока затримка)
       - event: service_status
         source_pool: [switch-core-01, firewall-01]
         keys:

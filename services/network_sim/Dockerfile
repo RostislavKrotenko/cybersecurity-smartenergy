@@ -1,5 +1,5 @@
 FROM python:3.11-slim
 WORKDIR /work
-# No extra deps needed -- stdlib only
+# Додаткові залежності не потрібні, використовується лише stdlib.
 COPY services/network_sim/app.py /work/app.py
 CMD ["python", "app.py"]

@@ -16,87 +16,88 @@ def build_parser() -> argparse.ArgumentParser:
     """Створює та налаштовує CLI-парсер аргументів аналізатора."""
     p = argparse.ArgumentParser(
         prog="analyzer",
-        description="SmartEnergy Analyzer — light SIEM: detect, correlate, report",
+        description="Аналізатор SmartEnergy — легка SIEM: детекція, кореляція, звіт",
     )
     p.add_argument(
         "--input",
         default="data/events.csv",
-        help="Input file (CSV or JSONL). Format auto-detected by extension. "
-        "Default: data/events.csv",
+        help="Вхідний файл (CSV або JSONL). Формат визначається за розширенням. "
+        "За замовчуванням: data/events.csv",
     )
     p.add_argument(
         "--out-dir",
         default="out",
-        help="Output directory. Default: out/",
+        help="Директорія виходу. За замовчуванням: out/",
     )
     p.add_argument(
         "--policies",
         default="all",
-        help=("Comma-separated policy names to analyse. Use 'all' for all available. Default: all"),
+        help="Назви політик через кому. Значення 'all' запускає всі доступні політики.",
     )
     p.add_argument(
         "--config-dir",
         default="config",
-        help="Directory with rules.yaml and policies.yaml. Default: config/",
+        help="Директорія з rules.yaml і policies.yaml. За замовчуванням: config/",
     )
     p.add_argument(
         "--horizon-days",
         type=float,
         default=None,
         help=(
-            "Analysis horizon in days. If omitted, uses the time span "
-            "of the input data (minimum 1 hour)."
+            "Горизонт аналізу в днях. Якщо не заданий, використовується часовий "
+            "діапазон вхідних даних (мінімум 1 година)."
         ),
     )
     p.add_argument(
         "--seed",
         type=int,
         default=None,
-        help="Random seed (reserved for stochastic response simulation).",
+        help="Seed генератора випадковості для відтворюваності симуляції реагування.",
     )
     p.add_argument(
         "--watch",
         action="store_true",
         default=False,
-        help="Enable watch mode: tail the input JSONL and re-analyse on new data.",
+        help="Увімкнути watch-режим: читати input JSONL tail-режимом і переаналізовувати нові дані.",
     )
     p.add_argument(
         "--poll-interval-ms",
         type=int,
         default=1000,
-        help="Poll interval for watch mode, ms (default: 1000).",
+        help="Інтервал опитування у watch-режимі, мс (за замовчуванням: 1000).",
     )
     p.add_argument(
         "--rolling-window-min",
         type=float,
         default=5.0,
         help=(
-            "Rolling analysis window in minutes (watch mode only). "
-            "Events older than this are dropped before each analysis cycle "
-            "so that the incident set refreshes over time. Default: 5."
+            "Rolling-вікно аналізу у хвилинах (тільки watch-режим). "
+            "Старіші події відкидаються перед кожним циклом, щоб набір "
+            "інцидентів оновлювався з часом. За замовчуванням: 5."
         ),
     )
     p.add_argument(
         "--actions-path",
         type=str,
         default=None,
-        help="Path to actions.jsonl for closed-loop output (watch mode only). "
-        "When set, the analyzer emits response actions for the Emulator.",
+        help="Шлях до actions.jsonl для closed-loop виходу (тільки watch-режим). "
+        "Якщо задано, аналізатор емітить дії реагування для емулятора.",
     )
     p.add_argument(
         "--applied-path",
         type=str,
         default=None,
-        help="Path to actions_applied.jsonl (ACK input from Emulator). "
-        "Analyzer reads this to update action statuses and component state.",
+        help="Шлях до actions_applied.jsonl (ACK-вхід від емулятора). "
+        "Аналізатор читає його для оновлення статусів дій і стану компонентів.",
     )
     p.add_argument(
         "--state-input",
         type=str,
         default=None,
         help=(
-            "Optional JSONL path with raw state-change events (e.g. data/live/events.jsonl). "
-            "Used only to update component state.csv in watch mode."
+            "Опційний JSONL шлях із сирими подіями зміни стану, наприклад "
+            "data/live/events.jsonl. Використовується лише для оновлення "
+            "state.csv у watch-режимі."
         ),
     )
     p.add_argument(
@@ -122,7 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level. Default: INFO",
+        help="Рівень логування. За замовчуванням: INFO",
     )
     return p
 

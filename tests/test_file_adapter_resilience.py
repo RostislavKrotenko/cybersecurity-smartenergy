@@ -1,4 +1,4 @@
-"""Тести стійкості file-based адаптерів до truncate/rotation і битих рядків."""
+"""Тести стійкості файлових адаптерів до truncate/rotation і битих рядків."""
 
 from __future__ import annotations
 

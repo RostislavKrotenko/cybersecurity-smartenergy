@@ -1,14 +1,14 @@
-"""End-to-end test: incident -> decision -> emit_actions -> emulator apply_actions.
+"""Наскрізний тест: інцидент -> рішення -> emit_actions -> apply_actions емулятора.
 
-Verifies the full closed-loop cycle where:
-1. A set of attack events feeds the detector.
-2. The detector produces alerts; the correlator groups them into incidents.
-3. The decision engine maps incidents to concrete Action objects.
-4. Actions are written to a JSONL file and read back.
-5. The emulator applies the actions to WorldState.
-6. WorldState changes are observable (blocked actors, rate limiting, etc.)
-   and generate corresponding state-change events.
-7. State-change events confirm actions (emitted -> applied).
+Перевіряє повний closed-loop цикл:
+1. Набір атакувальних подій потрапляє в детектор.
+2. Детектор формує алерти, а корелятор групує їх в інциденти.
+3. Двигун рішень перетворює інциденти на конкретні Action-об'єкти.
+4. Дії записуються в JSONL файл і зчитуються назад.
+5. Емулятор застосовує дії до WorldState.
+6. Зміни WorldState видимі через блокування акторів, rate limiting тощо
+   та генерують відповідні state-change події.
+7. Події зміни стану підтверджують дії (emitted -> applied).
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from src.shared.config_loader import load_yaml
 
 
 def _bf_events(n: int = 8, ip: str = "10.0.0.99") -> list[Event]:
-    """Generate *n* brute-force auth_failure events from *ip*."""
+    """Генерує *n* brute-force auth_failure подій з *ip*."""
     return [
         Event(
             timestamp=f"2026-03-01T12:00:{i:02d}Z",
@@ -56,7 +56,7 @@ def _bf_events(n: int = 8, ip: str = "10.0.0.99") -> list[Event]:
 
 
 def _ddos_events(n: int = 12) -> list[Event]:
-    """Generate *n* rate_exceeded events plus a service_status degraded."""
+    """Генерує *n* rate_exceeded подій і degraded service_status."""
     events = [
         Event(
             timestamp=f"2026-03-01T12:01:{i:02d}Z",
@@ -92,7 +92,7 @@ def _ddos_events(n: int = 12) -> list[Event]:
 
 
 class TestClosedLoopActionCycle:
-    """Full closed-loop: events -> detect -> correlate -> decide -> apply."""
+    """Повний closed-loop: події -> detect -> correlate -> decide -> apply."""
 
     def test_brute_force_blocks_actor(self):
         rules_cfg = load_yaml("config/rules.yaml")
@@ -116,9 +116,9 @@ class TestClosedLoopActionCycle:
             evts = apply_action(state, a)
             all_state_events.extend(evts)
 
-        # Actor or IP should be blocked
+        # Актор або IP має бути заблокований.
         assert len(state.auth.blocked_actors) > 0 or len(state.auth.blocked_ips) > 0
-        # State-change event should have been generated
+        # Має бути згенерована state-change подія.
         assert any(e.event == "actor_blocked" for e in all_state_events)
 
     def test_ddos_enables_rate_limit(self):
@@ -144,7 +144,7 @@ class TestClosedLoopActionCycle:
         assert any(e.event == "rate_limit_enabled" for e in all_state_events)
 
     def test_file_roundtrip(self):
-        """Write actions to JSONL, read back, apply -- verify world state."""
+        """Записує дії в JSONL, читає назад і перевіряє WorldState."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "actions.jsonl")
 
@@ -168,7 +168,7 @@ class TestClosedLoopActionCycle:
             ]
             emit_actions(actions, path)
 
-            # Verify file was created and is valid JSONL
+            # Перевірка, що файл створений і є валідним JSONL.
             assert os.path.exists(path)
             with open(path) as f:
                 lines = f.readlines()
@@ -177,11 +177,11 @@ class TestClosedLoopActionCycle:
                 obj = json.loads(line)
                 assert "action" in obj
 
-            # Read back via the emulator's reader
+            # Зчитування через reader емулятора.
             read_acts, _offset = read_new_actions(path, 0)
             assert len(read_acts) == 2
 
-            # Apply to world
+            # Застосування до WorldState.
             state = WorldState()
             all_events: list[Event] = []
             for a in read_acts:
@@ -195,7 +195,7 @@ class TestClosedLoopActionCycle:
 
 
 class TestActionConfirmation:
-    """Verify that state-change events mark actions as 'applied'."""
+    """Перевіряє, що state-change події маркують дії як 'applied'."""
 
     def test_confirm_marks_applied(self):
         action = Action(
@@ -263,7 +263,7 @@ class TestActionConfirmation:
             params={},
             reason="test",
             correlation_id="INC-0001",
-            status="applied",  # already applied
+            status="applied",  # вже застосовано
         )
         index: dict[str, list[Action]] = {"INC-0001": [action]}
 
@@ -303,7 +303,7 @@ class TestActionConfirmation:
         assert changed is False
 
     def test_full_cycle_emit_apply_confirm(self):
-        """End-to-end: emit action -> emulator applies -> state-change event -> confirm."""
+        """Наскрізно: emit action -> застосування емулятором -> state-change -> confirm."""
         action = Action(
             ts_utc="2026-03-01T12:00:00Z",
             action="enable_rate_limit",
@@ -315,18 +315,18 @@ class TestActionConfirmation:
         )
         index: dict[str, list[Action]] = {"INC-0001": [action]}
 
-        # Emulator applies the action
+        # Емулятор застосовує дію.
         state = WorldState()
         state_events = apply_action(state, action)
         assert len(state_events) > 0
         assert is_rate_limited(state)
 
-        # Analyzer confirms action from state-change events
+        # Аналізатор підтверджує дію за state-change подіями.
         changed = _confirm_actions(state_events, index)
         assert changed is True
         assert action.status == "applied"
 
-        # State store also picks up the change
+        # Сховище стану також підхоплює зміну.
         store = ComponentStateStore()
         store.process_events(state_events)
         assert store.gateway.status == "rate_limited"
@@ -335,7 +335,7 @@ class TestActionConfirmation:
 
 
 class TestActionAckMechanism:
-    """Tests for the ACK file mechanism (actions_applied.jsonl)."""
+    """Тести механізму ACK-файла (actions_applied.jsonl)."""
 
     def test_action_ack_json_roundtrip(self):
         ack = ActionAck(
@@ -360,7 +360,7 @@ class TestActionAckMechanism:
             target_component="gateway",
         )
         assert a.action_id.startswith("ACT-")
-        assert len(a.action_id) == 12  # "ACT-" + 8 hex chars
+        assert len(a.action_id) == 12  # "ACT-" + 8 hex-символів
 
     def test_action_id_in_json(self):
         a = Action(
@@ -376,7 +376,7 @@ class TestActionAckMechanism:
         from src.analyzer.pipeline import _read_acks
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create an action
+            # Створення дії.
             action = Action(
                 ts_utc="2026-03-01T12:00:00Z",
                 action="enable_rate_limit",
@@ -389,7 +389,7 @@ class TestActionAckMechanism:
             )
             actions_by_id = {"ACT-test0001": action}
 
-            # Write an ACK
+            # Запис ACK.
             ack = ActionAck(
                 action_id="ACT-test0001",
                 correlation_id="INC-0001",
@@ -414,11 +414,11 @@ class TestActionAckMechanism:
                 out_p,
             )
 
-            # Action should be marked as applied
+            # Дія має бути позначена як applied.
             assert action.status == "applied"
             assert changed is True
 
-            # State store should reflect the change
+            # Сховище стану має відобразити зміну.
             assert store.gateway.status == "rate_limited"
             assert "rps=50" in store.gateway.details
 
@@ -463,5 +463,5 @@ class TestActionAckMechanism:
 
             assert action.status == "failed"
             assert changed is True
-            # State store should NOT change for failed results
+            # Сховище стану не має змінюватися для failed-результатів.
             assert store.db.status == "healthy"

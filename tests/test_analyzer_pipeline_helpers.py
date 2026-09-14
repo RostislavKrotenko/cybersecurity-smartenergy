@@ -1,4 +1,4 @@
-"""Додаткові unit-тести helper-частини analyzer pipeline."""
+"""Додаткові unit-тести допоміжної частини аналітичного конвеєра."""
 
 from __future__ import annotations
 

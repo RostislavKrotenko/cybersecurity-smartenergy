@@ -1,27 +1,27 @@
-"""Adapters package - plug-and-play implementations of abstract interfaces.
+"""Пакет адаптерів із підмінними реалізаціями абстрактних інтерфейсів.
 
-Available adapters:
-- FileEventSource: Read events from CSV/JSONL files
-- FileEventSink: Write events to JSONL files
-- FileActionSink: Write actions to JSONL files
-- FileActionFeedback: Read ACKs from JSONL files
-- FileIncidentSource: Read incidents from CSV files
-- FileActionSource: Read actions from CSV files
-- FileMetricsSource: Read metrics from CSV files
-- FileStateSource: Read component state from CSV files
-- SimulatedStateProvider: State from emulator WorldState
+Доступні файлові адаптери:
+- FileEventSource: читає події з CSV/JSONL
+- FileEventSink: записує події в JSONL
+- FileActionSink: записує дії в JSONL
+- FileActionFeedback: читає ACK із JSONL
+- FileIncidentSource: читає інциденти з CSV
+- FileActionSource: читає дії з CSV
+- FileMetricsSource: читає метрики з CSV
+- FileStateSource: читає стан компонентів з CSV
+- SimulatedStateProvider: читає стан із WorldState емулятора
 
-How it works:
+Поточний файловий контур:
     Emulator (events) -> FileEventSink -> events.jsonl
     events.jsonl -> FileEventSource -> Analyzer -> FileActionSink -> actions.jsonl
     Analyzer -> incidents.csv, actions.csv, state.csv
     Dashboard <- FileIncidentSource, FileActionSource, FileStateSource
 
-When real SmartEnergy infrastructure is available:
-    Replace File* adapters with Kafka*, Scada*, Soar*, Siem* adapters.
-    The interfaces allow swapping data sources without changing business logic.
+Коли буде доступна реальна інфраструктура SmartEnergy, File* адаптери можна
+замінити Kafka*, Scada*, Soar* або Siem* адаптерами без зміни бізнес-логіки.
 """
 
+from src.adapters.action_router import ActionRouter, ComponentControls
 from src.adapters.file_adapter import (
     FileActionFeedback,
     FileActionSink,
@@ -35,6 +35,8 @@ from src.adapters.file_adapter import (
 )
 
 __all__ = [
+    "ActionRouter",
+    "ComponentControls",
     "FileActionFeedback",
     "FileActionSink",
     "FileActionSource",

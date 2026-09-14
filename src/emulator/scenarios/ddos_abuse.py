@@ -1,4 +1,4 @@
-"""Сценарій: DDoS / API-abuse flood."""
+"""Сценарій: DDoS / зловживання API."""
 
 from __future__ import annotations
 
@@ -30,7 +30,6 @@ class DDoSAbuseScenario(BaseScenario):
         for phase_idx, phase in enumerate(injections):
             ev_type: str = phase["event"]
 
-            # delay from previous phase
             delay_key = [k for k in phase if k.startswith("delay_after_phase")]
             if delay_key:
                 d = phase[delay_key[0]]

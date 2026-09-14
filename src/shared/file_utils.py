@@ -13,7 +13,7 @@ def atomic_write(path: str, content: str) -> None:
 
     Використовує tempfile + os.replace для гарантії цілісності.
 
-    Args:
+    Аргументи:
         path: Шлях до файлу.
         content: Вміст для запису.
     """

@@ -108,7 +108,7 @@ class TestCompute:
         assert m.incidents_by_severity["high"] == 1
         assert m.mean_mttd_min == round(30.0 / 60, 2)
         assert m.mean_mttr_min == round(120.0 / 60, 2)
-        # Downtime = recover - detect = 120s = 0.0333h
+        # Простій = recover - detect = 120с = 0.0333год.
         assert m.total_downtime_hr == pytest.approx(120 / 3600, abs=0.001)
         assert m.availability_pct < 100.0
 
@@ -122,7 +122,7 @@ class TestCompute:
             mttr_sec=1800.0,
         )
         m = compute([inc], "minimal", horizon_sec=7200)
-        # Downtime = detect->recover = 30 minutes = 1800 seconds
+        # Простій = detect->recover = 30 хвилин = 1800 секунд.
         expected_dt_hr = 1800 / 3600
         assert m.total_downtime_hr == pytest.approx(expected_dt_hr, abs=0.001)
         expected_avail = (1 - 1800 / 7200) * 100
@@ -138,7 +138,7 @@ class TestCompute:
             mttr_sec=600.0,
         )
         m = compute([inc], "baseline", horizon_sec=3600)
-        # low severity → not in {"high", "critical"} → no downtime
+        # low severity не входить у {"high", "critical"} → простою немає.
         assert m.total_downtime_hr == 0.0
         assert m.availability_pct == 100.0
         assert m.incidents_total == 1
@@ -170,7 +170,7 @@ class TestCompute:
             mttr_sec=570.0,
         )
         m = compute([inc1, inc2], "baseline", horizon_sec=7200)
-        # Merged detect intervals: 10:00:30 -> 10:15:00 = 870s
+        # Об'єднані detect-інтервали: 10:00:30 -> 10:15:00 = 870с.
         assert m.total_downtime_hr == pytest.approx(870 / 3600, abs=0.001)
         assert m.incidents_total == 2
 
@@ -200,31 +200,31 @@ class TestCompute:
 
 
 class TestDowntimeDefinition:
-    """Regression tests ensuring downtime = detect_ts -> recover_ts (excludes MTTD).
+    """Регресійні тести: downtime = detect_ts -> recover_ts без MTTD.
 
-    These tests guard the canonical definition:
-        downtime interval = [detect_ts, recover_ts]
-        downtime =/= [start_ts, recover_ts]   (that would include MTTD)
-    Only severity >= high counts.  Overlapping intervals are merged.
+    Ці тести фіксують канонічне визначення:
+        інтервал простою = [detect_ts, recover_ts]
+        простій =/= [start_ts, recover_ts]   (це включило б MTTD)
+    Враховується тільки severity >= high. Перекриті інтервали об'єднуються.
     """
 
     def test_downtime_equals_detect_to_recover(self):
-        """Downtime must equal recover_ts - detect_ts, NOT start_ts - recover_ts."""
+        """Простій має дорівнювати recover_ts - detect_ts, не start_ts - recover_ts."""
         inc = make_incident(
             severity="critical",
             start_ts="2026-02-26T10:00:00Z",
-            detect_ts="2026-02-26T10:05:00Z",  # MTTD = 300s
-            recover_ts="2026-02-26T10:20:00Z",  # MTTR = 900s
+            detect_ts="2026-02-26T10:05:00Z",  # MTTD = 300с
+            recover_ts="2026-02-26T10:20:00Z",  # MTTR = 900с
             mttd_sec=300.0,
             mttr_sec=900.0,
         )
         m = compute([inc], "baseline", horizon_sec=3600)
-        # Expected: 15 min = 900s (detect->recover), NOT 20 min = 1200s (start->recover)
+        # Очікування: 15 хв = 900с (detect->recover), не 20 хв = 1200с.
         expected_sec = 900.0
         assert m.total_downtime_hr == pytest.approx(expected_sec / 3600, abs=0.0001)
 
     def test_downtime_excludes_low_medium(self):
-        """Low and medium incidents must not contribute to downtime."""
+        """Low і medium інциденти не мають впливати на простій."""
         inc_low = make_incident(
             severity="low",
             start_ts="2026-02-26T10:00:00Z",
@@ -247,7 +247,7 @@ class TestDowntimeDefinition:
         assert m.incidents_total == 2
 
     def test_overlapping_intervals_merged_correctly(self):
-        """Two overlapping high incidents should produce one merged downtime block."""
+        """Два перекриті high інциденти мають дати один блок простою."""
         inc1 = make_incident(
             severity="high",
             start_ts="2026-02-26T10:00:00Z",
@@ -265,11 +265,11 @@ class TestDowntimeDefinition:
             mttr_sec=780.0,
         )
         m = compute([inc1, inc2], "baseline", horizon_sec=7200)
-        # Merged detect intervals: 10:01 -> 10:25 = 24 min = 1440s
+        # Об'єднані detect-інтервали: 10:01 -> 10:25 = 24 хв = 1440с.
         assert m.total_downtime_hr == pytest.approx(1440 / 3600, abs=0.001)
 
     def test_availability_uses_correct_downtime(self):
-        """Availability = (1 - downtime/horizon) * 100 where downtime = detect->recover."""
+        """Availability = (1 - downtime/horizon) * 100, де downtime = detect->recover."""
         inc = make_incident(
             severity="high",
             start_ts="2026-02-26T10:00:00Z",
@@ -280,12 +280,12 @@ class TestDowntimeDefinition:
         )
         horizon = 3600.0
         m = compute([inc], "baseline", horizon_sec=horizon)
-        # Downtime = detect->recover = 10 min = 600s
-        # Availability = (1 - 600/3600) * 100 = 83.33%
+        # Простій = detect->recover = 10 хв = 600с.
+        # Доступність = (1 - 600/3600) * 100 = 83.33%.
         assert m.availability_pct == pytest.approx(83.33, abs=0.1)
 
     def test_missing_detect_ts_skipped(self):
-        """Incident with empty detect_ts is skipped in downtime calculation."""
+        """Інцидент із порожнім detect_ts пропускається в розрахунку простою."""
         inc = make_incident(
             severity="high",
             start_ts="2026-02-26T10:00:00Z",
@@ -295,14 +295,14 @@ class TestDowntimeDefinition:
             mttr_sec=900.0,
         )
         m = compute([inc], "baseline", horizon_sec=3600)
-        # Missing detect_ts -> not counted for downtime
+        # Відсутній detect_ts не враховується як простій.
         assert m.total_downtime_hr == 0.0
         assert m.availability_pct == 100.0
-        # Still counted in totals
+        # Але інцидент усе одно враховується в загальній кількості.
         assert m.incidents_total == 1
 
     def test_missing_recover_ts_skipped(self):
-        """Incident with empty recover_ts is skipped in downtime calculation."""
+        """Інцидент із порожнім recover_ts пропускається в розрахунку простою."""
         inc = make_incident(
             severity="critical",
             start_ts="2026-02-26T10:00:00Z",

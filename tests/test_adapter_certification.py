@@ -86,7 +86,7 @@ def test_action_feedback_certification_file_adapter(tmp_path: Path):
     assert len(acks) == 1
     assert acks[0].action_id == "ACT-001"
 
-    # Second read with same offset must return no new ACKs.
+    # Друге читання з тим самим offset не має повертати нові ACK.
     second, second_offset = feedback.read_acks(since=offset)
     assert second == []
     assert second_offset == offset

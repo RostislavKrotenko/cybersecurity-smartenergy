@@ -13,62 +13,61 @@ from src.shared.logger import setup_logging
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="normalizer",
-        description="SmartEnergy Normalizer -- raw logs -> Event Contract CSV/JSONL",
+        description="Нормалізатор SmartEnergy: сирі логи -> Event Contract CSV/JSONL",
     )
     p.add_argument(
         "--inputs",
         default="logs/*.log",
-        help="Glob pattern for input raw log files (default: logs/*.log)",
+        help="Glob-шаблон для вхідних сирих логів (за замовчуванням: logs/*.log)",
     )
     p.add_argument(
         "--mapping",
         default="config/mapping.yaml",
-        help="Path to mapping config (default: config/mapping.yaml)",
+        help="Шлях до mapping-конфігу (за замовчуванням: config/mapping.yaml)",
     )
     p.add_argument(
         "--out",
         default="data/events.csv",
-        help="Output path -- Event Contract format (default: data/events.csv). "
-        "In follow mode with .jsonl extension, appends JSONL.",
+        help="Шлях виходу у форматі Event Contract (за замовчуванням: data/events.csv). "
+        "У follow-режимі з розширенням .jsonl додає JSONL.",
     )
     p.add_argument(
         "--quarantine",
         default="out/quarantine.csv",
-        help="Quarantine CSV for rejected lines (default: out/quarantine.csv)",
+        help="CSV-карантин для відхилених рядків (за замовчуванням: out/quarantine.csv)",
     )
     p.add_argument(
         "--stats",
         default="out/normalize_stats.json",
-        help="Stats JSON path (default: out/normalize_stats.json)",
+        help="Шлях до JSON-статистики (за замовчуванням: out/normalize_stats.json)",
     )
     p.add_argument(
         "--timezone",
         default="UTC",
         help=(
-            "Timezone of source logs. Timestamps are treated as being in this "
-            "timezone and converted to UTC. Default: UTC. "
-            "Examples: Europe/Kyiv, US/Eastern"
+            "Часовий пояс вихідних логів. Timestamp вважаються такими, що "
+            "належать цьому часовому поясу, і конвертуються в UTC. "
+            "За замовчуванням: UTC. Приклади: Europe/Kyiv, US/Eastern"
         ),
     )
-    # Follow (live) mode flags
     p.add_argument(
         "--follow",
         action="store_true",
         default=False,
-        help="Enable follow mode: tail input logs continuously and append "
-        "normalized events to --out (JSONL recommended).",
+        help="Увімкнути follow-режим: постійно читати input-логи tail-режимом "
+        "і додавати нормалізовані події в --out (рекомендовано JSONL).",
     )
     p.add_argument(
         "--poll-interval-ms",
         type=int,
         default=1000,
-        help="Poll interval for follow mode, ms (default: 1000).",
+        help="Інтервал опитування у follow-режимі, мс (за замовчуванням: 1000).",
     )
     p.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level (default: INFO)",
+        help="Рівень логування (за замовчуванням: INFO)",
     )
     return p
 

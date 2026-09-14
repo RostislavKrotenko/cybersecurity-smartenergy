@@ -14,22 +14,12 @@ from src.shared.time_utils import format_iso_ts as _ts
 log = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _pick(rng: _random_mod.Random, seq: list[Any]) -> Any:
     return seq[rng.randint(0, len(seq) - 1)]
 
 
 def _uniform(rng: _random_mod.Random, lo: float, hi: float) -> float:
     return round(rng.uniform(lo, hi), 2)
-
-
-# ---------------------------------------------------------------------------
-# Telemetry generator
-# ---------------------------------------------------------------------------
 
 
 class TelemetryGenerator:
@@ -46,7 +36,7 @@ class TelemetryGenerator:
         self.severity = cfg.get("severity", "low")
         self.tags = ";".join(cfg.get("tags", []))
         self.devices = devices
-        # per-source next-fire time (as offset in seconds from sim start)
+        # Для кожного source зберігаємо час наступної генерації від старту симуляції.
         self._next_fire: dict[str, float] = {
             s: rng.uniform(0, self.interval[1]) for s in self.sources
         }
@@ -56,7 +46,6 @@ class TelemetryGenerator:
         for src in self.sources:
             if offset_sec < self._next_fire[src]:
                 continue
-            # schedule next
             self._next_fire[src] = offset_sec + self.rng.uniform(self.interval[0], self.interval[1])
             key_spec = _pick(self.rng, self.keys)
             k = key_spec["key"]
@@ -83,11 +72,6 @@ class TelemetryGenerator:
                 )
             )
         return events
-
-
-# ---------------------------------------------------------------------------
-# Access (HTTP) generator
-# ---------------------------------------------------------------------------
 
 
 class AccessGenerator:
@@ -135,11 +119,6 @@ class AccessGenerator:
         return events
 
 
-# ---------------------------------------------------------------------------
-# Auth (successful login) generator
-# ---------------------------------------------------------------------------
-
-
 class AuthGenerator:
     def __init__(
         self, cfg: dict[str, Any], devices: dict[str, Device], rng: _random_mod.Random
@@ -183,11 +162,6 @@ class AuthGenerator:
                 )
             )
         return events
-
-
-# ---------------------------------------------------------------------------
-# System health generator
-# ---------------------------------------------------------------------------
 
 
 class SystemHealthGenerator:

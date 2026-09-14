@@ -148,5 +148,5 @@ def test_create_hybrid_executor_respects_mode_and_missing_backends(monkeypatch):
     assert hybrid.create_hybrid_executor() is None
 
     monkeypatch.setattr(hybrid, "EXECUTION_MODE", "real")
-    # Repository has no src.adapters.real_executors -> expect None.
+    # У репозиторії немає src.adapters.real_executors -> очікуємо None.
     assert hybrid.create_hybrid_executor() is None

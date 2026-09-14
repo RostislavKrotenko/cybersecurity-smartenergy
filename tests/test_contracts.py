@@ -43,7 +43,7 @@ class TestEvent:
         assert len(values) == len(CSV_COLUMNS)
         assert values[0] == "2026-02-26T10:00:00Z"  # timestamp
         assert values[1] == "inv-01"  # source
-        assert values[7] == "220.5"  # value (index 7 per CSV_COLUMNS)
+        assert values[7] == "220.5"  # value, індекс 7 у CSV_COLUMNS
 
     def test_to_json(self, sample_event):
         j = sample_event.to_json()
@@ -89,13 +89,13 @@ class TestAlert:
             timestamp="2026-02-26T10:00:00Z",
             component="api",
             source="api-gw-01",
-            description="5 auth failures",
+            description="5 невдалих авторизацій",
             event_count=5,
             event_ids="COR-001;COR-002",
         )
         assert a.alert_id == "ALR-0001"
         assert a.confidence == 0.85
-        assert a.response_hint == ""  # default
+        assert a.response_hint == ""  # типове значення
 
     def test_alert_response_hint(self):
         a = Alert(
@@ -108,7 +108,7 @@ class TestAlert:
             timestamp="2026-02-26T10:00:00Z",
             component="api",
             source="api-gw-01",
-            description="test",
+            description="тест",
             event_count=1,
             event_ids="x",
             response_hint="block_ip",
@@ -132,7 +132,7 @@ class TestIncident:
             mttd_sec=30.0,
             mttr_sec=120.0,
             impact_score=0.595,
-            description="Brute-force detected",
+            description="Виявлено brute-force",
             response_action="block_ip",
         )
 

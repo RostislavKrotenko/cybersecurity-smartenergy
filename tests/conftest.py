@@ -303,7 +303,7 @@ def ddos_rule() -> dict:
 
 @pytest.fixture
 def spoof_rule() -> dict:
-    """Мінімальна конфігурація spoof правила."""
+    """Мінімальна конфігурація правила підміни телеметрії."""
     return {
         "rules": [
             {
@@ -329,7 +329,7 @@ def spoof_rule() -> dict:
 
 @pytest.fixture
 def unauthorized_cmd_rule() -> dict:
-    """Мінімальна конфігурація unauthorized cmd правила."""
+    """Мінімальна конфігурація правила несанкціонованої команди."""
     return {
         "rules": [
             {
@@ -353,7 +353,7 @@ def unauthorized_cmd_rule() -> dict:
 
 @pytest.fixture
 def network_failure_rule() -> dict:
-    """Мінімальна конфігурація network failure правила."""
+    """Мінімальна конфігурація правила відмови мережі."""
     return {
         "rules": [
             {
@@ -384,7 +384,7 @@ def network_failure_rule() -> dict:
 
 @pytest.fixture
 def outage_rule() -> dict:
-    """Мінімальна конфігурація outage правила."""
+    """Мінімальна конфігурація правила відмови сервісу."""
     return {
         "rules": [
             {

@@ -1,4 +1,4 @@
-"""Tests for ComponentStateStore: event processing, TTL decay, CSV output."""
+"""Тести ComponentStateStore: обробка подій, зменшення TTL і CSV-вихід."""
 
 from __future__ import annotations
 
@@ -165,10 +165,10 @@ class TestComponentStateStore:
 
 
 class TestEndToEndActionToState:
-    """Apply action in emulator -> state-change event -> state store."""
+    """Застосування дії в емуляторі -> state-change подія -> сховище стану."""
 
     def test_rate_limit_action_to_state(self):
-        # 1. Apply action in emulator
+        # 1. Застосування дії в емуляторі.
         world = WorldState()
         action = Action(
             ts_utc="2026-03-01T12:00:00Z",
@@ -180,11 +180,11 @@ class TestEndToEndActionToState:
         )
         state_events = apply_action(world, action)
 
-        # 2. Feed state-change events into store
+        # 2. Передача state-change подій у сховище.
         store = ComponentStateStore()
         store.process_events(state_events)
 
-        # 3. Verify store reflects the action
+        # 3. Перевірка, що сховище відображає дію.
         assert store.gateway.status == "rate_limited"
         assert "rps=50" in store.gateway.details
         assert store.gateway.ttl_sec == 300.0
@@ -243,7 +243,7 @@ class TestEndToEndActionToState:
         assert store.db.status == "restoring"
 
     def test_full_cycle_to_csv(self):
-        """Apply action -> state event -> store -> CSV -> read back."""
+        """Застосування дії -> подія стану -> сховище -> CSV -> зчитування."""
         world = WorldState()
         actions = [
             Action(

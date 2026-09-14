@@ -22,10 +22,10 @@ class Device:
 def build_device_index(components_cfg: dict[str, Any]) -> dict[str, Device]:
     """Створює індекс пристроїв з конфігурації.
 
-    Args:
+    Аргументи:
         components_cfg: Конфіг компонентів.
 
-    Returns:
+    Повертає:
         Словник пристроїв за id.
     """
     comps: dict[str, Any] = components_cfg.get("components", {})
@@ -39,5 +39,5 @@ def build_device_index(components_cfg: dict[str, Any]) -> dict[str, Device]:
                 protocols=inst.get("protocols", []),
             )
             index[dev.id] = dev
-    log.info("Device index built: %d devices across %d components", len(index), len(comps))
+    log.info("Побудовано індекс пристроїв: %d пристроїв у %d компонентах", len(index), len(comps))
     return index

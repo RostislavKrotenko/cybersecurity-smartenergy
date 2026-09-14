@@ -73,7 +73,7 @@ def api_profile() -> Profile:
 
 @pytest.fixture
 def syslog_profile() -> Profile:
-    """Мінімальний syslog-style профіль."""
+    """Мінімальний профіль у syslog-стилі."""
     return Profile(
         name="syslog",
         file_pattern=re.compile(r"syslog|messages", re.IGNORECASE),
@@ -221,7 +221,7 @@ class TestDetectSeverity:
         assert sev == "high"
 
     def test_from_message_fallback(self, api_profile):
-        # Use a level NOT in severity_map so it falls through to message check
+        # Рівня немає в severity_map, тому має спрацювати перевірка повідомлення.
         groups = {"level": "notice"}
         sev = _detect_severity(groups, "connection denied by firewall", api_profile)
         assert sev == "high"

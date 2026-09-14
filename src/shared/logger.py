@@ -9,7 +9,7 @@ import sys
 def setup_logging(level: str = "INFO") -> None:
     """Налаштовує стандартний логер з лаконічним форматом.
 
-    Args:
+    Аргументи:
         level: Рівень логування (DEBUG, INFO, WARNING, ERROR).
     """
     numeric = getattr(logging, level.upper(), logging.INFO)

@@ -24,7 +24,7 @@ class TestDeduplicate:
             make_event(timestamp=ts_offset(seconds=1), source="a", event="e", key="k", value="v"),
         ]
         result = deduplicate(events, window_sec=2)
-        assert len(result) == 1  # second removed
+        assert len(result) == 1  # другий запис прибрано
 
     def test_duplicate_outside_window_kept(self):
         events = [
@@ -104,12 +104,12 @@ class TestValidateEvent:
     def test_unknown_severity(self):
         ev = make_event(severity="extreme")
         warnings = validate_event(ev)
-        assert any("severity" in w for w in warnings)
+        assert any("критичності" in w for w in warnings)
 
     def test_unknown_component(self):
         ev = make_event(component="firewall")
         warnings = validate_event(ev)
-        assert any("component" in w for w in warnings)
+        assert any("компонент" in w for w in warnings)
 
     def test_empty_timestamp(self):
         ev = make_event(timestamp="")
@@ -127,6 +127,17 @@ class TestValidateEvent:
             assert validate_event(ev) == []
 
     def test_all_valid_components(self):
-        for comp in ("edge", "api", "db", "ui", "collector", "inverter", "network", "unknown"):
+        for comp in (
+            "gateway",
+            "edge",
+            "api",
+            "auth",
+            "db",
+            "ui",
+            "collector",
+            "inverter",
+            "network",
+            "unknown",
+        ):
             ev = make_event(component=comp, severity="low")
             assert validate_event(ev) == []

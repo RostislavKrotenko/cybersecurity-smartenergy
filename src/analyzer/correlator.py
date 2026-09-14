@@ -33,13 +33,13 @@ def correlate(
 ) -> list[Incident]:
     """Групує оповіщення у інциденти.
 
-    Args:
+    Аргументи:
         alerts: Відсортований список оповіщень.
         policy_name: Назва політики.
         policy_modifiers: Модифікатори по threat_type.
         merge_window_sec: Вікно групування в секундах.
 
-    Returns:
+    Повертає:
         Відсортований список інцидентів.
     """
     if not alerts:
@@ -47,19 +47,16 @@ def correlate(
 
     pm = policy_modifiers or {}
 
-    # ── Phase 1: group by correlation ID ──────────────────────────────
     cor_groups: dict[str, list[Alert]] = defaultdict(list)
     no_cor: list[Alert] = []
 
     for a in alerts:
         cids = _extract_cor_ids(a.event_ids)
         if cids:
-            # Use the first COR-* ID as group key
             cor_groups[sorted(cids)[0]].append(a)
         else:
             no_cor.append(a)
 
-    # ── Phase 2: group remaining by time + component + threat_type ────
     time_groups: dict[str, list[Alert]] = {}
     for a in no_cor:
         placed = False
@@ -75,10 +72,8 @@ def correlate(
             gk = f"{group_key_prefix}|{a.alert_id}"
             time_groups[gk] = [a]
 
-    # Merge all groups
     all_groups: list[list[Alert]] = list(cor_groups.values()) + list(time_groups.values())
 
-    # ── Phase 3: build Incidents ──────────────────────────────────────
     incidents: list[Incident] = []
     for idx, group in enumerate(all_groups, 1):
         group.sort(key=lambda a: a.timestamp)
@@ -87,15 +82,13 @@ def correlate(
 
     incidents.sort(key=lambda i: i.start_ts)
     log.info(
-        "Correlator produced %d incidents from %d alerts (policy=%s)",
+        "Корелятор сформував %d інцидентів із %d оповіщень (policy=%s)",
         len(incidents),
         len(alerts),
         policy_name,
     )
     return incidents
 
-
-# ═══════════════════════════════════════════════════════════════════════════
 
 # Базові часові константи (секунди) по threat_type.
 _BASE_TIMING: dict[str, dict[str, float]] = {
@@ -117,13 +110,13 @@ def _build_incident(
 ) -> Incident:
     """Створює інцидент з групи корельованих оповіщень.
 
-    Args:
+    Аргументи:
         group: Група оповіщень.
         idx: Індекс інциденту.
         policy: Назва політики.
         pm: Модифікатори політики.
 
-    Returns:
+    Повертає:
         Створений інцидент.
     """
     threat = group[0].threat_type

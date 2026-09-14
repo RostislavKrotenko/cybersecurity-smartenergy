@@ -28,17 +28,17 @@ INCIDENT_CSV_COLUMNS = [
 class Incident:
     """Корельований інцидент безпеки з метриками часу."""
 
-    incident_id: str  # e.g. "INC-001"
-    policy: str  # which policy was applied
-    threat_type: str  # credential_attack | availability_attack | integrity_attack | outage
-    severity: str  # escalated severity
-    component: str  # affected component(s), semicolon-separated
+    incident_id: str  # наприклад, "INC-001"
+    policy: str  # застосована політика
+    threat_type: str  # допустимі значення: credential_attack, availability_attack, integrity_attack, outage
+    severity: str  # підвищений рівень критичності
+    component: str  # уражені компоненти через крапку з комою
     event_count: int
     start_ts: str  # ISO-8601
     detect_ts: str  # ISO-8601
     recover_ts: str  # ISO-8601
-    mttd_sec: float  # seconds
-    mttr_sec: float  # seconds
+    mttd_sec: float  # секунди
+    mttr_sec: float  # секунди
     impact_score: float
     description: str
     response_action: str

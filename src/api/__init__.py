@@ -1,9 +1,9 @@
-"""FastAPI backend for SmartEnergy Cyber-Resilience Analyzer.
+"""FastAPI-бекенд для аналізатора кіберстійкості SmartEnergy.
 
-Provides REST API endpoints for:
-- /api/events - security events
-- /api/incidents - detected incidents
-- /api/actions - response actions
-- /api/state - infrastructure state
-- /api/metrics - resilience metrics (availability, MTTD, MTTR)
+Надає REST API ендпоінти для:
+- /api/events - події безпеки
+- /api/incidents - виявлені інциденти
+- /api/actions - дії реагування
+- /api/state - стан інфраструктури
+- /api/metrics - метрики стійкості (availability, MTTD, MTTR)
 """

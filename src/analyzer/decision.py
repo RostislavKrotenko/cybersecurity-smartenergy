@@ -1,12 +1,11 @@
-"""Decision engine: map incidents to concrete actions (closed-loop controller).
+"""Двигун рішень: перетворення інцидентів на конкретні дії реагування.
 
-The decision engine is purely policy-based: given an incident's threat_type,
-severity, and affected component, it selects actions from a static mapping
-(response playbook). This keeps the logic deterministic and auditable.
+Модуль працює за політиками: на основі threat_type, severity і ураженого
+компонента він вибирає дії зі статичного playbook. Так логіка залишається
+детермінованою й придатною для аудиту.
 
-To port to production, replace this mapping with an external playbook store
-or a SOAR API adapter. The ActionSink interface provides plug-and-play
-integration with different action execution backends.
+Для production-режиму цей mapping можна замінити зовнішнім playbook-сховищем
+або SOAR API адаптером. ActionSink дозволяє підміняти backend виконання дій.
 """
 
 from __future__ import annotations
@@ -24,13 +23,7 @@ from src.shared.severity import SEV_ORDER as _SEV_ORDER
 
 log = logging.getLogger(__name__)
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Response playbook
-# ═══════════════════════════════════════════════════════════════════════════
-
-# threat_type -> list of action templates
-# Each template is (action, target_component, params_factory)
-# params_factory receives the incident and returns a dict.
+# threat_type -> список шаблонів дій реагування.
 
 _PLAYBOOK: dict[str, list[dict[str, Any]]] = {
     "credential_attack": [
@@ -97,15 +90,7 @@ def decide(
     incidents: list[Incident],
     already_acted: set[str],
 ) -> list[Action]:
-    """Produce actions for new incidents that haven't been acted upon.
-
-    Args:
-        incidents: Current active incidents.
-        already_acted: Set of incident_ids already handled.
-
-    Returns:
-        List of new actions to emit.
-    """
+    """Формує дії для нових інцидентів, які ще не були оброблені."""
     actions: list[Action] = []
     now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -115,20 +100,17 @@ def decide(
 
         templates = _PLAYBOOK.get(inc.threat_type, [])
         if not templates:
-            log.debug("No playbook entry for threat_type=%s", inc.threat_type)
+            log.debug("Немає playbook-запису для threat_type=%s", inc.threat_type)
             continue
 
         for tmpl in templates:
-            # Check minimum severity filter
             min_sev = tmpl.get("min_severity")
             if min_sev and _SEV_ORDER.get(inc.severity, 0) < _SEV_ORDER.get(min_sev, 0):
                 continue
 
             params = dict(tmpl["params"])
 
-            # Enrich params from incident context
             if tmpl["action"] == "block_actor":
-                # Extract actor/ip from incident description
                 actor, ip = _extract_actor_ip(inc)
                 if actor:
                     params["actor"] = actor
@@ -166,7 +148,7 @@ def decide(
 
 
 def emit_actions(actions: list[Action], path: str) -> None:
-    """Append actions to actions.jsonl (atomic append)."""
+    """Дописує дії в actions.jsonl."""
     if not actions:
         return
     p = Path(path)
@@ -175,41 +157,43 @@ def emit_actions(actions: list[Action], path: str) -> None:
         for a in actions:
             fh.write(a.to_json() + "\n")
         fh.flush()
-    log.info("Emitted %d actions -> %s", len(actions), path)
+    log.info("Емітовано %d дій -> %s", len(actions), path)
 
 
 def write_actions_csv(actions: list[Action], path: str) -> None:
-    """Write actions to a CSV file (atomic write for dashboard)."""
+    """Записує дії в CSV файл для dashboard."""
     lines = [Action.csv_header()]
     for a in actions:
         lines.append(a.to_csv_row())
     atomic_write(path, "\n".join(lines) + "\n")
-    log.info("Wrote actions CSV -> %s (%d rows)", path, len(actions))
-
-
-# ── helpers ──────────────────────────────────────────────────────────────
+    log.info("Записано CSV дій -> %s (%d рядків)", path, len(actions))
 
 
 def _extract_actor_ip(inc: Incident) -> tuple[str, str]:
-    """Best-effort extraction of actor/ip from incident description."""
+    """Best-effort витяг actor/IP з опису інциденту."""
     desc = inc.description
     actor = ""
     ip = ""
-    # Pattern: "from <ip>"
+
     if "from " in desc:
         parts = desc.split("from ")
         if len(parts) > 1:
             ip_candidate = parts[1].split()[0].strip(" ,;")
             if "." in ip_candidate:
                 ip = ip_candidate
-    # Pattern: "actor(s) on" or "for <actor>"
-    if "by non-allowed" in desc:
+    if " з " in desc:
+        parts = desc.split(" з ")
+        if len(parts) > 1:
+            ip_candidate = parts[1].split()[0].strip(" ,;")
+            if "." in ip_candidate:
+                ip = ip_candidate
+    if "by non-allowed" in desc or "неавторизованих" in desc:
         actor = "unknown"
     return actor, ip
 
 
 def _extract_target_id(inc: Incident, target_component: str) -> str:
-    """Extract a target device ID from the incident."""
+    """Витягує ідентифікатор цільового пристрою з інциденту."""
     components = inc.component.split(";")
     for c in components:
         if c.strip() == target_component:
@@ -217,45 +201,16 @@ def _extract_target_id(inc: Incident, target_component: str) -> str:
     return components[0].strip() if components else target_component
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Plug-and-Play Action Emission (interface-based)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def emit_actions_to_sink(
     actions: list[Action],
     action_sink: ActionSink,
 ) -> list[str]:
-    """Emit actions using an ActionSink adapter.
-
-    This is the plug-and-play version that supports custom action sinks
-    for integration with real SmartEnergy systems (SOAR, SCADA, etc.).
-
-    Args:
-        actions: List of actions to emit.
-        action_sink: ActionSink implementation (file, SOAR, SCADA, etc.)
-
-    Returns:
-        List of action tracking IDs.
-
-    Example:
-        # Using file adapter (simulation)
-        from src.adapters import FileActionSink
-
-        sink = FileActionSink("data/live/actions.jsonl")
-        ids = emit_actions_to_sink(actions, sink)
-
-        # Using SOAR adapter (production)
-        from your_adapters import XsoarActionSink
-
-        sink = XsoarActionSink(api_url="https://xsoar.example.com/api")
-        ids = emit_actions_to_sink(actions, sink)
-    """
+    """Емітить дії через ActionSink adapter."""
     if not actions:
         return []
 
     tracking_ids = action_sink.emit_batch(actions)
-    log.info("Emitted %d actions via ActionSink", len(actions))
+    log.info("Емітовано %d дій через ActionSink", len(actions))
     return tracking_ids
 
 
@@ -264,18 +219,7 @@ def decide_and_emit(
     already_acted: set[str],
     action_sink: ActionSink,
 ) -> list[Action]:
-    """Convenience function: decide on actions and emit them via sink.
-
-    Combines decide() and emit_actions_to_sink() for simpler usage.
-
-    Args:
-        incidents: Current active incidents.
-        already_acted: Set of incident_ids already handled.
-        action_sink: ActionSink implementation.
-
-    Returns:
-        List of emitted Action objects.
-    """
+    """Формує дії за інцидентами та емітить їх через sink."""
     actions = decide(incidents, already_acted)
     if actions:
         emit_actions_to_sink(actions, action_sink)

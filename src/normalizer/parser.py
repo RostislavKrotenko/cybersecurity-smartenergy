@@ -1,4 +1,4 @@
-"""Парсер: raw логи -> Event за допомогою regex профілів з mapping.yaml."""
+"""Парсер: сирі логи -> Event за допомогою regex-профілів з mapping.yaml."""
 
 from __future__ import annotations
 
@@ -12,15 +12,12 @@ from src.contracts.event import Event
 
 log = logging.getLogger(__name__)
 
-# ── Timestamp strptime patterns ──────────────────────────────────────────────
+# Шаблони strptime для timestamp.
 _TS_PATTERNS: dict[str, str] = {
     "iso_space": "%Y-%m-%d %H:%M:%S",
     "iso_t": "%Y-%m-%dT%H:%M:%SZ",
     "syslog": "%b %d %H:%M:%S",
 }
-
-
-# ── Compiled profile ─────────────────────────────────────────────────────────
 
 
 @dataclass(slots=True)
@@ -43,9 +40,6 @@ class Profile:
     actor_regex: re.Pattern[str] | None
     kv_regex: re.Pattern[str] | None
     defaults: dict[str, str]
-
-
-# ── Build helpers ────────────────────────────────────────────────────────────
 
 
 def build_profiles(mapping: dict[str, Any]) -> list[Profile]:
@@ -83,7 +77,6 @@ def build_profiles(mapping: dict[str, Any]) -> list[Profile]:
             )
 
         level_field = cfg.get("level_field")
-        # YAML null → Python None — keep it None
         if level_field is None or str(level_field).lower() == "null":
             level_field = None
 
@@ -120,9 +113,6 @@ def select_profile(profiles: list[Profile], filename: str) -> Profile | None:
     return None
 
 
-# ── Timestamp parsing ────────────────────────────────────────────────────────
-
-
 def _parse_timestamp(
     groups: dict[str, str],
     profile: Profile,
@@ -149,15 +139,11 @@ def _parse_timestamp(
             dt = datetime.strptime(ts_str, pattern)
             dt = dt.replace(tzinfo=tz)
 
-        # Convert to UTC
         dt_utc = dt.astimezone(UTC)
         return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     except (ValueError, KeyError, OverflowError) as exc:
         log.debug("Timestamp parse error: %s", exc)
         return None
-
-
-# ── Field extraction helpers ─────────────────────────────────────────────────
 
 
 def _detect_severity(
@@ -171,7 +157,6 @@ def _detect_severity(
         if level in profile.severity_map:
             return profile.severity_map[level]
 
-    # 2) From message substrings (check from most severe to least)
     if profile.severity_from_message:
         msg_lower = message.lower()
         for sev in ("critical", "high", "medium", "low"):
@@ -180,7 +165,6 @@ def _detect_severity(
                 if pat in msg_lower:
                     return sev
 
-    # 3) Fallback
     return profile.defaults.get("severity", "low")
 
 
@@ -219,17 +203,16 @@ def _extract_actor(message: str, profile: Profile) -> str:
 
 
 def _extract_kv(message: str, profile: Profile) -> tuple[str, str, str]:
-    """Extract key, value, unit from message.
+    """Витягує key, value та unit з повідомлення.
 
-    If kv_regex is defined and matches, uses the first (key, raw_value) pair
-    and tries to separate a numeric value from its unit suffix.
-    Otherwise returns ("message", <truncated message>, "").
+    Якщо заданий kv_regex знаходить збіг, береться перша пара (key, raw_value)
+    і виконується спроба відділити числове значення від одиниці вимірювання.
+    Інакше повертається ("message", <обрізане повідомлення>, "").
     """
     if profile.kv_regex:
         matches = profile.kv_regex.findall(message)
         if matches:
             key, raw_value = matches[0]
-            # Separate numeric part from unit: "231.4V" → ("231.4", "V")
             m = re.match(r"^([+-]?\d+\.?\d*)\s*([a-zA-Z/%]*)$", raw_value)
             if m:
                 return key, m.group(1), m.group(2)
@@ -237,64 +220,44 @@ def _extract_kv(message: str, profile: Profile) -> tuple[str, str, str]:
     return "message", message[:512], ""
 
 
-# ── Main parse function ──────────────────────────────────────────────────────
-
-
 def parse_line(
     line: str,
     profile: Profile,
     tz: timezone | Any,
 ) -> Event | tuple[str, str]:
-    """Парсить один рядок raw логу.
+    """Парсить один рядок сирого логу.
 
-    Args:
-        line: Рядок логу.
-        profile: Профіль парсингу.
-        tz: Часовий пояс.
-
-    Returns:
-        Event у разі успіху. (raw_line, reason) для карантину.
+    Повертає Event у разі успіху або пару (raw_line, reason) для карантину.
     """
     line = line.rstrip("\n\r")
 
-    # Empty / whitespace-only
     if not line.strip():
         return (line, "empty_line")
 
-    # Regex match
     m = profile.line_regex.match(line)
     if not m:
         return (line, "parse_error")
 
     groups = m.groupdict()
 
-    # ── Timestamp ──
     ts = _parse_timestamp(groups, profile, tz)
     if ts is None:
         return (line, "no_timestamp")
 
-    # ── Source ──
     source = groups.get(profile.source_field, profile.defaults.get("source", "unknown"))
 
-    # ── Message ──
     message = groups.get(profile.message_field, "")
 
-    # ── Component ──
     component = _detect_component(source, profile)
 
-    # ── Severity ──
     severity = _detect_severity(groups, message, profile)
 
-    # ── Event type + tags ──
     event_type, tags = _detect_event(message, profile)
 
-    # ── IP ──
     ip = _extract_ip(message, profile)
 
-    # ── Actor ──
     actor = _extract_actor(message, profile)
 
-    # ── Key / Value / Unit ──
     key, value, unit = _extract_kv(message, profile)
 
     return Event(

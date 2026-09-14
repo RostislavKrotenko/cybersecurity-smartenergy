@@ -1,37 +1,31 @@
-# ─────────────────────────────────────────────────────────────────────────────
-#  SmartEnergy Cyber-Resilience Analyzer — single-stage Docker image
-#  Base: python:3.11-slim  (Debian bookworm, ~150 MB compressed)
-# ─────────────────────────────────────────────────────────────────────────────
-
 FROM python:3.11-slim AS base
 
-# Prevents Python from writing .pyc files & enables unbuffered stdout/stderr
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /work
 
-# ── 1. Install OS-level deps (none required, but keep layer for future) ──
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --gid 10001 smartenergy && \
+    useradd --uid 10001 --gid smartenergy --create-home --shell /usr/sbin/nologin smartenergy
 
-# ── 2. Install Python deps (cached unless requirements.txt changes) ──────
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
-# ── 3. Copy application source, configs & package definition ────────────
-COPY pyproject.toml .
+COPY pyproject.toml README.md ./
 COPY src/ src/
 COPY config/ config/
 
-# ── 4. Install project as editable package (makes 'src' importable) ─────
-RUN pip install --no-cache-dir -e .
+RUN pip install . && \
+    mkdir -p data out logs && \
+    chown -R smartenergy:smartenergy /work
 
-# ── 5. Create directories for volume mounts ──────────────────────────────
-RUN mkdir -p data out logs
+USER smartenergy
 
-# ── 6. Default command — show help ───────────────────────────────────────
-CMD ["python", "-c", "print('SmartEnergy image ready. Use docker compose to run services.')"]
+CMD ["python", "-m", "src.api", "--host", "0.0.0.0", "--port", "8000"]
 
-EXPOSE 8501
+EXPOSE 8000

@@ -40,7 +40,7 @@ from src.emulator.world import (
 
 log = logging.getLogger(__name__)
 
-# Registry: scenario name -> class
+# Реєстр сценаріїв: назва -> клас
 SCENARIO_REGISTRY: dict[str, type] = {
     "brute_force": BruteForceScenario,
     "ddos_abuse": DDoSAbuseScenario,
@@ -50,9 +50,8 @@ SCENARIO_REGISTRY: dict[str, type] = {
     "network_failure": NetworkFailureScenario,
 }
 
-# ── demo_high_rate overrides ─────────────────────────────────────────────
-# These overrides shorten all schedule offsets and increase counts so that
-# attacks fire within the first 10--30 seconds and repeat frequently.
+# demo_high_rate скорочує затримки та підвищує кількість подій, щоб атаки
+# запускалися в перші 10-30 секунд і регулярно повторювалися.
 
 _DEMO_SCHEDULE_OVERRIDES: dict[str, dict[str, Any]] = {
     "brute_force": {
@@ -139,7 +138,6 @@ class EmulatorEngine:
         self.duration_sec = sim.get("duration_sec", 3600)
 
         if profile == "demo_high_rate":
-            # Short cycles: 60s so attacks repeat frequently
             self.duration_sec = 60
 
         if days is not None and days > 0:
@@ -171,10 +169,6 @@ class EmulatorEngine:
             attack_rate,
         )
 
-    # ------------------------------------------------------------------
-    # Background generators
-    # ------------------------------------------------------------------
-
     def _build_bg_generators(self) -> list[Any]:
         gens: list[Any] = []
         mapping = {
@@ -190,12 +184,8 @@ class EmulatorEngine:
         log.info("Built %d background generators", len(gens))
         return gens
 
-    # ------------------------------------------------------------------
-    # Attack scenarios
-    # ------------------------------------------------------------------
-
     def _build_attacks(self) -> list[Event]:
-        """Pre-generate all attack events and return them sorted."""
+        """Заздалегідь генерує всі атакувальні події та повертає їх відсортованими."""
         all_attack_events: list[Event] = []
         wanted = set()
         if self.scenario_set and self.scenario_set.lower() != "all":
@@ -208,7 +198,7 @@ class EmulatorEngine:
                 continue
             cls = SCENARIO_REGISTRY.get(name)
             if cls is None:
-                log.warning("Unknown scenario '%s', skipping", name)
+                log.warning("Невідомий сценарій '%s', пропущено", name)
                 continue
             scenario = cls(
                 cfg=atk_cfg,
@@ -224,16 +214,11 @@ class EmulatorEngine:
         log.info("Total attack events pre-generated: %d", len(all_attack_events))
         return all_attack_events
 
-    # ------------------------------------------------------------------
-    # Main run
-    # ------------------------------------------------------------------
-
     def run(self) -> list[Event]:
-        """Execute the full simulation and return sorted events."""
+        """Виконує повну симуляцію та повертає відсортовані події."""
         bg_gens = self._build_bg_generators()
         attack_events = self._build_attacks()
 
-        # time-step resolution: 1 second
         step = timedelta(seconds=1)
         bg_events: list[Event] = []
 
@@ -249,7 +234,6 @@ class EmulatorEngine:
 
         log.info("Background events generated: %d", len(bg_events))
 
-        # merge and sort
         all_events = bg_events + attack_events
         all_events.sort(key=lambda e: e.timestamp)
 
@@ -259,13 +243,8 @@ class EmulatorEngine:
         return all_events
 
 
-# ------------------------------------------------------------------
-# Writers
-# ------------------------------------------------------------------
-
-
 def write_csv(events: list[Event], path: Path) -> None:
-    """Write events to a CSV file with header."""
+    """Записує події у CSV файл із заголовком."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as fh:
         fh.write(Event.csv_header() + "\n")
@@ -275,17 +254,12 @@ def write_csv(events: list[Event], path: Path) -> None:
 
 
 def write_jsonl(events: list[Event], path: Path) -> None:
-    """Write events to a JSONL file (one JSON per line)."""
+    """Записує події у JSONL файл, по одному JSON на рядок."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         for ev in events:
             fh.write(ev.to_json() + "\n")
     log.info("Wrote %d events to %s", len(events), path)
-
-
-# ------------------------------------------------------------------
-# Live streaming writer
-# ------------------------------------------------------------------
 
 
 def stream_jsonl(
@@ -294,7 +268,7 @@ def stream_jsonl(
     interval_sec: float = 1.0,
     max_events: int | None = None,
 ) -> int:
-    """Stream events to a JSONL file with real-time delays (live mode)."""
+    """Потоково записує події у JSONL файл із live-затримками."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
     all_events = engine.run()
@@ -326,26 +300,10 @@ def stream_to_sink(
     interval_sec: float = 1.0,
     max_events: int | None = None,
 ) -> int:
-    """Stream events to an EventSink interface (live mode).
+    """Потоково передає події в EventSink у live-режимі.
 
-    This is the interface-based alternative to stream_jsonl().
-    Use this for plug-and-play integration with different backends.
-
-    Args:
-        engine: EmulatorEngine instance.
-        event_sink: EventSink implementation (file, Kafka, etc.)
-        interval_sec: Delay between events.
-        max_events: Optional limit on number of events.
-
-    Returns:
-        Number of events streamed.
-
-    Example:
-        from src.adapters import FileEventSink
-
-        sink = FileEventSink("data/live/events.jsonl")
-        stream_to_sink(engine, sink, interval_sec=0.5)
-        sink.close()
+    Це інтерфейсна альтернатива stream_jsonl(), яку можна використовувати
+    для підключення файлового, Kafka або іншого backend-приймача.
     """
     all_events = engine.run()
     if max_events is not None and len(all_events) > max_events:
@@ -378,17 +336,11 @@ def stream_jsonl_infinite(
     raw_log_dir: Path | None = None,
     csv_out: Path | None = None,
 ) -> None:
-    """Stream events infinitely, re-running the simulation in loops.
+    """Безкінечно стрімить події, повторно запускаючи симуляцію циклами.
 
-    Each loop generates a fresh batch of events (with a shifted time window
-    and incremented seed) and writes them one-by-one. This never returns
-    under normal operation -- stop with Ctrl+C / SIGTERM.
-
-    Multi-format output:
-      - JSONL at *path* (always)
-      - CSV at *csv_out* (if provided, appended per batch with header once)
-      - Raw syslog-style logs in *raw_log_dir* (if provided): auth.log,
-        api.log, system.log with intentionally dirty/mixed formats.
+    Кожен цикл генерує новий пакет подій зі зміщеним часовим вікном і seed,
+    після чого записує їх по одній. За нормальної роботи функція не завершується.
+    Виходи: JSONL, опційний CSV і опційні «брудні» сирі логи.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     if raw_log_dir is not None:
@@ -413,23 +365,19 @@ def stream_jsonl_infinite(
         events.sort(key=lambda e: e.timestamp)
         log.info("Cycle %d: generated %d events", cycle, len(events))
 
-        # Collect CSV batch for this cycle
         csv_batch: list[str] = []
 
         with path.open("a", encoding="utf-8") as fh:
             for ev in events:
-                # Re-stamp to real wall-clock time
                 ev.timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
                 fh.write(ev.to_json() + "\n")
                 fh.flush()
                 total_count += 1
 
-                # Collect CSV row
                 if csv_out is not None:
                     csv_batch.append(ev.to_csv_row())
 
-                # Write raw logs (dirty multi-format)
                 if raw_log_dir is not None:
                     _write_dirty_raw_log(raw_log_dir, ev, engine.rng)
 
@@ -441,7 +389,6 @@ def stream_jsonl_infinite(
                     )
                 time.sleep(interval_sec)
 
-        # Append CSV batch
         if csv_out is not None and csv_batch:
             with csv_out.open("a", encoding="utf-8", newline="") as cf:
                 if not csv_header_written:
@@ -457,10 +404,6 @@ def stream_jsonl_infinite(
             total_count,
         )
 
-
-# ------------------------------------------------------------------
-# Dirty raw log writers -- intentionally messy formats for normalizer
-# ------------------------------------------------------------------
 
 _LOG_FILE_MAP: dict[str, str] = {
     "api": "api.log",
@@ -481,7 +424,7 @@ _AUTH_EVENTS = frozenset(
     }
 )
 
-# Syslog months for dirty timestamp format
+# Місяці syslog-формату для «брудних» timestamp.
 _MONTHS = [
     "Jan",
     "Feb",
@@ -497,31 +440,30 @@ _MONTHS = [
     "Dec",
 ]
 
-# Severity level token pools for each log type
+# Набори рівнів severity для різних типів логів.
 _API_LEVELS = ["INFO", "WARN", "ERROR", "DEBUG"]
 _SYSLOG_PROGS = ["sshd", "pam_unix", "systemd", "security"]
 
 
 def _dirty_ts_iso(dt: datetime) -> str:
-    """ISO-space format: 2026-02-28 14:05:01"""
+    """Формат ISO з пробілом: 2026-02-28 14:05:01."""
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _dirty_ts_syslog(dt: datetime, rng: _random_mod.Random) -> str:
-    """Syslog format: Feb 28 14:05:01 (no year, sometimes add extra space)."""
+    """Формат syslog без року, іноді з додатковим пробілом."""
     month_str = _MONTHS[dt.month - 1]
     day = dt.day
     time_part = dt.strftime("%H:%M:%S")
-    # Occasionally add extra space for dirtiness
     spacing = "  " if rng.random() < 0.15 else " "
     return f"{month_str}{spacing}{day:>2} {time_part}"
 
 
 def _write_dirty_raw_log(log_dir: Path, ev: Event, rng: _random_mod.Random) -> None:
-    """Write a single dirty raw log line to the appropriate log file.
+    """Записує один «брудний» сирий лог у відповідний файл.
 
-    The format varies randomly between ISO-space and syslog styles.
-    Fields are sometimes omitted. Severity levels use different casings.
+    Формат випадково змінюється між ISO-space і syslog, окремі поля можуть
+    пропускатися, а рівні severity мають різний регістр.
     """
     now = datetime.now(tz=timezone.utc)
 
@@ -545,7 +487,7 @@ def _write_dirty_raw_log(log_dir: Path, ev: Event, rng: _random_mod.Random) -> N
 
 
 def _format_auth_line(ev: Event, now: datetime, rng: _random_mod.Random) -> str:
-    """Syslog-format auth line with intentional dirtiness."""
+    """Формує auth-рядок у syslog-форматі з навмисним шумом."""
     ts = _dirty_ts_syslog(now, rng)
     prog = rng.choice(_SYSLOG_PROGS)
     pid = rng.randint(1000, 9999)
@@ -568,7 +510,6 @@ def _format_auth_line(ev: Event, now: datetime, rng: _random_mod.Random) -> str:
 
     line = rng.choice(templates)
 
-    # Sometimes omit IP (dirty data)
     if rng.random() < 0.1 and "from" in line:
         line = line.split("from")[0].rstrip()
 
@@ -576,11 +517,10 @@ def _format_auth_line(ev: Event, now: datetime, rng: _random_mod.Random) -> str:
 
 
 def _format_api_line(ev: Event, now: datetime, rng: _random_mod.Random) -> str:
-    """ISO-space format API line with varying levels."""
+    """Формує API-рядок у ISO-space форматі з різними рівнями."""
     ts = _dirty_ts_iso(now)
     level = rng.choice(_API_LEVELS)
 
-    # Map event severity to realistic level
     if ev.severity == "critical":
         level = rng.choice(["ERROR", "CRIT"])
     elif ev.severity == "high":
@@ -612,11 +552,9 @@ def _format_api_line(ev: Event, now: datetime, rng: _random_mod.Random) -> str:
 
 
 def _format_system_line(ev: Event, now: datetime, rng: _random_mod.Random) -> str:
-    """Mixed-format system line (sometimes ISO, sometimes syslog)."""
-    # Randomly choose timestamp format for maximum dirtiness
+    """Формує system-рядок у змішаному ISO/syslog форматі."""
     if rng.random() < 0.4:
         ts = _dirty_ts_syslog(now, rng)
-        # Syslog-style
         line = f"{ts} {ev.source} {ev.component}/{ev.event}: "
     else:
         ts = _dirty_ts_iso(now)
@@ -645,10 +583,6 @@ def _format_system_line(ev: Event, now: datetime, rng: _random_mod.Random) -> st
     return line
 
 
-# ══════════════════════════════════════════════════════════════════════════
-#  Demo high-rate streaming (tick-based batching + periodic attack bursts)
-# ══════════════════════════════════════════════════════════════════════════
-
 _ATTACK_SEQUENCE: list[str] = [
     "brute_force",
     "ddos_abuse",
@@ -658,16 +592,8 @@ _ATTACK_SEQUENCE: list[str] = [
     "network_failure",
 ]
 
-# ── Attack burst specifications ──────────────────────────────────────────
-# Each burst is calibrated to exceed the detection threshold defined in
-# rules.yaml so that the analyzer fires an incident immediately.
-#
-#   brute_force:       RULE-BF-001    -> 5 auth_failure  / 60 s  -> burst 8
-#   ddos:              RULE-DDOS-001  -> 10 rate_exceeded / 30 s -> burst 15
-#   telemetry_spoof:   RULE-SPOOF-001 -> 3 anomalies     / 60 s -> burst 6
-#   unauthorized_cmd:  RULE-UCMD-001  -> 1 cmd_exec              -> burst 3
-#   outage/db:         RULE-OUT-001/2 -> 1 svc + 2 db_error      -> burst 3+2
-# ─────────────────────────────────────────────────────────────────────────
+# Пакети атак відкалібровані так, щоб перевищувати пороги rules.yaml.
+# Це дає швидке спрацювання інцидентів у live-демо.
 
 _DEMO_BURSTS: dict[str, dict[str, Any]] = {
     "brute_force": {
@@ -824,7 +750,7 @@ _DEMO_BURSTS: dict[str, dict[str, Any]] = {
     },
 }
 
-# ── Background event templates (always benign) ───────────────────────────
+# Шаблони фонових подій, які не мають бути атакувальними.
 _BG_TEMPLATES: list[tuple[str, str, list[str], list[dict[str, Any]]]] = [
     (
         "telemetry_read",
@@ -885,7 +811,7 @@ def _random_bg_event(
     devices: dict[str, Any],
     now: datetime,
 ) -> Event:
-    """Generate a single random benign background event."""
+    """Генерує одну випадкову безпечну фонову подію."""
     tpl = rng.choice(_BG_TEMPLATES)
     event_type, actor_tmpl, sources, key_specs = tpl
     source = rng.choice(sources)
@@ -924,7 +850,7 @@ def _generate_attack_burst(
     devices: dict[str, Any],
     now: datetime,
 ) -> list[Event]:
-    """Generate a burst of events for *name* calibrated to exceed detector thresholds."""
+    """Генерує пакет подій для *name*, відкалібрований під пороги детектора."""
     spec = _DEMO_BURSTS[name]
     events: list[Event] = []
     cor_id = f"COR-DEMO-{rng.randint(1000, 9999)}"
@@ -933,7 +859,6 @@ def _generate_attack_burst(
     for phase in spec["phases"]:
         count: int = phase["count"]
         interval_ms: int = phase["interval_ms"]
-        # Fix source per phase so events land in the same detector group
         source = rng.choice(phase["source_pool"])
         dev = devices.get(source)
         comp = dev.component if dev else "unknown"
@@ -971,10 +896,10 @@ def _generate_attack_burst(
 
 
 def _rotate_if_needed(path: Path, max_mb: float) -> bool:
-    """Rotate (truncate) file when it exceeds *max_mb*.
+    """Ротує файл, якщо його розмір перевищив *max_mb*.
 
-    Renames current file to ``*.bak`` (overwriting previous backup) so the
-    next append creates a fresh file.  Returns ``True`` if rotation occurred.
+    Поточний файл перейменовується на ``*.bak`` із перезаписом попереднього
+    backup. Повертає ``True``, якщо ротація виконана.
     """
     try:
         if path.stat().st_size / 1_048_576 > max_mb:
@@ -1001,35 +926,11 @@ def stream_demo_highrate(
     actions_path: Path | None = None,
     applied_path: Path | None = None,
 ) -> None:
-    """Stream events optimised for live demo: high background rate + periodic attack bursts.
+    """Стрімить події для live-демо з високим фоновим темпом і burst-атаками.
 
-    This function never returns under normal operation (stop with Ctrl+C /
-    SIGTERM).
-
-    Compared to ``stream_jsonl_infinite`` which streams one event at a time,
-    this function writes *bg_per_tick* background events per tick (every
-    *interval_sec* seconds) and injects a full attack burst every
-    *attack_every_sec* seconds.  Attack bursts cycle round-robin through the
-    five scenarios and are calibrated to exceed detection thresholds so that
-    incidents appear within 10--20 seconds of launch.
-
-    When *actions_path* is provided, the emulator reads actions.jsonl
-    (tail mode) and applies them to the world state, closing the feedback
-    loop with the Analyzer.
-
-    When *applied_path* is provided, the emulator writes an ACK line to
-    actions_applied.jsonl after every successful apply_action().
-
-    Args:
-        engine: Configured EmulatorEngine (used for rng and device index).
-        path: JSONL output path.
-        interval_sec: Seconds between ticks (default 0.25 = 250 ms).
-        attack_every_sec: Seconds between attack burst injections.
-        bg_per_tick: Background events emitted per tick.
-        max_file_mb: Max file size in MB before rotation.
-        raw_log_dir: Optional directory for dirty raw logs.
-        csv_out: Optional CSV output path.
-        actions_path: Optional path to actions.jsonl for closed-loop feedback.
+    Функція працює безкінечно. Якщо передано *actions_path*, емулятор читає
+    actions.jsonl у tail-режимі й застосовує дії до WorldState. Якщо передано
+    *applied_path*, після успішного застосування записується ACK.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     if raw_log_dir is not None:
@@ -1042,7 +943,6 @@ def stream_demo_highrate(
     attack_idx = 0
     total_count = 0
 
-    # Closed-loop state
     world = WorldState()
     actions_offset = 0
 
@@ -1051,7 +951,6 @@ def stream_demo_highrate(
         with contextlib.suppress(OSError):
             csv_header_written = csv_out.stat().st_size > 0
 
-    # Fire the first burst immediately by pretending we're overdue
     last_attack_wall = time.monotonic() - attack_every_sec
 
     log.info(
@@ -1069,7 +968,6 @@ def stream_demo_highrate(
         now = datetime.now(tz=timezone.utc)
         events: list[Event] = []
 
-        # 0. Read and apply actions from Analyzer -----------------------
         if actions_path is not None:
             new_actions, actions_offset = read_new_actions(
                 str(actions_path),
@@ -1086,7 +984,6 @@ def stream_demo_highrate(
                 try:
                     state_events = apply_action(world, act)
                     events.extend(state_events)
-                    # Determine the primary state-change event name
                     se_name = state_events[0].event if state_events else act.action
                     acks.append(
                         ActionAck(
@@ -1128,7 +1025,6 @@ def stream_demo_highrate(
                         act.action,
                         exc,
                     )
-            # Write ACKs to applied file
             if acks and applied_path is not None:
                 applied_path.parent.mkdir(parents=True, exist_ok=True)
                 with applied_path.open("a", encoding="utf-8") as fh:
@@ -1147,31 +1043,23 @@ def stream_demo_highrate(
                     len(events),
                 )
 
-        # 0b. Expire transient states -----------------------------------
         expire_events = expire_state(world)
         events.extend(expire_events)
 
-        # 1. Background noise -------------------------------------------
         for _ in range(bg_per_tick):
             ev = _random_bg_event(rng, devices, now)
-            # Apply world state filtering
             if _should_suppress(ev, world):
                 continue
             events.append(ev)
 
-        # 1b. Network degradation effects --------------------------------
-        # When network is degraded, inject timeout/error events so the
-        # detector sees real anomalies for "network outage/degraded".
         if is_network_degraded(world):
             net_errors = _generate_network_errors(rng, devices, now, world)
             events.extend(net_errors)
 
-        # 2. Attack burst (round-robin) ---------------------------------
         wall_elapsed = time.monotonic() - last_attack_wall
         if wall_elapsed >= attack_every_sec:
             name = _ATTACK_SEQUENCE[attack_idx % len(_ATTACK_SEQUENCE)]
             burst = _generate_attack_burst(name, rng, devices, now)
-            # Filter burst through world state
             filtered_burst = [e for e in burst if not _should_suppress(e, world)]
             if len(filtered_burst) < len(burst):
                 log.info(
@@ -1192,13 +1080,11 @@ def stream_demo_highrate(
                 int(attack_every_sec),
             )
 
-        # 3. Write JSONL ------------------------------------------------
         with path.open("a", encoding="utf-8") as fh:
             for ev in events:
                 fh.write(ev.to_json() + "\n")
             fh.flush()
 
-        # 4. Write CSV (optional) ---------------------------------------
         if csv_out is not None and events:
             with csv_out.open("a", encoding="utf-8", newline="") as cf:
                 if not csv_header_written:
@@ -1208,14 +1094,12 @@ def stream_demo_highrate(
                     cf.write(ev.to_csv_row() + "\n")
                 cf.flush()
 
-        # 5. Write raw logs (optional) ----------------------------------
         if raw_log_dir is not None:
             for ev in events:
                 _write_dirty_raw_log(raw_log_dir, ev, rng)
 
         total_count += len(events)
 
-        # 6. File rotation ----------------------------------------------
         _rotate_if_needed(path, max_file_mb)
         if csv_out is not None and _rotate_if_needed(csv_out, max_file_mb):
             csv_header_written = False
@@ -1224,7 +1108,6 @@ def stream_demo_highrate(
             for lf in raw_log_dir.glob("*.log"):
                 _rotate_if_needed(lf, max_file_mb)
 
-        # 7. Progress ---------------------------------------------------
         if total_count % 500 < len(events):
             log.info(
                 "Demo stream: %d events total, %d attack bursts fired, "
@@ -1243,20 +1126,17 @@ def stream_demo_highrate(
 
 
 def _should_suppress(ev: Event, world: WorldState) -> bool:
-    """Check if an event should be suppressed by the world state.
+    """Перевіряє, чи потрібно приглушити подію через поточний WorldState.
 
-    This makes defenses REAL: rate limits actually reduce flood events,
-    blocked actors can't authenticate, isolated components don't serve, etc.
+    Так захист впливає на потік подій: rate limit зменшує flood, заблоковані
+    актори не автентифікуються, а ізольовані компоненти не обслуговують запити.
     """
-    # Rate-limited gateway suppresses rate_exceeded floods
     if is_rate_limited(world) and ev.event == "rate_exceeded":
         return True
 
-    # Blocked actors can't generate auth_failure; their attempts are rejected earlier
     if ev.event in ("auth_failure", "auth_success") and is_actor_blocked(world, ev.actor, ev.ip):
         return True
 
-    # Isolated component doesn't generate normal events
     if is_isolated(world, ev.component) and ev.event not in (
         "isolation_enabled",
         "isolation_released",
@@ -1265,11 +1145,9 @@ def _should_suppress(ev: Event, world: WorldState) -> bool:
     ):
         return True
 
-    # During DB restore, suppress db_error
     if world.db.status == "restoring" and ev.event == "db_error":
         return True
 
-    # Network disconnected suppresses normal network-dependent events
     return (
         world.network.disconnected
         and ev.component in ("api", "ui")
@@ -1283,12 +1161,11 @@ def _generate_network_errors(
     now: datetime,
     world: WorldState,
 ) -> list[Event]:
-    """Generate timeout/error events proportional to network degradation."""
+    """Генерує timeout/error події пропорційно до деградації мережі."""
     events: list[Event] = []
     drop = world.network.drop_rate
     latency = world.network.latency_ms
 
-    # Number of error events scales with severity
     if world.network.disconnected:
         n_errors = rng.randint(3, 6)
     elif drop > 0.3 or latency > 500:

@@ -52,7 +52,7 @@ class TestParserSuccess:
         line = "2026-09-10 12:32:00 ERROR api-gw-01 auth failure for user admin from 10.0.5.99"
         result = parse_line(line, api_profile, UTC)
         assert isinstance(result, Event)
-        # ERROR level should map to a higher severity
+        # Рівень ERROR має відповідати вищій критичності.
         assert result.severity in ("high", "critical", "medium")
 
     def test_auth_syslog_line(self, auth_profile):
@@ -121,14 +121,14 @@ class TestValidateEvent:
 
         ev = make_event(severity="unknown_sev")
         warnings = validate_event(ev)
-        assert any("severity" in w for w in warnings)
+        assert any("критичності" in w for w in warnings)
 
     def test_unknown_component(self):
         from tests.conftest import make_event
 
         ev = make_event(component="satellite")
         warnings = validate_event(ev)
-        assert any("component" in w for w in warnings)
+        assert any("компонент" in w for w in warnings)
 
     def test_empty_timestamp(self):
         from tests.conftest import make_event

@@ -1,4 +1,4 @@
-"""Тести policy engine."""
+"""Тести двигуна політик."""
 
 from __future__ import annotations
 
@@ -132,7 +132,7 @@ class TestRankControls:
     def test_standard_ranked_higher_than_minimal(self, policies_cfg):
         ranking = rank_controls(policies_cfg, ["minimal", "baseline", "standard"])
         policies_ordered = [r["policy"] for r in ranking]
-        # Standard should rank higher (more effective) than minimal
+        # Standard має бути вище minimal за ефективністю.
         assert policies_ordered.index("standard") < policies_ordered.index("minimal")
 
     def test_effectiveness_values(self, policies_cfg):

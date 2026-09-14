@@ -39,7 +39,7 @@ def get_state() -> StateResponse:
 
 @router.get("/components/{component_id}", response_model=ComponentState)
 def get_component_state(
-    component_id: str = Path(..., description="Component identifier"),
+    component_id: str = Path(..., description="Ідентифікатор компонента"),
 ) -> ComponentState:
     """Повертає стан конкретного компонента."""
     provider = get_provider()
@@ -60,7 +60,7 @@ def get_component_state(
 
 @router.get("/actors/{actor}/blocked", response_model=ActorCheckResponse)
 def check_actor_blocked(
-    actor: str = Path(..., description="Actor identifier (IP or username)"),
+    actor: str = Path(..., description="Ідентифікатор актора (IP або ім'я користувача)"),
 ) -> ActorCheckResponse:
     """Перевіряє, чи актор наразі заблокований."""
     provider = get_provider()
@@ -70,7 +70,7 @@ def check_actor_blocked(
 
 @router.get("/components/{component_id}/isolated", response_model=ComponentCheckResponse)
 def check_component_isolated(
-    component_id: str = Path(..., description="Component identifier"),
+    component_id: str = Path(..., description="Ідентифікатор компонента"),
 ) -> ComponentCheckResponse:
     """Перевіряє, чи компонент наразі ізольований."""
     provider = get_provider()

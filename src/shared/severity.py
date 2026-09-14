@@ -8,11 +8,11 @@ SEV_ORDER: dict[str, int] = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 def normalize_severity(value: str | None, default: str = "low") -> str:
     """Нормалізує severity до підтримуваного значення.
 
-    Args:
+    Аргументи:
         value: Вхідне значення severity (може бути None або довільний рядок).
         default: Значення за замовчуванням для некоректних вхідних даних.
 
-    Returns:
+    Повертає:
         Одне з: low, medium, high, critical.
     """
     candidate = (value or "").strip().lower()

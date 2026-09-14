@@ -86,7 +86,7 @@ class TestCorrelate:
             ),
         ]
         incidents = correlate(alerts, "baseline", merge_window_sec=120)
-        # Same component + threat_type within 120s → merged
+        # Той самий component + threat_type у межах 120с → об'єднується.
         assert len(incidents) == 1
 
     def test_no_cor_id_different_components_separate(self):
@@ -139,10 +139,10 @@ class TestCorrelate:
 
     def test_policy_modifiers_affect_timing(self):
         alerts = [make_alert(event_ids="COR-001", threat_type="credential_attack")]
-        # Baseline: mttd=30, mttr=120
+        # Baseline: mttd=30, mttr=120.
         inc_baseline = correlate(alerts, "baseline")[0]
 
-        # With halved mttd
+        # Удвічі менший mttd.
         mods = {"credential_attack": {"mttd_multiplier": 0.5, "mttr_multiplier": 0.5}}
         inc_fast = correlate(alerts, "standard", policy_modifiers=mods)[0]
 
@@ -161,7 +161,7 @@ class TestBuildIncident:
                 timestamp="2026-02-26T10:00:00Z",
                 component="api",
                 event_count=5,
-                description="test brute force",
+                description="тест brute-force",
                 response_hint="block_ip",
             )
         ]
@@ -171,7 +171,7 @@ class TestBuildIncident:
         assert inc.threat_type == "credential_attack"
         assert inc.severity == "high"
         assert inc.start_ts == "2026-02-26T10:00:00Z"
-        assert inc.mttd_sec == 30.0  # _BASE_TIMING default
+        assert inc.mttd_sec == 30.0  # типове _BASE_TIMING
         assert inc.mttr_sec == 120.0
 
     def test_severity_escalated_to_max(self):
@@ -190,7 +190,7 @@ class TestBuildIncident:
                 threat_type="credential_attack",
             )
         ]
-        # impact = SEV_IMPACT["critical"] * avg_confidence * impact_multiplier
+        # Вплив = SEV_IMPACT["critical"] * avg_confidence * impact_multiplier
         # = 1.0 * 0.90 * 1.0 = 0.90
         inc = _build_incident(group, idx=1, policy="test", pm={})
         assert inc.impact_score == pytest.approx(0.90, abs=0.01)
@@ -204,7 +204,7 @@ class TestBuildIncident:
             )
         ]
         pm = {"credential_attack": {"impact_multiplier": 0.5}}
-        # impact = 0.7 * 0.80 * 0.5 = 0.28
+        # Вплив = 0.7 * 0.80 * 0.5 = 0.28.
         inc = _build_incident(group, idx=1, policy="test", pm=pm)
         assert inc.impact_score == pytest.approx(0.28, abs=0.01)
 
@@ -222,7 +222,7 @@ class TestBuildIncident:
 
     def test_mttd_mttr_with_modifiers(self):
         group = [make_alert(threat_type="availability_attack")]
-        # Base: mttd=15, mttr=180
+        # База: mttd=15, mttr=180.
         pm = {"availability_attack": {"mttd_multiplier": 2.0, "mttr_multiplier": 0.5}}
         inc = _build_incident(group, idx=1, policy="test", pm=pm)
         assert inc.mttd_sec == 30.0  # 15 * 2
@@ -235,7 +235,7 @@ class TestBuildIncident:
                 threat_type="credential_attack",
             )
         ]
-        # mttd=30, mttr=120
+        # mttd=30, mttr=120.
         inc = _build_incident(group, idx=1, policy="test", pm={})
         assert inc.detect_ts == "2026-02-26T10:00:30Z"
         assert inc.recover_ts == "2026-02-26T10:02:30Z"
@@ -253,6 +253,6 @@ class TestBuildIncident:
     def test_unknown_threat_type_uses_defaults(self):
         group = [make_alert(threat_type="unknown_threat")]
         inc = _build_incident(group, idx=1, policy="test", pm={})
-        # Fallback: mttd=30, mttr=120
+        # Резервні значення: mttd=30, mttr=120.
         assert inc.mttd_sec == 30.0
         assert inc.mttr_sec == 120.0

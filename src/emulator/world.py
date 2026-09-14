@@ -1,14 +1,12 @@
-"""Component state model and action application for closed-loop emulation.
+"""Модель стану компонентів і застосування дій у closed-loop емуляції.
 
-Each infrastructure component has mutable runtime state that actions from
-the Analyzer can modify. The Emulator reads actions.jsonl, applies them
-via ``apply_action()``, and emits state-change events back into
-events.jsonl so the Analyzer can observe the effect.
+Кожен компонент інфраструктури має змінний runtime-стан, на який впливають
+дії аналізатора. Емулятор читає actions.jsonl, застосовує їх через
+``apply_action()`` і повертає події зміни стану в events.jsonl, щоб аналізатор
+бачив результат.
 
-To use REAL execution instead of simulation:
-    Replace the body of apply_action() with real API calls when
-    SmartEnergy infrastructure is available. The function signature
-    stays the same - only the implementation changes.
+Коли з'явиться реальна інфраструктура SmartEnergy, емуляційні control-класи
+можна замінити адаптерами з реальними API-викликами без зміни контракту.
 """
 
 from __future__ import annotations
@@ -22,17 +20,36 @@ from datetime import datetime, timezone
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from src.adapters.action_router import ActionRouter, ComponentControls
 from src.contracts.action import Action
 from src.contracts.event import Event
+from src.contracts.interfaces import (
+    ActionResult,
+    ActionStatus,
+    ApiControl,
+    AuthControl,
+    DatabaseControl,
+    GatewayControl,
+    NetworkControl,
+)
 
 log = logging.getLogger(__name__)
 
 NETWORK_SIM_URL = os.environ.get("NETWORK_SIM_URL", "")
+DEFAULT_BACKUP_RETENTION = 5
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Component state models
-# ═══════════════════════════════════════════════════════════════════════════
+def _backup_retention_limit() -> int:
+    try:
+        return max(1, int(os.environ.get("BACKUP_RETENTION", str(DEFAULT_BACKUP_RETENTION))))
+    except ValueError:
+        return DEFAULT_BACKUP_RETENTION
+
+
+def _trim_db_snapshots(state: WorldState) -> None:
+    retention = _backup_retention_limit()
+    if len(state.db.snapshots) > retention:
+        del state.db.snapshots[: len(state.db.snapshots) - retention]
 
 
 @dataclass
@@ -40,24 +57,24 @@ class GatewayState:
     rate_limit_enabled: bool = False
     rate_limit_rps: int = 0
     rate_limit_burst: int = 0
-    rate_limit_expires: float = 0.0  # wall-clock monotonic
+    rate_limit_expires: float = 0.0  # монотонний час завершення
 
 
 @dataclass
 class ApiState:
-    status: str = "healthy"  # healthy | degraded | isolated
+    status: str = "healthy"  # допустимі стани: healthy, degraded, isolated
     isolation_expires: float = 0.0
 
 
 @dataclass
 class AuthState:
-    blocked_actors: dict[str, float] = field(default_factory=dict)  # actor -> expires
-    blocked_ips: dict[str, float] = field(default_factory=dict)  # ip -> expires
+    blocked_actors: dict[str, float] = field(default_factory=dict)  # актор -> час завершення
+    blocked_ips: dict[str, float] = field(default_factory=dict)  # IP -> час завершення
 
 
 @dataclass
 class DbState:
-    status: str = "healthy"  # healthy | corrupted | restoring
+    status: str = "healthy"  # допустимі стани: healthy, corrupted, restoring
     snapshots: list[str] = field(default_factory=lambda: ["snapshot_init"])
     restoring_until: float = 0.0
 
@@ -77,7 +94,7 @@ class NetworkState:
 
 @dataclass
 class WorldState:
-    """Aggregate state of all emulated infrastructure components."""
+    """Агрегований стан усіх емульованих компонентів інфраструктури."""
 
     gateway: GatewayState = field(default_factory=GatewayState)
     api: ApiState = field(default_factory=ApiState)
@@ -87,13 +104,8 @@ class WorldState:
     network: NetworkState = field(default_factory=NetworkState)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Network-sim HTTP helper
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _netsim_post(endpoint: str, body: dict) -> dict | None:
-    """POST JSON to network-sim. Returns parsed response or None on error."""
+    """Надсилає JSON у network-sim і повертає відповідь або None при помилці."""
     url = NETWORK_SIM_URL
     if not url:
         return None
@@ -112,247 +124,355 @@ def _netsim_post(endpoint: str, body: dict) -> dict | None:
         return None
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Action application
-# ═══════════════════════════════════════════════════════════════════════════
+def _success(action_id: str, events: list[Event]) -> ActionResult:
+    return ActionResult(
+        success=True,
+        action_id=action_id,
+        status=ActionStatus.APPLIED,
+        state_events=events,
+    )
 
 
-def apply_action(state: WorldState, action: Action) -> list[Event]:
-    """Apply a single action to the world state and return state-change events."""
-    now = time.monotonic()
-    ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    events: list[Event] = []
+def _failed(action_id: str, error: str) -> ActionResult:
+    return ActionResult(
+        success=False,
+        action_id=action_id,
+        status=ActionStatus.FAILED,
+        error=error,
+    )
 
-    act = action.action
 
-    if act == "enable_rate_limit":
-        state.gateway.rate_limit_enabled = True
-        state.gateway.rate_limit_rps = action.params.get("rps", 100)
-        state.gateway.rate_limit_burst = action.params.get("burst", 200)
-        dur = action.params.get("duration_sec", 300)
-        state.gateway.rate_limit_expires = now + dur
-        events.append(
-            _state_event(
-                ts,
-                "gateway",
-                "api-gw-01",
-                "rate_limit_enabled",
-                f"rps={state.gateway.rate_limit_rps},burst={state.gateway.rate_limit_burst},dur={dur}",
-                "high",
-                action.correlation_id,
-            )
+class EmulatedGatewayControl(GatewayControl):
+    """Емуляційна реалізація GatewayControl на основі WorldState."""
+
+    def __init__(self, state: WorldState):
+        self.state = state
+
+    def enable_rate_limit(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        rps: int,
+        burst: int,
+        duration_sec: int,
+    ) -> ActionResult:
+        now = time.monotonic()
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.state.gateway.rate_limit_enabled = True
+        self.state.gateway.rate_limit_rps = rps
+        self.state.gateway.rate_limit_burst = burst
+        self.state.gateway.rate_limit_expires = now + duration_sec
+        event = _state_event(
+            ts,
+            "gateway",
+            "api-gw-01",
+            "rate_limit_enabled",
+            f"rps={rps},burst={burst},dur={duration_sec}",
+            "high",
+            correlation_id,
         )
-        log.info(
-            "ACTION APPLIED: enable_rate_limit rps=%d burst=%d dur=%ds",
-            state.gateway.rate_limit_rps,
-            state.gateway.rate_limit_burst,
-            dur,
-        )
+        log.info("ACTION APPLIED: enable_rate_limit rps=%d burst=%d dur=%ds", rps, burst, duration_sec)
+        return _success(action_id, [event])
 
-    elif act == "disable_rate_limit":
-        state.gateway.rate_limit_enabled = False
-        state.gateway.rate_limit_rps = 0
-        state.gateway.rate_limit_burst = 0
-        state.gateway.rate_limit_expires = 0.0
-        events.append(
-            _state_event(
-                ts,
-                "gateway",
-                "api-gw-01",
-                "rate_limit_disabled",
-                "manual",
-                "medium",
-                action.correlation_id,
-            )
+    def disable_rate_limit(self, *, action_id: str, correlation_id: str) -> ActionResult:
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.state.gateway.rate_limit_enabled = False
+        self.state.gateway.rate_limit_rps = 0
+        self.state.gateway.rate_limit_burst = 0
+        self.state.gateway.rate_limit_expires = 0.0
+        event = _state_event(
+            ts,
+            "gateway",
+            "api-gw-01",
+            "rate_limit_disabled",
+            "manual",
+            "medium",
+            correlation_id,
         )
         log.info("ACTION APPLIED: disable_rate_limit")
+        return _success(action_id, [event])
 
-    elif act == "isolate_component":
-        target = action.target_component
-        dur = action.params.get("duration_sec", 120)
-        if target in ("api", "collector"):
-            state.api.status = "isolated"
-            state.api.isolation_expires = now + dur
-            events.append(
-                _state_event(
-                    ts,
-                    target,
-                    action.target_id or target,
-                    "isolation_enabled",
-                    f"duration={dur}",
-                    "critical",
-                    action.correlation_id,
-                )
-            )
-            log.info("ACTION APPLIED: isolate_component %s for %ds", target, dur)
 
-    elif act == "release_isolation":
-        target = action.target_component
-        if target in ("api", "collector"):
-            state.api.status = "healthy"
-            state.api.isolation_expires = 0.0
-            events.append(
-                _state_event(
-                    ts,
-                    target,
-                    action.target_id or target,
-                    "isolation_released",
-                    "manual",
-                    "medium",
-                    action.correlation_id,
-                )
-            )
-            log.info("ACTION APPLIED: release_isolation %s", target)
+class EmulatedApiControl(ApiControl):
+    """Емуляційна реалізація ApiControl на основі WorldState."""
 
-    elif act == "block_actor":
-        actor = action.params.get("actor", "")
-        ip = action.params.get("ip", "")
-        dur = action.params.get("duration_sec", 600)
-        if actor:
-            state.auth.blocked_actors[actor] = now + dur
-        if ip:
-            state.auth.blocked_ips[ip] = now + dur
-        target_str = f"actor={actor},ip={ip}"
-        events.append(
-            _state_event(
-                ts,
-                "auth",
-                "gateway-01",
-                "actor_blocked",
-                f"{target_str},duration={dur}",
-                "high",
-                action.correlation_id,
-            )
+    def __init__(self, state: WorldState):
+        self.state = state
+
+    def isolate_component(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        component_id: str,
+        target_id: str,
+        duration_sec: int,
+    ) -> ActionResult:
+        if component_id not in ("api", "collector"):
+            return _failed(action_id, f"непідтримувана ціль ізоляції: {component_id}")
+
+        now = time.monotonic()
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.state.api.status = "isolated"
+        self.state.api.isolation_expires = now + duration_sec
+        event = _state_event(
+            ts,
+            component_id,
+            target_id or component_id,
+            "isolation_enabled",
+            f"duration={duration_sec}",
+            "critical",
+            correlation_id,
         )
-        log.info("ACTION APPLIED: block_actor %s for %ds", target_str, dur)
+        log.info("ACTION APPLIED: isolate_component %s for %ds", component_id, duration_sec)
+        return _success(action_id, [event])
 
-    elif act == "unblock_actor":
-        actor = action.params.get("actor", "")
-        ip = action.params.get("ip", "")
-        state.auth.blocked_actors.pop(actor, None)
-        state.auth.blocked_ips.pop(ip, None)
-        events.append(
-            _state_event(
-                ts,
-                "auth",
-                "gateway-01",
-                "actor_unblocked",
-                f"actor={actor},ip={ip}",
-                "medium",
-                action.correlation_id,
-            )
+    def release_isolation(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        component_id: str,
+        target_id: str,
+    ) -> ActionResult:
+        if component_id not in ("api", "collector"):
+            return _failed(action_id, f"непідтримувана ціль ізоляції: {component_id}")
+
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.state.api.status = "healthy"
+        self.state.api.isolation_expires = 0.0
+        event = _state_event(
+            ts,
+            component_id,
+            target_id or component_id,
+            "isolation_released",
+            "manual",
+            "medium",
+            correlation_id,
+        )
+        log.info("ACTION APPLIED: release_isolation %s", component_id)
+        return _success(action_id, [event])
+
+
+class EmulatedAuthControl(AuthControl):
+    """Емуляційна реалізація AuthControl на основі WorldState."""
+
+    def __init__(self, state: WorldState):
+        self.state = state
+
+    def block_actor(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        actor: str,
+        ip: str,
+        duration_sec: int,
+    ) -> ActionResult:
+        now = time.monotonic()
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if actor:
+            self.state.auth.blocked_actors[actor] = now + duration_sec
+        if ip:
+            self.state.auth.blocked_ips[ip] = now + duration_sec
+        target_str = f"actor={actor},ip={ip}"
+        event = _state_event(
+            ts,
+            "auth",
+            "gateway-01",
+            "actor_blocked",
+            f"{target_str},duration={duration_sec}",
+            "high",
+            correlation_id,
+        )
+        log.info("ACTION APPLIED: block_actor %s for %ds", target_str, duration_sec)
+        return _success(action_id, [event])
+
+    def unblock_actor(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        actor: str,
+        ip: str,
+    ) -> ActionResult:
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.state.auth.blocked_actors.pop(actor, None)
+        self.state.auth.blocked_ips.pop(ip, None)
+        event = _state_event(
+            ts,
+            "auth",
+            "gateway-01",
+            "actor_unblocked",
+            f"actor={actor},ip={ip}",
+            "medium",
+            correlation_id,
         )
         log.info("ACTION APPLIED: unblock_actor actor=%s ip=%s", actor, ip)
+        return _success(action_id, [event])
 
-    elif act == "backup_db":
-        snap_name = action.params.get("name", f"snap_{int(time.time())}")
-        state.db.snapshots.append(snap_name)
-        events.append(
-            _state_event(
-                ts,
-                "db",
-                "db-primary",
-                "backup_created",
-                snap_name,
-                "medium",
-                action.correlation_id,
-            )
+
+class EmulatedDatabaseControl(DatabaseControl):
+    """Емуляційна реалізація DatabaseControl на основі WorldState."""
+
+    def __init__(self, state: WorldState):
+        self.state = state
+
+    def backup(self, *, action_id: str, correlation_id: str, name: str) -> ActionResult:
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        snap_name = name or f"snap_{int(time.time())}"
+        self.state.db.snapshots.append(snap_name)
+        _trim_db_snapshots(self.state)
+        event = _state_event(
+            ts,
+            "db",
+            "db-primary",
+            "backup_created",
+            snap_name,
+            "medium",
+            correlation_id,
         )
         log.info("ACTION APPLIED: backup_db -> %s", snap_name)
+        return _success(action_id, [event])
 
-    elif act == "restore_db":
-        snap = action.params.get("snapshot", "")
-        if snap in state.db.snapshots or snap == "latest":
-            state.db.status = "restoring"
-            restore_dur = 10.0  # simulated restore time
-            state.db.restoring_until = now + restore_dur
-            events.append(
-                _state_event(
-                    ts,
-                    "db",
-                    "db-primary",
-                    "restore_started",
-                    f"snapshot={snap}",
-                    "critical",
-                    action.correlation_id,
-                )
-            )
-            log.info("ACTION APPLIED: restore_db from %s", snap)
-        else:
+    def restore(self, *, action_id: str, correlation_id: str, snapshot: str) -> ActionResult:
+        snap = snapshot or "latest"
+        if snap not in self.state.db.snapshots and snap != "latest":
             log.warning("ACTION FAILED: restore_db snapshot '%s' not found", snap)
+            return _failed(action_id, f"snapshot не знайдено: {snap}")
 
-    elif act == "degrade_network":
-        latency = action.params.get("latency_ms", 200)
-        drop = action.params.get("drop_rate", 0.1)
-        ttl = action.params.get("ttl_sec", 120)
-        disconnected = action.params.get("disconnected", False)
-        state.network.latency_ms = latency
-        state.network.drop_rate = drop
-        state.network.disconnected = disconnected
-        state.network.degraded_until = now + ttl
-        # Call real network-sim container
+        now = time.monotonic()
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.state.db.status = "restoring"
+        restore_dur = 10.0
+        self.state.db.restoring_until = now + restore_dur
+        event = _state_event(
+            ts,
+            "db",
+            "db-primary",
+            "restore_started",
+            f"snapshot={snap}",
+            "critical",
+            correlation_id,
+        )
+        log.info("ACTION APPLIED: restore_db from %s", snap)
+        return _success(action_id, [event])
+
+    def corrupt(self, *, action_id: str, correlation_id: str) -> ActionResult:
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.state.db.status = "corrupted"
+        event = _state_event(
+            ts,
+            "db",
+            "db-primary",
+            "db_corruption_detected",
+            "integrity_violation",
+            "critical",
+            correlation_id,
+        )
+        log.info("ACTION APPLIED: corrupt_db")
+        return _success(action_id, [event])
+
+    def verify_integrity(self) -> bool:
+        return self.state.db.status != "corrupted"
+
+
+class EmulatedNetworkControl(NetworkControl):
+    """Емуляційна реалізація NetworkControl на основі WorldState і network-sim."""
+
+    def __init__(self, state: WorldState):
+        self.state = state
+
+    def degrade_network(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        latency_ms: int,
+        drop_rate: float,
+        ttl_sec: int,
+        disconnected: bool,
+    ) -> ActionResult:
+        now = time.monotonic()
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.state.network.latency_ms = latency_ms
+        self.state.network.drop_rate = drop_rate
+        self.state.network.disconnected = disconnected
+        self.state.network.degraded_until = now + ttl_sec
         _netsim_post(
             "/degrade",
             {
-                "latency_ms": latency,
-                "drop_rate": drop,
-                "ttl_sec": ttl,
+                "latency_ms": latency_ms,
+                "drop_rate": drop_rate,
+                "ttl_sec": ttl_sec,
                 "disconnected": disconnected,
-                "correlation_id": action.correlation_id,
+                "correlation_id": correlation_id,
             },
         )
-        val = f"latency_ms={latency},drop_rate={drop},disconnected={disconnected},ttl_sec={ttl}"
-        events.append(
-            _state_event(
-                ts,
-                "network",
-                "network-sim",
-                "network_degraded",
-                val,
-                "high",
-                action.correlation_id,
-            )
+        value = (
+            f"latency_ms={latency_ms},drop_rate={drop_rate},"
+            f"disconnected={disconnected},ttl_sec={ttl_sec}"
         )
-        log.info("ACTION APPLIED: degrade_network %s", val)
+        event = _state_event(
+            ts,
+            "network",
+            "network-sim",
+            "network_degraded",
+            value,
+            "high",
+            correlation_id,
+        )
+        log.info("ACTION APPLIED: degrade_network %s", value)
+        return _success(action_id, [event])
 
-    elif act == "reset_network":
-        state.network.latency_ms = 0
-        state.network.drop_rate = 0.0
-        state.network.disconnected = False
-        state.network.degraded_until = 0.0
-        # Call real network-sim container
-        _netsim_post(
-            "/reset",
-            {
-                "correlation_id": action.correlation_id,
-            },
-        )
-        events.append(
-            _state_event(
-                ts,
-                "network",
-                "network-sim",
-                "network_reset_applied",
-                "healthy",
-                "medium",
-                action.correlation_id,
-            )
+    def reset_network(self, *, action_id: str, correlation_id: str) -> ActionResult:
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.state.network.latency_ms = 0
+        self.state.network.drop_rate = 0.0
+        self.state.network.disconnected = False
+        self.state.network.degraded_until = 0.0
+        _netsim_post("/reset", {"correlation_id": correlation_id})
+        event = _state_event(
+            ts,
+            "network",
+            "network-sim",
+            "network_reset_applied",
+            "healthy",
+            "medium",
+            correlation_id,
         )
         log.info("ACTION APPLIED: reset_network")
+        return _success(action_id, [event])
 
-    else:
-        log.warning("Unknown action type: %s", act)
 
-    return events
+def build_emulated_action_router(state: WorldState) -> ActionRouter:
+    """Створює ActionRouter з control-класами на основі WorldState."""
+    return ActionRouter(
+        ComponentControls(
+            gateway=EmulatedGatewayControl(state),
+            api=EmulatedApiControl(state),
+            auth=EmulatedAuthControl(state),
+            db=EmulatedDatabaseControl(state),
+            network=EmulatedNetworkControl(state),
+        )
+    )
+
+
+def apply_action(state: WorldState, action: Action) -> list[Event]:
+    """Застосовує одну дію до WorldState і повертає події зміни стану."""
+    result = build_emulated_action_router(state).execute(action)
+    if not result.success:
+        log.warning("ACTION FAILED: %s", result.error)
+    return result.state_events
 
 
 def expire_state(state: WorldState) -> list[Event]:
-    """Check timers, expire transient states, return state-change events."""
+    """Перевіряє таймери, завершує тимчасові стани і повертає події."""
     now = time.monotonic()
     ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     events: list[Event] = []
 
-    # Rate limit expiry
     if (
         state.gateway.rate_limit_enabled
         and state.gateway.rate_limit_expires > 0
@@ -375,7 +495,6 @@ def expire_state(state: WorldState) -> list[Event]:
         )
         log.info("STATE EXPIRED: rate_limit on gateway")
 
-    # Isolation expiry
     if (
         state.api.status == "isolated"
         and state.api.isolation_expires > 0
@@ -396,7 +515,6 @@ def expire_state(state: WorldState) -> list[Event]:
         )
         log.info("STATE EXPIRED: isolation on api")
 
-    # Actor/IP block expiry
     expired_actors = [a for a, t in state.auth.blocked_actors.items() if now >= t]
     for a in expired_actors:
         del state.auth.blocked_actors[a]
@@ -427,7 +545,6 @@ def expire_state(state: WorldState) -> list[Event]:
             )
         )
 
-    # DB restore completion
     if (
         state.db.status == "restoring"
         and state.db.restoring_until > 0
@@ -448,7 +565,6 @@ def expire_state(state: WorldState) -> list[Event]:
         )
         log.info("STATE EXPIRED: db restore complete")
 
-    # Network degradation expiry
     if state.network.degraded_until > 0 and now >= state.network.degraded_until:
         state.network.latency_ms = 0
         state.network.drop_rate = 0.0
@@ -471,7 +587,7 @@ def expire_state(state: WorldState) -> list[Event]:
 
 
 def is_actor_blocked(state: WorldState, actor: str, ip: str) -> bool:
-    """Check if an actor or IP is currently blocked."""
+    """Перевіряє, чи actor або IP зараз заблокований."""
     now = time.monotonic()
     if actor in state.auth.blocked_actors and now < state.auth.blocked_actors[actor]:
         return True
@@ -479,31 +595,26 @@ def is_actor_blocked(state: WorldState, actor: str, ip: str) -> bool:
 
 
 def is_rate_limited(state: WorldState) -> bool:
-    """Check if the gateway rate limit is active."""
+    """Перевіряє, чи активний rate limit на gateway."""
     return state.gateway.rate_limit_enabled
 
 
 def is_isolated(state: WorldState, component: str) -> bool:
-    """Check if a component is isolated."""
+    """Перевіряє, чи компонент ізольований."""
     if component in ("api", "collector"):
         return state.api.status == "isolated"
     return False
 
 
 def is_network_degraded(state: WorldState) -> bool:
-    """Check if network is currently degraded."""
+    """Перевіряє, чи мережа зараз деградує."""
     return state.network.latency_ms > 0 or state.network.disconnected
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Actions JSONL reader (tail mode)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def read_new_actions(path: str, offset: int) -> tuple[list[Action], int]:
-    """Read new action lines from *path* starting at *offset*.
+    """Зчитує нові рядки дій із *path*, починаючи з *offset*.
 
-    Returns (actions, new_offset).
+    Повертає (actions, new_offset).
     """
     actions: list[Action] = []
     try:
@@ -524,15 +635,10 @@ def read_new_actions(path: str, offset: int) -> tuple[list[Action], int]:
                 a = Action.from_json(line)
                 actions.append(a)
             except (json.JSONDecodeError, KeyError) as exc:
-                log.debug("Skipping bad action line: %s", exc)
+                log.debug("Пропущено невалідний рядок дії: %s", exc)
         new_offset = fh.tell()
 
     return actions, new_offset
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Helper
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def _state_event(

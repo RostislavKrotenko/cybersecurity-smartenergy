@@ -27,7 +27,6 @@ class OutageScenario(BaseScenario):
         cor_id = self._cor_id(cor_seq)
         t = self._attack_start()
 
-        # Track phase end times so delays reference them
         phase_end_times: list[float] = []
 
         for phase_idx, phase in enumerate(injections):
@@ -38,7 +37,6 @@ class OutageScenario(BaseScenario):
                 phase_end_times.append(t.timestamp())
                 continue
 
-            # Handle inter-phase delays
             delay_key = [k for k in phase if k.startswith("delay_after_phase")]
             if delay_key:
                 d = phase[delay_key[0]]

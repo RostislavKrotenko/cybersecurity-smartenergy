@@ -5,23 +5,23 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Incident(BaseModel):
     """Модель одного інциденту."""
 
-    incident_id: str = Field(..., description="Unique incident identifier")
-    policy: str = Field(..., description="Security policy (minimal/baseline/standard)")
-    category: str = Field(..., description="Incident category")
-    severity: str = Field(..., description="Severity level (low/medium/high/critical)")
-    component: str = Field(..., description="Affected component")
-    start_ts: str | None = Field(None, description="Incident start timestamp (UTC)")
-    detect_ts: str | None = Field(None, description="Detection timestamp (UTC)")
-    recover_ts: str | None = Field(None, description="Recovery timestamp (UTC)")
-    mttd_sec: float | None = Field(None, description="Mean time to detect (seconds)")
-    mttr_sec: float | None = Field(None, description="Mean time to recover (seconds)")
-    status: str = Field("active", description="Incident status")
+    incident_id: str = Field(..., description="Унікальний ідентифікатор інциденту")
+    policy: str = Field(..., description="Політика безпеки (minimal/baseline/standard)")
+    category: str = Field(..., description="Категорія інциденту")
+    severity: str = Field(..., description="Рівень критичності (low/medium/high/critical)")
+    component: str = Field(..., description="Уражений компонент")
+    start_ts: str | None = Field(None, description="Час початку інциденту (UTC)")
+    detect_ts: str | None = Field(None, description="Час виявлення інциденту (UTC)")
+    recover_ts: str | None = Field(None, description="Час відновлення після інциденту (UTC)")
+    mttd_sec: float | None = Field(None, description="Середній час до виявлення, секунди")
+    mttr_sec: float | None = Field(None, description="Середній час до відновлення, секунди")
+    status: str = Field("active", description="Статус інциденту")
     details: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -35,14 +35,14 @@ class IncidentListResponse(BaseModel):
 class Action(BaseModel):
     """Модель однієї дії реагування."""
 
-    action_id: str = Field(..., description="Unique action identifier")
-    action: str = Field(..., description="Action type (block_actor, isolate_component, etc)")
-    target_component: str = Field(..., description="Target component")
-    target_id: str | None = Field(None, description="Target identifier (actor/IP)")
-    ts_utc: str | None = Field(None, description="Timestamp (UTC)")
-    reason: str | None = Field(None, description="Reason for action")
-    correlation_id: str | None = Field(None, description="Related incident ID")
-    status: str = Field("emitted", description="Action status (emitted/applied/failed)")
+    action_id: str = Field(..., description="Унікальний ідентифікатор дії")
+    action: str = Field(..., description="Тип дії (block_actor, isolate_component тощо)")
+    target_component: str = Field(..., description="Цільовий компонент")
+    target_id: str | None = Field(None, description="Ідентифікатор цілі (актор/IP)")
+    ts_utc: str | None = Field(None, description="Часова мітка (UTC)")
+    reason: str | None = Field(None, description="Причина виконання дії")
+    correlation_id: str | None = Field(None, description="Пов'язаний ідентифікатор інциденту")
+    status: str = Field("emitted", description="Статус дії (emitted/applied/failed)")
 
 
 class ActionSummary(BaseModel):
@@ -66,11 +66,11 @@ class ActionListResponse(BaseModel):
 class ComponentState(BaseModel):
     """Стан окремого компонента інфраструктури."""
 
-    component_id: str = Field(..., description="Component identifier")
-    component_type: str = Field("", description="Component type")
-    status: str = Field("healthy", description="Status (healthy/degraded/isolated/down)")
+    component_id: str = Field(..., description="Ідентифікатор компонента")
+    component_type: str = Field("", description="Тип компонента")
+    status: str = Field("healthy", description="Статус (healthy/degraded/isolated/down)")
     details: dict[str, Any] = Field(default_factory=dict)
-    last_updated: str | None = Field(None, description="Last update timestamp")
+    last_updated: str | None = Field(None, description="Час останнього оновлення")
 
 
 class StateResponse(BaseModel):
@@ -96,12 +96,12 @@ class ComponentCheckResponse(BaseModel):
 class PolicyMetrics(BaseModel):
     """Метрики для однієї політики безпеки."""
 
-    policy: str = Field(..., description="Policy name")
-    availability_pct: float = Field(..., description="Availability percentage")
-    total_downtime_hr: float = Field(0.0, description="Total downtime in hours")
-    mean_mttd_min: float = Field(0.0, description="Mean time to detect (minutes)")
-    mean_mttr_min: float = Field(0.0, description="Mean time to recover (minutes)")
-    incident_count: int = Field(0, description="Number of incidents")
+    policy: str = Field(..., description="Назва політики")
+    availability_pct: float = Field(..., description="Доступність у відсотках")
+    total_downtime_hr: float = Field(0.0, description="Загальний простій у годинах")
+    mean_mttd_min: float = Field(0.0, description="Середній час до виявлення, хвилини")
+    mean_mttr_min: float = Field(0.0, description="Середній час до відновлення, хвилини")
+    incident_count: int = Field(0, description="Кількість інцидентів")
 
 
 class OverallMetrics(BaseModel):
@@ -127,3 +127,18 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "1.0.0"
     timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+
+class CybersecuritySnapshotResponse(BaseModel):
+    """Агрегований snapshot для UI модуля кіберзахисту."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    generated_at: str = Field(..., alias="generatedAt", description="Час формування snapshot")
+    backend: dict[str, Any] = Field(..., description="Стан backend-сервісу кіберзахисту")
+    api: dict[str, Any] = Field(..., description="Стан API та backend-інтеграції")
+    read_only: dict[str, Any] = Field(..., alias="readOnly", description="Read-only стан компонентів")
+    network: dict[str, Any] = Field(..., description="Стан мережевого шару")
+    metrics: dict[str, Any] = Field(..., description="Метрики кіберстійкості")
+    incidents: dict[str, Any] = Field(..., description="Активні інциденти та рішення")
+    actions: dict[str, Any] = Field(..., description="Dispatcher дій реагування")

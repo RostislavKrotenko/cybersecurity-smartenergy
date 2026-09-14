@@ -27,147 +27,141 @@ from src.shared.logger import setup_logging
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="smartenergy-emulator",
-        description="Generate synthetic SmartEnergy events (batch or live mode).",
+        description="Генерує синтетичні події SmartEnergy у batch або live режимі.",
     )
     p.add_argument(
         "--days",
         type=int,
         default=None,
-        help="Simulation length in days. Overrides scenarios.yaml duration_sec. "
-        "If omitted the YAML value is used (default 3600 s = 1 h).",
+        help="Тривалість симуляції у днях. Перевизначає scenarios.yaml duration_sec. "
+        "Якщо не задано, використовується YAML-значення (типово 3600 с = 1 год).",
     )
     p.add_argument(
         "--seed",
         type=int,
         default=42,
-        help="Random seed for deterministic output (default: 42).",
+        help="Seed генератора випадковості для детермінованого виходу (за замовчуванням: 42).",
     )
     p.add_argument(
         "--out",
         type=str,
         default="data/events.csv",
-        help="Output file path (default: data/events.csv).",
+        help="Шлях вихідного файла (за замовчуванням: data/events.csv).",
     )
     p.add_argument(
         "--format",
         type=str,
         choices=["csv", "jsonl"],
         default="csv",
-        help="Output format: csv (default) or jsonl.",
+        help="Формат виходу: csv (за замовчуванням) або jsonl.",
     )
     p.add_argument(
         "--scenario_set",
         type=str,
         default="all",
-        help="Comma-separated scenario names to inject, or 'all' (default: all).",
+        help="Назви сценаріїв через кому або 'all' для всіх сценаріїв.",
     )
     p.add_argument(
         "--start_time",
         type=str,
         default=None,
-        help="Simulation start time in ISO-8601 (e.g. 2026-02-26T10:00:00Z). "
-        "Defaults to value in scenarios.yaml.",
+        help="Час старту симуляції в ISO-8601, наприклад 2026-02-26T10:00:00Z. "
+        "За замовчуванням береться зі scenarios.yaml.",
     )
     p.add_argument(
         "--components",
         type=str,
         default="config/components.yaml",
-        help="Path to components.yaml (default: config/components.yaml).",
+        help="Шлях до components.yaml (за замовчуванням: config/components.yaml).",
     )
     p.add_argument(
         "--scenarios",
         type=str,
         default="config/scenarios.yaml",
-        help="Path to scenarios.yaml (default: config/scenarios.yaml).",
+        help="Шлях до scenarios.yaml (за замовчуванням: config/scenarios.yaml).",
     )
-    # Live mode flags
     p.add_argument(
         "--live",
         action="store_true",
         default=False,
-        help="Enable live streaming mode (events written to JSONL with delays).",
+        help="Увімкнути live-режим із потоковим записом подій у JSONL із затримками.",
     )
     p.add_argument(
         "--live-interval-ms",
         type=int,
         default=1000,
-        help="Interval between event writes in live mode, ms (default: 1000).",
+        help="Інтервал між записами подій у live-режимі, мс (за замовчуванням: 1000).",
     )
     p.add_argument(
         "--max-events",
         type=int,
         default=None,
-        help="Maximum number of events to generate (optional cap).",
+        help="Максимальна кількість подій для генерації (опційний ліміт).",
     )
     p.add_argument(
         "--raw-log-dir",
         type=str,
         default=None,
-        help="Directory for raw syslog-style log files (api.log, auth.log, system.log). "
-        "Only used in --live mode.",
+        help="Директорія для сирих логів у syslog-стилі (api.log, auth.log, system.log). "
+        "Використовується лише з --live.",
     )
     p.add_argument(
         "--csv-out",
         type=str,
         default=None,
-        help="Also write a CSV file in live mode (append batches). Example: data/live/events.csv",
+        help="Додатково писати CSV у live-режимі пакетами. Приклад: data/live/events.csv",
     )
     p.add_argument(
         "--profile",
         type=str,
         default="default",
         choices=["default", "demo_high_rate"],
-        help="Emulation profile. demo_high_rate: short cycles, frequent attacks "
-        "(default: default).",
+        help="Профіль емуляції. demo_high_rate: короткі цикли та часті атаки.",
     )
     p.add_argument(
         "--attack-rate",
         type=float,
         default=1.0,
-        help="Attack rate multiplier: >1 increases attack count and frequency, "
-        "<1 decreases. (default: 1.0).",
+        help="Множник інтенсивності атак: >1 збільшує кількість і частоту, <1 зменшує.",
     )
     p.add_argument(
         "--attack-every-sec",
         type=float,
         default=10.0,
-        help="Seconds between attack burst injections in demo_high_rate "
-        "profile (default: 10). Round-robin across 5 scenarios.",
+        help="Секунди між burst-атаками у demo_high_rate профілі. Сценарії йдуть по колу.",
     )
     p.add_argument(
         "--background-events-per-tick",
         type=int,
         default=20,
-        help="Number of benign background events emitted per tick in "
-        "demo_high_rate profile (default: 20).",
+        help="Кількість безпечних фонових подій на такт у demo_high_rate профілі.",
     )
     p.add_argument(
         "--max-file-mb",
         type=float,
         default=50.0,
-        help="Max output file size in MB before rotation (default: 50). "
-        "Applies to JSONL and CSV in live mode.",
+        help="Максимальний розмір вихідного файла в MB перед ротацією. Діє для JSONL і CSV.",
     )
     p.add_argument(
         "--actions-path",
         type=str,
         default=None,
-        help="Path to actions.jsonl for closed-loop feedback from Analyzer. "
-        "Only used with --live --profile demo_high_rate.",
+        help="Шлях до actions.jsonl для closed-loop зворотного зв'язку від аналізатора. "
+        "Використовується з --live --profile demo_high_rate.",
     )
     p.add_argument(
         "--applied-path",
         type=str,
         default=None,
-        help="Path to actions_applied.jsonl for ACK output. "
-        "Emulator writes acknowledgements here after applying actions.",
+        help="Шлях до actions_applied.jsonl для ACK-виходу. "
+        "Емулятор записує підтвердження після застосування дій.",
     )
     p.add_argument(
         "--log-level",
         type=str,
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level (default: INFO).",
+        help="Рівень логування (за замовчуванням: INFO).",
     )
     return p.parse_args(argv)
 
@@ -177,7 +171,7 @@ def _stream_to_sink_infinite(
     event_sink: EventSink,
     interval_sec: float,
 ) -> None:
-    """Run endless live streaming via EventSink in simulation cycles."""
+    """Запускає безкінечний live-потік через EventSink циклами симуляції."""
     total = 0
     while True:
         count = stream_to_sink(
@@ -187,7 +181,7 @@ def _stream_to_sink_infinite(
             max_events=None,
         )
         total += count
-        print(f"  cycle complete: +{count} events (total={total})")
+        print(f"  цикл завершено: +{count} подій (усього={total})")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -215,7 +209,6 @@ def main(argv: list[str] | None = None) -> None:
     out_path = Path(args.out)
 
     if args.live:
-        # ---- Live mode: stream to JSONL with delays ----
         if out_path.suffix not in (".jsonl", ".ndjson"):
             out_path = out_path.with_suffix(".jsonl")
         interval_sec = args.live_interval_ms / 1000.0
@@ -223,31 +216,32 @@ def main(argv: list[str] | None = None) -> None:
         csv_out = Path(args.csv_out) if args.csv_out else None
         actions_path = Path(args.actions_path) if args.actions_path else None
         applied_path = Path(args.applied_path) if args.applied_path else None
-        print(f"Emulator live mode -> {out_path}")
+        print(f"Live-режим емулятора -> {out_path}")
         print(
-            f"  interval: {args.live_interval_ms} ms, max_events: {args.max_events or 'infinite'}"
+            f"  інтервал: {args.live_interval_ms} мс, "
+            f"max_events: {args.max_events or 'без обмеження'}"
         )
-        print(f"  profile: {args.profile}, attack_rate: {args.attack_rate}")
+        print(f"  профіль: {args.profile}, attack_rate: {args.attack_rate}")
         if args.profile == "demo_high_rate":
             print(
-                f"  attack_every: {args.attack_every_sec}s, "
-                f"bg/tick: {args.background_events_per_tick}, "
-                f"max_file: {args.max_file_mb} MB"
+                f"  атака кожні: {args.attack_every_sec}s, "
+                f"фон/тик: {args.background_events_per_tick}, "
+                f"макс. файл: {args.max_file_mb} MB"
             )
         if raw_log_dir:
-            print(f"  raw logs -> {raw_log_dir}/")
+            print(f"  сирі логи -> {raw_log_dir}/")
         if csv_out:
-            print(f"  csv out  -> {csv_out}")
+            print(f"  CSV      -> {csv_out}")
         if actions_path:
-            print(f"  actions  <- {actions_path} (closed-loop)")
+            print(f"  дії      <- {actions_path} (closed-loop)")
         if applied_path:
-            print(f"  applied  -> {applied_path} (ACK)")
-        print("  Press Ctrl+C to stop.")
+            print(f"  ACK      -> {applied_path}")
+        print("  Натисніть Ctrl+C для зупинки.")
         try:
             sink_mode = args.profile != "demo_high_rate" and raw_log_dir is None and csv_out is None
 
             if sink_mode:
-                print("  mode: EventSink")
+                print("  режим: EventSink")
                 event_sink: EventSink = FileEventSink(str(out_path))
                 try:
                     if args.max_events is not None:
@@ -257,7 +251,7 @@ def main(argv: list[str] | None = None) -> None:
                             interval_sec=interval_sec,
                             max_events=args.max_events,
                         )
-                        print(f"Emulator live mode complete: {count} events -> {out_path}")
+                        print(f"Live-режим емулятора завершено: {count} подій -> {out_path}")
                     else:
                         _stream_to_sink_infinite(
                             engine=engine,
@@ -267,7 +261,6 @@ def main(argv: list[str] | None = None) -> None:
                 finally:
                     event_sink.close()
             elif args.profile == "demo_high_rate":
-                # Purpose-built high-rate demo loop
                 stream_demo_highrate(
                     engine=engine,
                     path=out_path,
@@ -281,16 +274,14 @@ def main(argv: list[str] | None = None) -> None:
                     applied_path=applied_path,
                 )
             elif args.max_events is not None:
-                # Finite live mode (legacy)
                 count = stream_jsonl(
                     engine=engine,
                     path=out_path,
                     interval_sec=interval_sec,
                     max_events=args.max_events,
                 )
-                print(f"Emulator live mode complete: {count} events -> {out_path}")
+                print(f"Live-режим емулятора завершено: {count} подій -> {out_path}")
             else:
-                # Infinite live mode (default for live)
                 stream_jsonl_infinite(
                     engine=engine,
                     path=out_path,
@@ -299,14 +290,12 @@ def main(argv: list[str] | None = None) -> None:
                     csv_out=csv_out,
                 )
         except KeyboardInterrupt:
-            print("\nEmulator stopped by user.")
+            print("\nЕмулятор зупинено користувачем.")
     else:
-        # ---- Batch mode: generate all then write via EventSink ----
         events = engine.run()
         if args.max_events and len(events) > args.max_events:
             events = events[: args.max_events]
 
-        # Determine output path and format
         if args.format == "jsonl":
             if out_path.suffix not in (".jsonl", ".ndjson", ".json"):
                 out_path = out_path.with_suffix(".jsonl")
@@ -314,12 +303,11 @@ def main(argv: list[str] | None = None) -> None:
             if out_path.suffix != ".csv":
                 out_path = out_path.with_suffix(".csv")
 
-        # Use EventSink interface for output
         event_sink: EventSink = FileEventSink(str(out_path))
         event_sink.emit_batch(events)
         event_sink.close()
 
-        print(f"Emulator batch complete: {len(events)} events -> {out_path} (via EventSink)")
+        print(f"Batch-режим емулятора завершено: {len(events)} подій -> {out_path} (через EventSink)")
 
 
 if __name__ == "__main__":

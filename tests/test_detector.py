@@ -110,18 +110,18 @@ class TestDetect:
                 source="api-gw-01",
                 correlation_id=f"COR-{i}",
             )
-            for i in range(7)  # 7 events — enough for threshold=5,  not for threshold=10
+            for i in range(7)  # 7 подій вистачає для threshold=5, але не для threshold=10
         ]
         modifiers = {"credential_attack": {"threshold_multiplier": 2.0}}
         alerts = detect(events, brute_force_rule, policy_modifiers=modifiers)
-        assert len(alerts) == 0  # threshold is now 10
+        assert len(alerts) == 0  # threshold тепер дорівнює 10
 
     def test_policy_modifiers_adjust_window(self, brute_force_rule):
         """При window_multiplier=0.1 вікно 60s стає 6s."""
         events = [
             make_event(
                 event="auth_failure",
-                timestamp=ts_offset(seconds=i * 10),  # 10s apart
+                timestamp=ts_offset(seconds=i * 10),  # інтервал 10с
                 ip="10.0.0.1",
                 source="api-gw-01",
                 correlation_id=f"COR-{i}",
@@ -130,7 +130,7 @@ class TestDetect:
         ]
         modifiers = {"credential_attack": {"window_multiplier": 0.1}}
         alerts = detect(events, brute_force_rule, policy_modifiers=modifiers)
-        # window is 6s but events are 10s apart — never accumulate 5 in window
+        # window дорівнює 6с, а події йдуть кожні 10с, тому 5 у вікні не накопичуються.
         assert len(alerts) == 0
 
 
@@ -177,7 +177,7 @@ class TestDetectBruteForce:
         assert alerts == []
 
     def test_groups_by_ip_and_source(self, rule):
-        # 3 events from IP-A, 3 from IP-B — neither hits threshold=5
+        # 3 події з IP-A і 3 з IP-B, жодна група не досягає threshold=5.
         events = []
         for i in range(3):
             events.append(
@@ -200,7 +200,7 @@ class TestDetectBruteForce:
         assert len(alerts) == 0
 
     def test_events_outside_window_evicted(self, rule):
-        """Events spread over 120s w/ 30s window — never accumulate 5."""
+        """Події розкидані на 120с з вікном 30с, тому 5 не накопичуються."""
         events = [
             make_event(
                 event="auth_failure",
@@ -305,7 +305,7 @@ class TestDetectDDoS:
         assert len(alerts) == 1
         assert alerts[0].severity == "critical"
         assert alerts[0].confidence == 0.98
-        assert "service impact" in alerts[0].description
+        assert "вплив на сервіс" in alerts[0].description
 
 
 class TestDetectTelemetrySpoof:
@@ -327,7 +327,7 @@ class TestDetectTelemetrySpoof:
         }
 
     def test_fires_on_out_of_bounds_values(self, rule):
-        """3 voltage readings above 280V should trigger."""
+        """3 значення напруги понад 280V мають спрацювати."""
         events = [
             make_event(
                 event="telemetry_read",
@@ -341,7 +341,7 @@ class TestDetectTelemetrySpoof:
         ]
         alerts = _detect_telemetry_spoof(events, rule, window=60, threshold=3, counter=0)
         assert len(alerts) == 1
-        assert "out-of-range" in alerts[0].description
+        assert "поза межами" in alerts[0].description
 
     def test_no_alert_within_bounds(self, rule):
         events = [
@@ -358,7 +358,7 @@ class TestDetectTelemetrySpoof:
         assert alerts == []
 
     def test_fires_on_large_delta(self, rule):
-        """Delta > 50V between consecutive readings."""
+        """Delta > 50V між послідовними зчитуваннями."""
         events = [
             make_event(
                 event="telemetry_read",
@@ -367,7 +367,7 @@ class TestDetectTelemetrySpoof:
                 key="voltage",
                 value="220",
             ),
-            # Sudden jump to 220 → 280 = delta 60 > 50
+            # Різкий стрибок 220 → 280 = delta 60 > 50.
             make_event(
                 event="telemetry_read",
                 timestamp=ts_offset(seconds=5),
@@ -411,19 +411,19 @@ class TestDetectTelemetrySpoof:
         assert alerts == []
 
     def test_severity_escalates_for_5_plus_anomalies(self, rule):
-        """>=5 anomalies in window bumps severity to 'high'."""
+        """>=5 аномалій у вікні піднімають severity до 'high'."""
         events = [
             make_event(
                 event="telemetry_read",
                 timestamp=ts_offset(seconds=i * 5),
                 source="inv-01",
                 key="voltage",
-                value=str(300 + i),  # all out of bounds
+                value=str(300 + i),  # усі значення поза межами
                 correlation_id=f"COR-{i}",
             )
             for i in range(8)
         ]
-        # threshold=5 so alert fires when buf reaches 5 → severity escalates to "high"
+        # threshold=5, тому алерт спрацьовує на 5 елементах у буфері.
         alerts = _detect_telemetry_spoof(events, rule, window=60, threshold=5, counter=0)
         assert len(alerts) == 1
         assert alerts[0].severity == "high"
@@ -473,7 +473,7 @@ class TestDetectUnauthorizedCmd:
         assert len(alerts) == 1
 
     def test_confidence_escalation_on_multiple(self, rule):
-        """>=3 unauthorized commands → confidence 0.99."""
+        """>=3 несанкціоновані команди → confidence 0.99."""
         events = [
             make_event(
                 event="cmd_exec",
@@ -521,7 +521,7 @@ class TestDetectOutage:
         ]
         alerts = _detect_outage(events, rule, window=60, threshold=1, all_events=events, counter=0)
         assert len(alerts) == 1
-        assert alerts[0].severity == "high"  # no severity_override for "degraded"
+        assert alerts[0].severity == "high"  # для "degraded" немає severity_override
 
     def test_severity_override_for_down(self, rule):
         events = [
@@ -711,7 +711,7 @@ class TestDetectNetworkFailure:
         assert len(alerts) == 1
         assert alerts[0].severity == "critical"
         assert alerts[0].confidence == 0.95
-        assert "port failures" in alerts[0].description
+        assert "відмови портів" in alerts[0].description
 
     def test_below_threshold_no_alert(self, rule):
         events = [

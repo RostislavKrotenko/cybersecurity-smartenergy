@@ -30,12 +30,10 @@ class BruteForceScenario(BaseScenario):
             ev_type: str = phase["event"]
             probability = phase.get("probability", 1.0)
 
-            # phase-2 might not fire
             if probability < 1.0 and self.rng.random() > probability:
                 log.debug("brute_force phase %d skipped (prob=%.2f)", phase_idx, probability)
                 continue
 
-            # delay from previous phase
             delay_key = [k for k in phase if k.startswith("delay_after_phase")]
             if delay_key:
                 d = phase[delay_key[0]]
@@ -65,7 +63,6 @@ class BruteForceScenario(BaseScenario):
 
             for i in range(count):
                 sev = self._severity_for_index(i, sev_prog, static_severity)
-                # after threshold=10 append ";escalated"
                 ev_tags = tags_str
                 if sev_prog and i >= 10 and "escalated" not in ev_tags:
                     ev_tags = ev_tags + ";escalated"

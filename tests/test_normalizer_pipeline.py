@@ -75,7 +75,7 @@ class TestNormalizerPipeline:
 
     def test_run_with_valid_input(self, tmp_dirs, minimal_mapping):
         input_dir, out_dir = tmp_dirs
-        # Write sample log file
+        # Запис тестового log-файла.
         log_file = input_dir / "api_gateway.log"
         log_file.write_text(
             "2026-02-26 10:00:00 INFO api-gw-01 GET /api/v1/health 200\n"
@@ -94,7 +94,7 @@ class TestNormalizerPipeline:
             stats_path=stats_path,
         )
 
-        # Check events.csv was written
+        # Перевірка, що events.csv записано.
         assert Path(events_path).exists()
         with open(events_path) as f:
             reader = csv.DictReader(f)
@@ -103,7 +103,7 @@ class TestNormalizerPipeline:
         assert rows[0]["source"] == "api-gw-01"
         assert rows[0]["event"] == "http_request"
 
-        # Check stats.json
+        # Перевірка stats.json.
         with open(stats_path) as f:
             stats = json.load(f)
         assert stats["total_parsed"] == 2
@@ -112,18 +112,18 @@ class TestNormalizerPipeline:
     def test_run_with_no_matching_files(self, tmp_dirs, minimal_mapping):
         input_dir, out_dir = tmp_dirs
         pipeline = NormalizerPipeline(minimal_mapping)
-        # No files to match
+        # Немає файлів, що відповідають шаблону.
         pipeline.run(
             input_glob=str(input_dir / "*.log"),
             out_path=str(out_dir / "events.csv"),
             quarantine_path=str(out_dir / "quarantine.csv"),
             stats_path=str(out_dir / "stats.json"),
         )
-        # Should not crash; output files not created since no files processed
+        # Падіння бути не має; вихідні файли не створюються без оброблених файлів.
 
     def test_quarantine_lines_with_no_matching_profile(self, tmp_dirs, minimal_mapping):
         input_dir, out_dir = tmp_dirs
-        # Write a file that doesn't match "api" pattern
+        # Запис файла, який не відповідає шаблону "api".
         log_file = input_dir / "firewall.log"
         log_file.write_text("line1\nline2\n")
 
@@ -145,7 +145,7 @@ class TestNormalizerPipeline:
         assert all(r["reason"] == "no_profile" for r in rows)
 
     def test_dedup_enabled(self, tmp_dirs, tmp_path):
-        """With dedup enabled, identical events within window are removed."""
+        """З увімкненою дедуплікацією однакові події у вікні прибираються."""
         input_dir, out_dir = tmp_dirs
         import yaml
 
@@ -176,7 +176,7 @@ class TestNormalizerPipeline:
             yaml.dump(mapping, f)
 
         log_file = input_dir / "api.log"
-        # Two identical lines 1 second apart → should dedup to 1
+        # Два однакові рядки з інтервалом 1 секунда → лишається один.
         log_file.write_text(
             "2026-02-26 10:00:00 INFO api-gw-01 GET /health 200\n"
             "2026-02-26 10:00:01 INFO api-gw-01 GET /health 200\n"
@@ -195,7 +195,7 @@ class TestNormalizerPipeline:
         with open(events_path) as f:
             reader = csv.DictReader(f)
             rows = list(reader)
-        # Dedup should have removed the second identical event
+        # Дедуплікація має прибрати другу однакову подію.
         assert len(rows) == 1
 
     def test_run_with_sink_emits_events_and_writes_outputs(self, tmp_dirs, minimal_mapping):

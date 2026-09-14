@@ -20,6 +20,10 @@ ENV/
 .coverage
 htmlcov/
 
+# ── Frontend dependencies / build cache ──────────────────────────────────
+node_modules/
+frontend/node_modules/
+
 # ── OS artefacts ──────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

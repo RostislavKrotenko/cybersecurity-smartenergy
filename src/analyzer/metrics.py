@@ -1,51 +1,18 @@
-"""Metrics Engine -- compute resilience metrics from Incidents.
+"""Розрахунок метрик кіберстійкості на основі інцидентів.
 
-Downtime definition
-───────────────────
-    Downtime is the interval from ``detect_ts`` (moment of detection) to
-    ``recover_ts`` (full recovery).  It equals MTTR and does **not** include
-    MTTD.  Only incidents with severity >= high are counted.  Overlapping
-    intervals are merged before summing.
+Downtime рахується як інтервал від ``detect_ts`` до ``recover_ts``. Це дорівнює
+MTTR і не включає MTTD. У downtime входять лише інциденти з severity >= high,
+а перетини інтервалів об'єднуються перед підсумовуванням.
 
-    ``total_downtime = SUM(recover_ts - detect_ts)``  (after merge)
+Метрики обчислюються окремо для кожної політики:
+- availability_pct: частка горизонту аналізу без активного high/critical інциденту.
+- total_downtime_hr: сумарний downtime у годинах.
+- mean_mttd_min: середній MTTD у хвилинах.
+- mean_mttr_min: середній MTTR у хвилинах.
+- incidents_total: загальна кількість інцидентів.
 
-    Incidents that lack a valid ``detect_ts`` or ``recover_ts`` are skipped
-    in the downtime calculation (they still count towards incident totals
-    and MTTD/MTTR averages).
-
-Metrics computed per policy
-───────────────────────────
-  availability_pct
-      Percentage of the analysis horizon with no critical/high incident active.
-      Formula: ``(1 - total_downtime / horizon) * 100``
-
-  total_downtime_hr
-      Sum of merged incident durations ``(recover_ts - detect_ts)`` for
-      severity >= high, converted to hours.
-
-  mean_mttd_min
-      Average MTTD across all incidents, in minutes.
-      ``avg(mttd_sec) / 60``
-
-  mean_mttr_min
-      Average MTTR across all incidents, in minutes.
-      ``avg(mttr_sec) / 60``
-
-  incidents_total
-      Total number of incidents.
-
-  incidents_by_severity
-      Dict mapping severity -> count.
-
-  incidents_by_threat
-      Dict mapping threat_type -> count.
-
-Timestamps
-──────────
-    All timestamps in CSV/JSONL files are stored in **UTC** (ISO-8601 with
-    ``Z`` or ``+00:00`` suffix).  The dashboard converts them to the
-    user-selected display timezone (default ``Europe/Kyiv``) purely for
-    rendering; no computation uses local time.
+Усі timestamp у CSV/JSONL зберігаються в UTC. Відображення у локальному часовому
+поясі виконується тільки на dashboard-рівні.
 """
 
 from __future__ import annotations
@@ -125,40 +92,36 @@ def compute(
 ) -> PolicyMetrics:
     """Обчислює метрики стійкості для однієї політики.
 
-    Args:
+    Аргументи:
         incidents: Список інцидентів.
         policy_name: Назва політики.
         horizon_sec: Горизонт аналізу в секундах.
 
-    Returns:
+    Повертає:
         PolicyMetrics з обчисленими значеннями.
     """
     m = PolicyMetrics(policy=policy_name)
 
     if not incidents:
-        log.info("No incidents for policy '%s' — 100%% availability", policy_name)
+        log.info("Для політики '%s' немає інцидентів — доступність 100%%", policy_name)
         return m
 
     m.incidents_total = len(incidents)
 
-    # Count by severity and threat_type
     for inc in incidents:
         m.incidents_by_severity[inc.severity] = m.incidents_by_severity.get(inc.severity, 0) + 1
         m.incidents_by_threat[inc.threat_type] = m.incidents_by_threat.get(inc.threat_type, 0) + 1
 
-    # MTTD and MTTR averages
     m.mean_mttd_min = round(sum(i.mttd_sec for i in incidents) / len(incidents) / 60, 2)
     m.mean_mttr_min = round(sum(i.mttr_sec for i in incidents) / len(incidents) / 60, 2)
 
-    # Downtime: merge overlapping intervals of severity >= high
-    # Downtime = detect_ts -> recover_ts (does NOT include MTTD)
     high_sev = {"high", "critical"}
     intervals: list[tuple[datetime, datetime]] = []
     for inc in incidents:
         if inc.severity in high_sev:
             if not inc.detect_ts or not inc.recover_ts:
                 log.warning(
-                    "Incident %s skipped for downtime: missing detect_ts or recover_ts",
+                    "Інцидент %s пропущено для downtime: немає detect_ts або recover_ts",
                     getattr(inc, "incident_id", "?"),
                 )
                 continue
@@ -172,7 +135,6 @@ def compute(
     total_dt_sec = sum((e - s).total_seconds() for s, e in merged)
     m.total_downtime_hr = round(total_dt_sec / 3600, 4)
 
-    # Availability
     if horizon_sec > 0:
         m.availability_pct = round((1 - total_dt_sec / horizon_sec) * 100, 2)
     else:
@@ -194,7 +156,7 @@ def compute(
 def _merge_intervals(
     intervals: list[tuple[datetime, datetime]],
 ) -> list[tuple[datetime, datetime]]:
-    """Merge overlapping time intervals."""
+    """Об'єднує часові інтервали, що перетинаються."""
     if not intervals:
         return []
     sorted_iv = sorted(intervals, key=lambda x: x[0])

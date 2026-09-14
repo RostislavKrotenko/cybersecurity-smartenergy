@@ -12,10 +12,15 @@ router = APIRouter(prefix="/incidents", tags=["incidents"])
 
 @router.get("", response_model=IncidentListResponse)
 def get_incidents(
-    limit: int = Query(1000, ge=1, le=10000, description="Max incidents to return"),
-    severity: str | None = Query(None, description="Filter by severity"),
-    component: str | None = Query(None, description="Filter by component"),
-    policy: str | None = Query(None, description="Filter by policy"),
+    limit: int = Query(
+        1000,
+        ge=1,
+        le=10000,
+        description="Максимальна кількість інцидентів у відповіді",
+    ),
+    severity: str | None = Query(None, description="Фільтр за критичністю"),
+    component: str | None = Query(None, description="Фільтр за компонентом"),
+    policy: str | None = Query(None, description="Фільтр за політикою"),
 ) -> IncidentListResponse:
     """Повертає список інцидентів з опційними фільтрами."""
     provider = get_provider()

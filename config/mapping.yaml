@@ -1,28 +1,28 @@
 # =============================================================================
-# mapping.yaml — Normalizer: raw log lines → Event Contract
+# mapping.yaml — нормалізатор: сирі рядки логів → Event Contract
 # =============================================================================
 #
-# Кожен «profile» відповідає одному типу лог-файлу.
-# Normalizer вибирає profile за file_pattern (regex на ім'я файлу).
+# Кожен profile відповідає одному типу лог-файлу.
+# Normalizer вибирає profile за file_pattern (regex для імені файла).
 #
 # Поля profile:
-#   file_pattern        — regex, що матчить ім'я файлу (case-insensitive)
-#   line_regex          — regex з named groups для одного рядка
+#   file_pattern        — regex для імені файла (без урахування регістру)
+#   line_regex          — regex з іменованими групами для одного рядка
 #   timestamp_format    — iso_space | iso_t | syslog
 #   year_default        — (тільки syslog) рік, якого нема в рядку
-#   source_field        — named group → Event.source
-#   level_field         — named group → severity lookup (null = не має)
-#   message_field       — named group → основний текст
-#   severity_map        — level text → severity enum
-#   severity_from_message — severity enum → [substring patterns]
-#   event_rules         — [{pattern, event, tags}] — перший match виграє
-#   component_rules     — [{pattern, component}] — перший match виграє
+#   source_field        — іменована група → Event.source
+#   level_field         — іменована група → пошук severity (null = не має)
+#   message_field       — іменована група → основний текст
+#   severity_map        — текст рівня → severity enum
+#   severity_from_message — severity enum → шаблони підрядків
+#   event_rules         — [{pattern, event, tags}], перший збіг виграє
+#   component_rules     — [{pattern, component}], перший збіг виграє
 #   ip_regex            — regex з group(1) для IP
 #   actor_regex         — regex з group(1) для actor/user
-#   kv_regex            — regex з 2 groups (key, value) — findall
+#   kv_regex            — regex з 2 групами (key, value), застосовується findall
 # =============================================================================
 
-# ── Defaults (коли поле не вдалося витягти) ──────────────────────────────
+# Значення за замовчуванням, якщо поле не вдалося витягти.
 defaults:
   source: "unknown"
   component: "unknown"
@@ -36,19 +36,19 @@ defaults:
   tags: ""
   correlation_id: ""
 
-# ── Pipeline settings ────────────────────────────────────────────────────
+# Налаштування конвеєра.
 normalizer:
   dedup:
     enabled: true
-    window_sec: 2       # events з однаковими (timestamp,source,event,key,value) у межах вікна → skip
+    window_sec: 2       # події з однаковими ключовими полями в межах вікна пропускаються
 
-# ── Profiles ─────────────────────────────────────────────────────────────
+# Профілі парсингу.
 profiles:
 
   # ========================================================================
-  # API gateway logs
-  # Format: YYYY-MM-DD HH:MM:SS LEVEL host message
-  # Example: 2026-09-10 12:31:02 INFO api-gw-01 GET /api/v1/telemetry 200
+  # Логи API gateway
+  # Формат: YYYY-MM-DD HH:MM:SS LEVEL host message
+  # Приклад: 2026-09-10 12:31:02 INFO api-gw-01 GET /api/v1/telemetry 200
   # ========================================================================
   api:
     file_pattern: "api"
@@ -96,7 +96,9 @@ profiles:
     component_rules:
       - pattern: 'api|hmi|scada'
         component: api
-      - pattern: 'gateway|gw|meter|rtu'
+      - pattern: 'gateway|gw'
+        component: gateway
+      - pattern: 'meter|rtu'
         component: edge
       - pattern: 'db|postgres'
         component: db
@@ -110,9 +112,9 @@ profiles:
         component: network
 
   # ========================================================================
-  # Authentication / syslog logs
-  # Format: Mon DD HH:MM:SS host program[pid]: message
-  # Example: Sep 10 12:31:02 gateway-01 sshd[4821]: Failed password ...
+  # Логи автентифікації / syslog
+  # Формат: Mon DD HH:MM:SS host program[pid]: message
+  # Приклад: Sep 10 12:31:02 gateway-01 sshd[4821]: Failed password ...
   # ========================================================================
   auth:
     file_pattern: "auth"
@@ -156,9 +158,13 @@ profiles:
         tags: "auth"
 
     component_rules:
+      - pattern: 'auth|iam|ldap'
+        component: auth
       - pattern: 'api|hmi|scada'
         component: api
-      - pattern: 'gateway|gw|meter|rtu'
+      - pattern: 'gateway|gw'
+        component: gateway
+      - pattern: 'meter|rtu'
         component: edge
       - pattern: 'db|postgres'
         component: db
@@ -170,9 +176,9 @@ profiles:
         component: network
 
   # ========================================================================
-  # Edge / IoT device logs
-  # Format: YYYY-MM-DDTHH:MM:SSZ host LEVEL key=val key=val ...
-  # Example: 2026-09-10T12:31:02Z meter-17 TELEMETRY voltage=231.4V
+  # Логи Edge / IoT пристроїв
+  # Формат: YYYY-MM-DDTHH:MM:SSZ host LEVEL key=val key=val ...
+  # Приклад: 2026-09-10T12:31:02Z meter-17 TELEMETRY voltage=231.4V
   # ========================================================================
   edge:
     file_pattern: "edge"
@@ -216,7 +222,7 @@ profiles:
 
     component_rules:
       - pattern: 'gateway|gw'
-        component: edge
+        component: gateway
       - pattern: 'meter'
         component: edge
       - pattern: 'rtu'
@@ -227,9 +233,9 @@ profiles:
         component: collector
 
   # ========================================================================
-  # System / infrastructure logs (db, network, edge service status)
-  # Format: YYYY-MM-DD HH:MM:SS LEVEL host message
-  # Example: 2026-03-19 14:28:10 ERROR db-primary status=down
+  # Системні / інфраструктурні логи (db, network, edge service status)
+  # Формат: YYYY-MM-DD HH:MM:SS LEVEL host message
+  # Приклад: 2026-03-19 14:28:10 ERROR db-primary status=down
   # ========================================================================
   system:
     file_pattern: "system"
@@ -274,7 +280,11 @@ profiles:
         component: db
       - pattern: 'switch|firewall|fw|network'
         component: network
-      - pattern: 'gateway|gw|meter|rtu'
+      - pattern: 'auth|iam|ldap'
+        component: auth
+      - pattern: 'gateway|gw'
+        component: gateway
+      - pattern: 'meter|rtu'
         component: edge
       - pattern: 'api|hmi|scada|ui|web|nginx'
         component: api

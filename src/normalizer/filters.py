@@ -15,11 +15,11 @@ def deduplicate(
 ) -> list[Event]:
     """Видаляє дублікати у межах часового вікна.
 
-    Args:
+    Аргументи:
         events: Відсортований список подій.
         window_sec: Вікно дедуплікації в секундах.
 
-    Returns:
+    Повертає:
         Список подій без дублікатів.
     """
     if not events:
@@ -34,8 +34,6 @@ def deduplicate(
         last_ts = seen.get(fingerprint)
 
         if last_ts is not None:
-            # Both timestamps are ISO-8601 strings — lexicographic compare works
-            # Convert to seconds for window check
             try:
                 from datetime import datetime
 
@@ -46,13 +44,13 @@ def deduplicate(
                     removed += 1
                     continue
             except ValueError:
-                pass  # on parse error, keep the event
+                pass  # якщо timestamp не парситься, залишаємо подію
 
         seen[fingerprint] = ev.timestamp
         result.append(ev)
 
     if removed:
-        log.info("Dedup removed %d duplicate events (window=%ds)", removed, window_sec)
+        log.info("Дедуплікація прибрала %d дублікати подій (вікно=%ds)", removed, window_sec)
 
     return result
 
@@ -63,13 +61,24 @@ def validate_event(event: Event) -> list[str]:
 
     valid_severities = {"low", "medium", "high", "critical"}
     if event.severity not in valid_severities:
-        warnings.append(f"unknown severity '{event.severity}'")
+        warnings.append(f"невідомий рівень критичності '{event.severity}'")
 
-    valid_components = {"edge", "api", "db", "ui", "collector", "inverter", "network", "unknown"}
+    valid_components = {
+        "gateway",
+        "edge",
+        "api",
+        "auth",
+        "db",
+        "ui",
+        "collector",
+        "inverter",
+        "network",
+        "unknown",
+    }
     if event.component not in valid_components:
-        warnings.append(f"unknown component '{event.component}'")
+        warnings.append(f"невідомий компонент '{event.component}'")
 
     if not event.timestamp:
-        warnings.append("empty timestamp")
+        warnings.append("порожній timestamp")
 
     return warnings

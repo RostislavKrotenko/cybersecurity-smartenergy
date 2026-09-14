@@ -217,20 +217,20 @@ def test_emulator_main_routes_batch_and_live_modes(monkeypatch, tmp_path: Path):
         lambda **kwargs: calls.__setitem__("stream_jsonl_infinite", kwargs),
     )
 
-    # Batch mode -> FileEventSink path + emit_batch
+    # Batch-режим -> шлях FileEventSink + emit_batch.
     emulator_cli.main(["--out", str(tmp_path / "batch_events")])
     assert calls["batch_events"][-1] == 1
     assert calls["sink_paths"][-1].endswith(".csv")
 
-    # Live + sink mode + finite max events
+    # Live + sink-режим + скінченний max events.
     emulator_cli.main(["--live", "--out", str(tmp_path / "live_sink.jsonl"), "--max-events", "5"])
     assert "stream_to_sink" in calls
 
-    # Live + sink mode + infinite stream loop wrapper
+    # Live + sink-режим + обгортка безкінечного stream-циклу.
     emulator_cli.main(["--live", "--out", str(tmp_path / "live_sink_infinite.jsonl")])
     assert "stream_to_sink_infinite" in calls
 
-    # Live + demo profile path
+    # Live + шлях demo-профілю.
     emulator_cli.main(
         [
             "--live",
@@ -242,7 +242,7 @@ def test_emulator_main_routes_batch_and_live_modes(monkeypatch, tmp_path: Path):
     )
     assert "stream_demo_highrate" in calls
 
-    # Live + legacy finite JSONL path (sink_mode=False via raw_log_dir)
+    # Live + legacy шлях скінченного JSONL (sink_mode=False через raw_log_dir).
     emulator_cli.main(
         [
             "--live",
@@ -256,7 +256,7 @@ def test_emulator_main_routes_batch_and_live_modes(monkeypatch, tmp_path: Path):
     )
     assert "stream_jsonl" in calls
 
-    # Live + legacy infinite JSONL path (sink_mode=False via csv_out)
+    # Live + legacy шлях безкінечного JSONL (sink_mode=False через csv_out).
     emulator_cli.main(
         [
             "--live",
@@ -341,13 +341,13 @@ def test_report_generation_fields_format_and_empty_inputs(tmp_path: Path):
     assert report_html.exists()
 
     txt = report_txt.read_text(encoding="utf-8")
-    assert "SmartEnergy Cyber-Resilience Report" in txt
-    assert "Policy: baseline" in txt
-    assert "Actions issued:" in txt
+    assert "Звіт SmartEnergy про кіберстійкість" in txt
+    assert "Політика: baseline" in txt
+    assert "Випущено дій:" in txt
 
     html = report_html.read_text(encoding="utf-8")
     assert "<table" in html
-    assert "Policy Comparison" in html
+    assert "Порівняння політик" in html
     assert "INC-001" in html
 
     # Порожні вхідні дані також мають давати валідний звіт.

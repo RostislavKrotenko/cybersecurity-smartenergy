@@ -11,13 +11,13 @@ log = logging.getLogger(__name__)
 def init_seed(seed: int) -> random.Random:
     """Встановлює глобальний seed та повертає екземпляр Random.
 
-    Args:
+    Аргументи:
         seed: Значення seed.
 
-    Returns:
+    Повертає:
         Екземпляр random.Random з встановленим seed.
     """
     random.seed(seed)
     rng = random.Random(seed)
-    log.info("Random seed initialised: %d", seed)
+    log.info("Seed генератора випадковості ініціалізовано: %d", seed)
     return rng

@@ -9,13 +9,23 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.models import HealthResponse
-from src.api.routes import actions, incidents, metrics, state
+from src.api.routes import actions, cybersecurity, incidents, metrics, state
+
+
+def cors_origins() -> list[str]:
+    """Повертає дозволені frontend-origin для API кіберзахисту."""
+    configured = os.getenv(
+        "CYBERSECURITY_CORS_ORIGINS",
+        "http://77.47.192.6:5173,http://localhost:5173,http://127.0.0.1:5173",
+    )
+    return [origin.strip() for origin in configured.split(",") if origin.strip()]
 
 app = FastAPI(
     title="SmartEnergy Cyber-Resilience API",
@@ -24,9 +34,9 @@ REST API для SmartEnergy Cyber-Resilience Analyzer.
 
 Надає ендпоінти для:
 - **Incidents** - інциденти безпеки, виявлені аналізатором
-- **Actions** - дії реагування (block_actor, isolate_component тощо)
+- **Actions** - дії реагування, наприклад block_actor або isolate_component
 - **State** - поточний стан компонентів інфраструктури
-- **Metrics** - метрики стійкості (availability, MTTD, MTTR)
+- **Metrics** - метрики стійкості, зокрема availability, MTTD і MTTR
 
 API призначений для React-фронтенду та інших клієнтів.
     """,
@@ -38,14 +48,8 @@ API призначений для React-фронтенду та інших кл�
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-        "*",
-    ],
-    allow_credentials=True,
+    allow_origins=cors_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -54,6 +58,7 @@ app.include_router(incidents.router, prefix="/api")
 app.include_router(actions.router, prefix="/api")
 app.include_router(state.router, prefix="/api")
 app.include_router(metrics.router, prefix="/api")
+app.include_router(cybersecurity.router, prefix="/api")
 
 
 @app.get("/", include_in_schema=False)

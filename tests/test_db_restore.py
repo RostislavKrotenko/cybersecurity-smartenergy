@@ -1,9 +1,9 @@
-"""Integration test: backup -> corrupt -> restore -> verify.
+"""Інтеграційний тест: backup -> corrupt -> restore -> перевірка.
 
-This test requires running Postgres and db-writer from docker-compose.
-Run with: pytest tests/test_db_restore.py -v -s
+Тест потребує запущених Postgres і db-writer з docker-compose.
+Запуск: pytest tests/test_db_restore.py -v -s
 
-Prerequisites:
+Передумови:
   docker compose --profile live_direct up -d postgres db-writer
   pip install psycopg2-binary
 """
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-# Skip entirely if Postgres is not available
+# Повністю пропускається, якщо Postgres недоступний.
 PG_HOST = os.environ.get("PGHOST", "localhost")
 PG_PORT = os.environ.get("PGPORT", "5432")
 PG_USER = os.environ.get("PGUSER", "smartenergy")
@@ -35,7 +35,7 @@ except ImportError:
 
 
 def _pg_available() -> bool:
-    """Check if Postgres is reachable."""
+    """Перевіряє доступність Postgres."""
     if not _HAS_PG:
         return False
     try:
@@ -55,7 +55,7 @@ def _pg_available() -> bool:
 
 requires_pg = pytest.mark.skipif(
     not _pg_available(),
-    reason="Postgres not available (run docker compose up postgres first)",
+    reason="Postgres недоступний (спочатку запустіть docker compose up postgres)",
 )
 
 
@@ -134,64 +134,64 @@ def _pg_restore(sql_path: str) -> bool:
 
 @requires_pg
 class TestDbBackupRestoreCycle:
-    """Test the full backup -> corrupt -> restore -> verify cycle."""
+    """Тестує повний цикл backup -> corrupt -> restore -> перевірка."""
 
     def test_integrity_check_initial(self):
-        """Verify the integrity_check table has marker='healthy'."""
+        """Перевіряє, що таблиця integrity_check має marker='healthy'."""
         row = _query_one("SELECT marker FROM integrity_check LIMIT 1;")
         assert row is not None
         assert row[0] == "healthy"
 
     def test_telemetry_table_has_rows(self):
-        """Verify the telemetry table has seed data."""
+        """Перевіряє, що таблиця telemetry має seed-дані."""
         row = _query_one("SELECT count(*) FROM telemetry;")
         assert row is not None
-        assert row[0] >= 5  # at least the 5 seed rows from init.sql
+        assert row[0] >= 5  # щонайменше 5 seed-рядків з init.sql
 
     def test_backup_corrupt_restore_verify(self, tmp_path):
-        """Full cycle: backup -> corrupt -> restore -> verify data returns."""
+        """Повний цикл: backup -> corrupt -> restore -> перевірка повернення даних."""
         snapshot_path = str(tmp_path / "test_snapshot.sql")
 
-        # 1. BACKUP
+        # 1. BACKUP.
         ok = _pg_dump(snapshot_path)
-        assert ok, "pg_dump should succeed"
-        assert os.path.getsize(snapshot_path) > 0, "Snapshot should not be empty"
+        assert ok, "pg_dump має завершитись успішно"
+        assert os.path.getsize(snapshot_path) > 0, "Snapshot не має бути порожнім"
 
-        # 2. Record the current telemetry row count
+        # 2. Фіксація поточної кількості рядків telemetry.
         row = _query_one("SELECT count(*) FROM telemetry;")
         pre_count = row[0]
 
-        # 3. CORRUPT
+        # 3. CORRUPT.
         _execute("UPDATE integrity_check SET marker='CORRUPTED';")
         _execute(
             "INSERT INTO telemetry (source, component, key, value, unit, severity) "
             "VALUES ('CORRUPT', 'db', 'CORRUPTION', -999, 'ERR', 'critical');"
         )
 
-        # Verify corruption
+        # Перевірка пошкодження.
         row = _query_one("SELECT marker FROM integrity_check LIMIT 1;")
-        assert row[0] == "CORRUPTED", "DB should be corrupted"
+        assert row[0] == "CORRUPTED", "БД має бути пошкоджена"
 
         corrupt_count = _query_one("SELECT count(*) FROM telemetry;")[0]
-        assert corrupt_count == pre_count + 1, "Corrupt row should be inserted"
+        assert corrupt_count == pre_count + 1, "Пошкоджений рядок має бути вставлений"
 
-        # 4. RESTORE
+        # 4. RESTORE.
         ok = _pg_restore(snapshot_path)
-        assert ok, "psql restore should succeed"
+        assert ok, "psql restore має завершитись успішно"
 
-        # 5. VERIFY
+        # 5. VERIFY.
         row = _query_one("SELECT marker FROM integrity_check LIMIT 1;")
-        assert row[0] == "healthy", "After restore, marker should be 'healthy'"
+        assert row[0] == "healthy", "Після restore marker має бути 'healthy'"
 
         post_count = _query_one("SELECT count(*) FROM telemetry;")[0]
         assert post_count == pre_count, (
-            f"After restore, telemetry count should be {pre_count}, got {post_count}"
+            f"Після restore кількість telemetry має бути {pre_count}, отримано {post_count}"
         )
 
 
 @requires_pg
 class TestNetworkSimIntegration:
-    """Test the network-sim HTTP endpoints (if container is running)."""
+    """Тестує HTTP-ендпоінти network-sim, якщо контейнер запущений."""
 
     def _netsim_url(self) -> str:
         return os.environ.get("NETWORK_SIM_URL", "http://localhost:8090")
@@ -224,7 +224,7 @@ class TestNetworkSimIntegration:
     def test_status_healthy_by_default(self):
         status = self._get("/status")
         if status is None:
-            pytest.skip("network-sim not running")
+            pytest.skip("network-sim не запущений")
         assert status["latency_ms"] == 0
         assert status["drop_rate"] == 0.0
         assert status["disconnected"] is False
@@ -232,9 +232,9 @@ class TestNetworkSimIntegration:
     def test_degrade_and_reset(self):
         status = self._get("/healthz")
         if status is None:
-            pytest.skip("network-sim not running")
+            pytest.skip("network-sim не запущений")
 
-        # Degrade
+        # Деградація.
         result = self._post(
             "/degrade",
             {
@@ -247,16 +247,16 @@ class TestNetworkSimIntegration:
         assert result["latency_ms"] == 300
         assert result["drop_rate"] == 0.2
 
-        # Verify status
+        # Перевірка статусу.
         status = self._get("/status")
         assert status["latency_ms"] == 300
 
-        # Reset
+        # Скидання.
         result = self._post("/reset", {})
         assert result is not None
         assert result["latency_ms"] == 0
 
-        # Verify healthy
+        # Перевірка healthy-стану.
         status = self._get("/status")
         assert status["latency_ms"] == 0
         assert status["disconnected"] is False

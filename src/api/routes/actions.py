@@ -12,10 +12,10 @@ router = APIRouter(prefix="/actions", tags=["actions"])
 
 @router.get("", response_model=ActionListResponse)
 def get_actions(
-    limit: int = Query(1000, ge=1, le=10000, description="Max actions to return"),
-    status: str | None = Query(None, description="Filter by status (emitted/applied/failed)"),
-    action_type: str | None = Query(None, description="Filter by action type"),
-    component: str | None = Query(None, description="Filter by target component"),
+    limit: int = Query(1000, ge=1, le=10000, description="Максимальна кількість дій у відповіді"),
+    status: str | None = Query(None, description="Фільтр за статусом (emitted/applied/failed)"),
+    action_type: str | None = Query(None, description="Фільтр за типом дії"),
+    component: str | None = Query(None, description="Фільтр за цільовим компонентом"),
 ) -> ActionListResponse:
     """Повертає список дій з опційними фільтрами."""
     provider = get_provider()

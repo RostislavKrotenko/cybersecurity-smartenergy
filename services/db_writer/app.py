@@ -1,18 +1,13 @@
-"""db-writer -- Postgres sidecar for the SmartEnergy stand.
+"""Сервіс db-writer — допоміжний Postgres-контейнер для стенда SmartEnergy.
 
-Responsibilities
-----------------
-1. Periodic telemetry writer: inserts synthetic rows into the ``telemetry``
-   table every N seconds so there is always something to backup.
-2. Periodic backup: runs ``pg_dump`` to /backups/snapshot_<ts>.sql at a
-   configurable interval.
-3. Action listener: tails ``data/live/actions.jsonl`` for ``backup_db`` and
-   ``restore_db`` actions and executes them for real against Postgres.
-4. Corruption simulator: tails ``data/live/actions.jsonl`` -- when the
-   Emulator marks the DB as corrupted (via a special internal action
-   ``corrupt_db``), the sidecar truncates/corrupts the integrity_check table.
-5. Event emitter: writes state-change events to ``data/live/events.jsonl``
-   and ACKs to ``data/live/actions_applied.jsonl``.
+Обов'язки:
+1. Періодично записувати синтетичну телеметрію в таблицю ``telemetry``.
+2. Періодично запускати ``pg_dump`` у /backups/snapshot_<ts>.sql.
+3. Читати ``data/live/actions.jsonl`` у tail-режимі для ``backup_db`` і
+   ``restore_db`` та виконувати їх у Postgres.
+4. Симулювати пошкодження БД через внутрішню дію ``corrupt_db``.
+5. Записувати події зміни стану в ``data/live/events.jsonl`` і ACK у
+   ``data/live/actions_applied.jsonl``.
 """
 
 from __future__ import annotations
@@ -35,8 +30,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("db-writer")
 
-# ── config from env ──────────────────────────────────────────────────────────
-
 PG_HOST = os.environ.get("PGHOST", "postgres")
 PG_PORT = os.environ.get("PGPORT", "5432")
 PG_USER = os.environ.get("PGUSER", "smartenergy")
@@ -45,6 +38,7 @@ PG_DB = os.environ.get("PGDATABASE", "smartenergy")
 
 BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/backups"))
 BACKUP_INTERVAL = int(os.environ.get("BACKUP_INTERVAL_SEC", "60"))
+BACKUP_RETENTION = int(os.environ.get("BACKUP_RETENTION", "5"))
 WRITE_INTERVAL = float(os.environ.get("WRITE_INTERVAL_SEC", "5"))
 
 EVENTS_PATH = Path(os.environ.get("EVENTS_JSONL", "/work/data/live/events.jsonl"))
@@ -66,7 +60,7 @@ def _now_iso() -> str:
 
 
 def _wait_for_pg() -> None:
-    """Block until Postgres accepts connections."""
+    """Чекає, доки Postgres почне приймати підключення."""
     for i in range(60):
         try:
             result = subprocess.run(
@@ -82,9 +76,6 @@ def _wait_for_pg() -> None:
             pass
         time.sleep(1)
     log.error("Postgres not ready after 60s, continuing anyway")
-
-
-# ── event / ACK emitters ────────────────────────────────────────────────────
 
 
 def _emit_event(event: str, value: str, severity: str = "medium", correlation_id: str = "") -> None:
@@ -108,7 +99,7 @@ def _emit_event(event: str, value: str, severity: str = "medium", correlation_id
             fh.write(json.dumps(ev, ensure_ascii=False, separators=(",", ":")) + "\n")
             fh.flush()
     except OSError as exc:
-        log.error("Failed to emit event: %s", exc)
+        log.error("Не вдалося записати подію: %s", exc)
 
 
 def _emit_ack(
@@ -136,10 +127,7 @@ def _emit_ack(
             fh.write(json.dumps(ack, ensure_ascii=False, separators=(",", ":")) + "\n")
             fh.flush()
     except OSError as exc:
-        log.error("Failed to emit ACK: %s", exc)
-
-
-# ── SQL helpers ──────────────────────────────────────────────────────────────
+        log.error("Не вдалося записати ACK: %s", exc)
 
 
 def _psql(sql: str) -> subprocess.CompletedProcess:
@@ -192,44 +180,62 @@ def _pg_restore(sql_path: str) -> bool:
 
 
 def _verify_integrity() -> bool:
-    """Check that the integrity_check table has marker='healthy'."""
+    """Перевіряє, що таблиця integrity_check має marker='healthy'."""
     r = _psql("SELECT marker FROM integrity_check LIMIT 1;")
     return "healthy" in r.stdout
 
 
-# ── latest snapshot helper ───────────────────────────────────────────────────
+def _list_snapshot_paths() -> list[Path]:
+    """Повертає SQL backup-файли від найстарішого до найновішого."""
+    if not BACKUP_DIR.exists():
+        return []
+    return sorted(
+        BACKUP_DIR.glob("*.sql"),
+        key=lambda f: (f.stat().st_mtime, f.name),
+    )
 
 
 def _list_snapshots() -> list[str]:
-    """Return sorted list of snapshot filenames in BACKUP_DIR."""
-    if not BACKUP_DIR.exists():
-        return []
-    return sorted(f.name for f in BACKUP_DIR.glob("snapshot_*.sql"))
+    """Повертає відсортований список назв backup-файлів у BACKUP_DIR."""
+    return [f.name for f in _list_snapshot_paths()]
+
+
+def _prune_old_snapshots() -> list[str]:
+    """Залишає тільки найновіші BACKUP_RETENTION SQL backup-файли."""
+    retention = max(1, BACKUP_RETENTION)
+    snapshots = _list_snapshot_paths()
+    old_snapshots = snapshots[: max(0, len(snapshots) - retention)]
+    removed = []
+
+    for snapshot in old_snapshots:
+        try:
+            snapshot.unlink()
+            removed.append(snapshot.name)
+            log.info("BACKUP RETENTION: removed old snapshot %s", snapshot.name)
+        except OSError as exc:
+            log.warning("BACKUP RETENTION: failed to remove %s: %s", snapshot.name, exc)
+
+    return removed
 
 
 def _resolve_snapshot(name: str) -> str | None:
-    """Resolve snapshot name to full path. 'latest' picks the most recent."""
+    """Перетворює назву snapshot на повний шлях; latest означає найновіший."""
     if name == "latest" or not name:
         snaps = _list_snapshots()
         if not snaps:
             return None
         return str(BACKUP_DIR / snaps[-1])
-    # Try exact name
     candidate = BACKUP_DIR / name
     if candidate.exists():
         return str(candidate)
-    # Try with .sql extension
     candidate = BACKUP_DIR / f"{name}.sql"
     if candidate.exists():
         return str(candidate)
     return None
 
 
-# ── telemetry writer thread ─────────────────────────────────────────────────
-
-
 def _telemetry_writer() -> None:
-    """Insert synthetic telemetry rows periodically."""
+    """Періодично додає синтетичні рядки телеметрії."""
     sources = ["meter-17", "meter-22", "inverter-01", "inverter-02", "collector-01"]
     keys = [
         ("voltage", "V", 218.0, 242.0),
@@ -247,17 +253,13 @@ def _telemetry_writer() -> None:
                 f"VALUES ('{src}', 'edge', '{k}', {val}, '{unit}');"
             )
         except Exception as exc:
-            log.debug("Telemetry write failed: %s", exc)
+            log.debug("Не вдалося записати телеметрію: %s", exc)
         time.sleep(WRITE_INTERVAL)
 
 
-# ── periodic backup thread ──────────────────────────────────────────────────
-
-
 def _backup_loop() -> None:
-    """Periodic pg_dump to /backups/snapshot_<timestamp>.sql."""
+    """Періодично виконує pg_dump у /backups/snapshot_<timestamp>.sql."""
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    # Take an initial snapshot immediately
     _do_backup("snapshot_init")
     while True:
         time.sleep(BACKUP_INTERVAL)
@@ -269,6 +271,7 @@ def _do_backup(name: str) -> bool:
     path = str(BACKUP_DIR / f"{name}.sql")
     ok = _pg_dump(path)
     if ok:
+        _prune_old_snapshots()
         _emit_event("db_backup_created", name, "medium")
         log.info("BACKUP: %s -> %s", name, path)
     else:
@@ -276,11 +279,8 @@ def _do_backup(name: str) -> bool:
     return ok
 
 
-# ── action listener thread ─────────────────────────────────────────────────
-
-
 def _action_listener() -> None:
-    """Tail actions.jsonl for backup_db / restore_db / corrupt_db actions."""
+    """Читає actions.jsonl у tail-режимі для backup_db/restore_db/corrupt_db."""
     offset = 0
     while True:
         try:
@@ -297,10 +297,10 @@ def _action_listener() -> None:
                                 act = json.loads(line)
                                 _handle_action(act)
                             except (json.JSONDecodeError, KeyError) as exc:
-                                log.debug("Skip bad action: %s", exc)
+                                log.debug("Пропущено невалідну дію: %s", exc)
                         offset = fh.tell()
         except OSError as exc:
-            log.debug("Action read error: %s", exc)
+            log.debug("Помилка читання дій: %s", exc)
         time.sleep(1.0)
 
 
@@ -360,18 +360,13 @@ def _handle_action(act: dict) -> None:
             log.error("RESTORE FAILED")
 
     elif action == "corrupt_db" and target == "db":
-        # Simulate corruption: break the integrity_check marker
         _psql("UPDATE integrity_check SET marker='CORRUPTED', updated=now();")
-        # Also insert garbage into telemetry
         _psql(
             "INSERT INTO telemetry (source, component, key, value, unit, severity) "
             "VALUES ('CORRUPT', 'db', 'CORRUPTION', -999, 'ERR', 'critical');"
         )
         _emit_event("db_corruption_detected", "integrity_violation", "critical", cor_id)
         log.info("CORRUPTION SIMULATED: integrity_check marker set to CORRUPTED")
-
-
-# ── main ─────────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
@@ -384,7 +379,7 @@ def main() -> None:
     ]
     for t in threads:
         t.start()
-        log.info("Started thread: %s", t.name)
+        log.info("Запущено потік: %s", t.name)
 
     log.info(
         "db-writer running: write_interval=%.1fs backup_interval=%ds",
@@ -392,12 +387,11 @@ def main() -> None:
         BACKUP_INTERVAL,
     )
 
-    # Keep main thread alive
     try:
         while True:
             time.sleep(60)
     except KeyboardInterrupt:
-        log.info("Shutting down")
+        log.info("Зупинка сервісу")
 
 
 if __name__ == "__main__":

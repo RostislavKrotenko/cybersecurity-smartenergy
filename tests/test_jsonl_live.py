@@ -122,8 +122,8 @@ class TestLoadEventsAutoDetect:
             "2026-02-26T10:00:00Z,inv-01,edge,telemetry_read,,,"
             "voltage,220.5,V,low,,\n"
         )
-        # We can't easily guarantee the CSV is perfect for DictReader
-        # but at least ensure load_events doesn't crash with .csv extension.
+        # Складно гарантувати ідеальний CSV для DictReader,
+        # але load_events не має падати з розширенням .csv.
         events = load_events(str(path))
         assert isinstance(events, list)
 
@@ -263,4 +263,4 @@ class TestStreamJsonl:
         stream_jsonl(tiny_engine, path, interval_sec=0, max_events=2)
         with open(path) as f:
             lines = [ln.strip() for ln in f if ln.strip()]
-        assert len(lines) == 3  # 1 existing + 2 new
+        assert len(lines) == 3  # 1 наявний + 2 нові

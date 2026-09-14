@@ -1,12 +1,10 @@
-"""File-based adapters for simulation and testing.
+"""Файлові адаптери для симуляції та тестування.
 
-These adapters implement the abstract interfaces using local files (CSV/JSONL).
-They serve as:
-1. Reference implementations for how to implement the interfaces
-2. Working adapters for simulation/testing scenarios
-3. Fallback when real infrastructure is not available
+Адаптери реалізують абстрактні інтерфейси через локальні CSV/JSONL файли.
+Вони потрібні як еталон реалізації, робочий режим емуляції та fallback,
+коли реальна інфраструктура ще недоступна.
 
-To integrate with real SmartEnergy systems, create new adapters in this package:
+Для інтеграції з реальними системами SmartEnergy можна додати адаптери:
 - kafka_adapter.py: KafkaEventSource, KafkaActionSink
 - siem_adapter.py: SplunkEventSource, ElasticEventSource
 - scada_adapter.py: ScadaActionExecutor, ScadaStateProvider
@@ -43,31 +41,22 @@ from src.shared.file_utils import atomic_write
 log = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  FileEventSource - read events from CSV/JSONL files
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class FileEventSource(EventSource):
-    """Event source that reads from local CSV or JSONL files.
+    """Джерело подій із локального CSV або JSONL файла.
 
-    This is the simulation/testing implementation. For production,
-    implement KafkaEventSource, SiemEventSource, etc.
+    Для production-інтеграції варто реалізувати KafkaEventSource,
+    SiemEventSource або інший адаптер реального джерела.
     """
 
     def __init__(self, path: str):
-        """Initialize with file path.
-
-        Args:
-            path: Path to CSV or JSONL file.
-        """
+        """Ініціалізує джерело шляхом до CSV або JSONL файла."""
         self.path = Path(path)
         self._offset: int = 0
         self._is_jsonl = self.path.suffix in (".jsonl", ".ndjson")
         self._last_mtime_ns: int | None = None
 
     def read_batch(self, limit: int = 10000) -> list[Event]:
-        """Read all events from the file (batch mode)."""
+        """Зчитує події з файла у пакетному режимі."""
         if not self.path.exists():
             log.warning("Event source file not found: %s", self.path)
             return []
@@ -77,7 +66,7 @@ class FileEventSource(EventSource):
         return self._read_csv(limit)
 
     def _read_csv(self, limit: int) -> list[Event]:
-        """Read events from CSV file."""
+        """Зчитує події з CSV файла."""
         events: list[Event] = []
         with open(self.path, encoding="utf-8") as fh:
             reader = csv.DictReader(fh)
@@ -89,7 +78,7 @@ class FileEventSource(EventSource):
         return events
 
     def _read_jsonl(self, limit: int) -> list[Event]:
-        """Read events from JSONL file."""
+        """Зчитує події з JSONL файла."""
         events: list[Event] = []
         with open(self.path, encoding="utf-8") as fh:
             for i, line in enumerate(fh):
@@ -107,14 +96,14 @@ class FileEventSource(EventSource):
         return events
 
     def read_stream(self, poll_interval_sec: float = 1.0) -> Iterator[list[Event]]:
-        """Stream new events by tailing the file (watch mode)."""
+        """Повертає нові події через tail-читання файла."""
         while True:
             events = self._read_new_lines()
             yield events
             time.sleep(poll_interval_sec)
 
     def _read_new_lines(self) -> list[Event]:
-        """Read lines appended since last read."""
+        """Зчитує рядки, додані після попереднього читання."""
         if not self.path.exists():
             return []
 
@@ -125,7 +114,7 @@ class FileEventSource(EventSource):
         except OSError:
             return []
 
-        # File was truncated/rotated: reset offset to re-read from start.
+        # Файл обрізано або ротовано, тому читаємо з початку.
         if current_size < self._offset:
             log.info(
                 "FileEventSource: detected truncate/rotation for %s (offset=%d -> 0)",
@@ -134,7 +123,7 @@ class FileEventSource(EventSource):
             )
             self._offset = 0
 
-        # File may have been rewritten in-place with the same size.
+        # Файл могли перезаписати без зміни розміру.
         if current_size == self._offset:
             if self._last_mtime_ns is not None and current_mtime_ns != self._last_mtime_ns:
                 log.info(
@@ -171,51 +160,42 @@ class FileEventSource(EventSource):
         return events
 
     def get_offset(self) -> int:
-        """Get current file offset."""
+        """Повертає поточний offset файла."""
         return self._offset
 
     def seek(self, offset: Any) -> None:
-        """Seek to a specific file offset."""
+        """Переходить до вказаного offset файла."""
         if isinstance(offset, int):
             self._offset = offset
 
     def close(self) -> None:
-        """No resources to release for file source."""
+        """Файлове джерело не тримає додаткових ресурсів."""
         pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  FileEventSink - write events to JSONL file
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class FileEventSink(EventSink):
-    """Event sink that writes to a local JSONL file.
+    """Приймач подій, який записує їх у локальний JSONL файл.
 
-    Used by Emulator and Normalizer to output events.
-    For production, implement KafkaEventSink, SiemEventSink, etc.
+    Використовується емулятором і нормалізатором. Для production-режиму
+    можна реалізувати KafkaEventSink, SiemEventSink або інший адаптер.
     """
 
     def __init__(self, path: str):
-        """Initialize with file path.
-
-        Args:
-            path: Path to JSONL file for event output.
-        """
+        """Ініціалізує приймач шляхом до JSONL файла."""
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._buffer: list[Event] = []
         self._count = 0
 
     def emit(self, event: Event) -> None:
-        """Emit a single event to the file."""
+        """Записує одну подію у файл."""
         with open(self.path, "a", encoding="utf-8") as fh:
             fh.write(event.to_json() + "\n")
             fh.flush()
         self._count += 1
 
     def emit_batch(self, events: list[Event]) -> None:
-        """Emit multiple events to the file."""
+        """Записує пакет подій у файл."""
         if not events:
             return
 
@@ -227,45 +207,35 @@ class FileEventSink(EventSink):
         log.info("FileEventSink: emitted %d events -> %s", len(events), self.path)
 
     def flush(self) -> None:
-        """Flush buffered events (no-op for file sink)."""
+        """Файловий приймач записує без буфера, тому дія порожня."""
         pass
 
     def close(self) -> None:
-        """Release resources."""
+        """Фіксує фінальну статистику запису."""
         log.info("FileEventSink: total %d events written to %s", self._count, self.path)
 
     @property
     def event_count(self) -> int:
-        """Get total number of events emitted."""
+        """Повертає загальну кількість записаних подій."""
         return self._count
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  FileActionSink - write actions to JSONL file
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class FileActionSink(ActionSink):
-    """Action sink that writes to a local JSONL file.
+    """Приймач дій, який записує їх у локальний JSONL файл.
 
-    This is the simulation/testing implementation. For production,
-    implement SoarActionSink, ScadaActionSink, etc.
+    Для production-інтеграції варто реалізувати SoarActionSink,
+    ScadaActionSink або інший виконавець.
     """
 
     def __init__(self, path: str, csv_path: str | None = None):
-        """Initialize with file path.
-
-        Args:
-            path: Path to JSONL file for action output.
-            csv_path: Optional path for CSV summary output.
-        """
+        """Ініціалізує приймач шляхами до JSONL і опційного CSV файла."""
         self.path = Path(path)
         self.csv_path = Path(csv_path) if csv_path else None
         self._actions: dict[str, Action] = {}
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def emit(self, action: Action) -> str:
-        """Emit a single action to the file."""
+        """Записує одну дію у файл."""
         action.status = "emitted"
         self._actions[action.action_id] = action
 
@@ -277,7 +247,7 @@ class FileActionSink(ActionSink):
         return action.action_id
 
     def emit_batch(self, actions: list[Action]) -> list[str]:
-        """Emit multiple actions to the file."""
+        """Записує пакет дій у файл."""
         if not actions:
             return []
 
@@ -294,24 +264,24 @@ class FileActionSink(ActionSink):
         return ids
 
     def get_status(self, action_id: str) -> ActionStatus:
-        """Get status of a previously emitted action."""
+        """Повертає статус раніше записаної дії."""
         action = self._actions.get(action_id)
         if action is None:
             return ActionStatus.PENDING
         return ActionStatus(action.status)
 
     def update_status(self, action_id: str, status: ActionStatus) -> None:
-        """Update status of an action (called by feedback reader)."""
+        """Оновлює статус дії після отримання підтвердження."""
         action = self._actions.get(action_id)
         if action:
             action.status = status.value
 
     def get_all_actions(self) -> list[Action]:
-        """Get all tracked actions."""
+        """Повертає всі відстежувані дії."""
         return list(self._actions.values())
 
     def write_csv_summary(self) -> None:
-        """Write CSV summary of all actions."""
+        """Записує CSV-зведення всіх дій."""
         if not self.csv_path:
             return
 
@@ -325,34 +295,21 @@ class FileActionSink(ActionSink):
         log.info("FileActionSink: wrote CSV -> %s", self.csv_path)
 
     def close(self) -> None:
-        """Write final CSV summary on close."""
+        """Записує фінальне CSV-зведення під час закриття."""
         if self.csv_path:
             self.write_csv_summary()
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  FileActionFeedback - read ACKs from JSONL file
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class FileActionFeedback(ActionFeedback):
-    """Action feedback reader from local JSONL file.
-
-    Reads action acknowledgements (ACKs) from actions_applied.jsonl.
-    """
+    """Джерело підтверджень дій із локального JSONL файла."""
 
     def __init__(self, path: str):
-        """Initialize with file path.
-
-        Args:
-            path: Path to actions_applied.jsonl file.
-        """
+        """Ініціалізує читач шляхом до actions_applied.jsonl."""
         self.path = Path(path)
         self._offset: int = 0
         self._last_mtime_ns: int | None = None
 
     def read_acks(self, since: Any = None) -> tuple[list[ActionAck], int]:
-        """Read new ACKs from the file."""
+        """Зчитує нові ACK-записи з файла."""
         if since is not None and isinstance(since, int):
             self._offset = since
 
@@ -366,7 +323,7 @@ class FileActionFeedback(ActionFeedback):
         except OSError:
             return [], self._offset
 
-        # ACK file was truncated/rotated: reset offset and continue reading.
+        # ACK-файл обрізано або ротовано, тому читаємо з початку.
         if size < self._offset:
             log.info(
                 "FileActionFeedback: detected truncate/rotation for %s (offset=%d -> 0)",
@@ -414,46 +371,37 @@ class FileActionFeedback(ActionFeedback):
         return acks, self._offset
 
     def close(self) -> None:
-        """No resources to release."""
+        """Файловий читач не тримає додаткових ресурсів."""
         pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  SimulatedStateProvider - read state from emulator WorldState
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class SimulatedStateProvider(StateProvider):
-    """State provider backed by the emulator's WorldState.
+    """Провайдер стану, що читає дані з WorldState емулятора.
 
-    For production, implement ScadaStateProvider, MonitoringStateProvider, etc.
+    Для production-режиму варто реалізувати ScadaStateProvider,
+    MonitoringStateProvider або інший провайдер реального стану.
     """
 
     def __init__(self, world_state: Any = None):
-        """Initialize with optional WorldState reference.
-
-        Args:
-            world_state: Reference to emulator WorldState (if available).
-        """
+        """Ініціалізує провайдер опційним посиланням на WorldState."""
         self._world_state = world_state
         self._components: dict[str, ComponentState] = {}
         self._blocked_actors: set[str] = set()
         self._isolated_components: set[str] = set()
 
     def set_world_state(self, world_state: Any) -> None:
-        """Update WorldState reference."""
+        """Оновлює посилання на WorldState."""
         self._world_state = world_state
 
     def get_component_state(self, component_id: str) -> ComponentState | None:
-        """Get state of a specific component."""
+        """Повертає стан конкретного компонента."""
         if self._world_state is not None:
             return self._state_from_world(component_id)
         return self._components.get(component_id)
 
     def get_all_components(self) -> list[ComponentState]:
-        """Get state of all known components."""
+        """Повертає стан усіх відомих компонентів."""
         if self._world_state is not None:
-            # Return summary of known components
             return [
                 self._state_from_world("gateway"),
                 self._state_from_world("api"),
@@ -463,13 +411,13 @@ class SimulatedStateProvider(StateProvider):
         return list(self._components.values())
 
     def is_actor_blocked(self, actor: str) -> bool:
-        """Check if an actor is currently blocked."""
+        """Перевіряє, чи актор зараз заблокований."""
         if self._world_state is not None:
             return actor in getattr(self._world_state.auth, "blocked_actors", {})
         return actor in self._blocked_actors
 
     def is_component_isolated(self, component_id: str) -> bool:
-        """Check if a component is currently isolated."""
+        """Перевіряє, чи компонент зараз ізольований."""
         if self._world_state is not None:
             api = getattr(self._world_state, "api", None)
             if api and getattr(api, "status", "healthy") == "isolated":
@@ -477,7 +425,7 @@ class SimulatedStateProvider(StateProvider):
         return component_id in self._isolated_components
 
     def _state_from_world(self, component_id: str) -> ComponentState:
-        """Build ComponentState from WorldState."""
+        """Створює ComponentState на основі WorldState."""
         ws = self._world_state
         details: dict[str, Any] = {}
         status = "healthy"
@@ -514,9 +462,8 @@ class SimulatedStateProvider(StateProvider):
             details=details,
         )
 
-    # Methods for manual state updates (when WorldState not available)
     def set_component_status(self, component_id: str, status: str) -> None:
-        """Manually set component status."""
+        """Вручну задає статус компонента."""
         if component_id in self._components:
             self._components[component_id].status = status
         else:
@@ -527,45 +474,36 @@ class SimulatedStateProvider(StateProvider):
             )
 
     def block_actor(self, actor: str) -> None:
-        """Mark an actor as blocked."""
+        """Позначає актора як заблокованого."""
         self._blocked_actors.add(actor)
 
     def unblock_actor(self, actor: str) -> None:
-        """Mark an actor as unblocked."""
+        """Позначає актора як розблокованого."""
         self._blocked_actors.discard(actor)
 
     def isolate_component(self, component_id: str) -> None:
-        """Mark a component as isolated."""
+        """Позначає компонент як ізольований."""
         self._isolated_components.add(component_id)
         self.set_component_status(component_id, "isolated")
 
     def release_isolation(self, component_id: str) -> None:
-        """Release component isolation."""
+        """Знімає ізоляцію компонента."""
         self._isolated_components.discard(component_id)
         self.set_component_status(component_id, "healthy")
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  FileIncidentSource - read incidents from CSV file
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class FileIncidentSource(IncidentSource):
-    """Incident source that reads from a local CSV file.
+    """Джерело інцидентів із локального CSV файла.
 
-    For production, implement SiemIncidentSource, DatabaseIncidentSource, etc.
+    Для production-режиму варто реалізувати SiemIncidentSource або
+    DatabaseIncidentSource.
     """
 
     def __init__(self, path: str):
-        """Initialize with file path.
-
-        Args:
-            path: Path to incidents.csv file.
-        """
+        """Ініціалізує джерело шляхом до incidents.csv."""
         self.path = Path(path)
 
     def get_incidents(self, limit: int = 10000) -> list[dict[str, Any]]:
-        """Get list of incidents from CSV file."""
+        """Повертає список інцидентів із CSV файла."""
         if not self.path.exists():
             return []
 
@@ -579,38 +517,30 @@ class FileIncidentSource(IncidentSource):
             return []
 
     def get_incident_count(self) -> int:
-        """Get total number of incidents."""
+        """Повертає загальну кількість інцидентів."""
         if not self.path.exists():
             return 0
 
         try:
             with open(self.path, encoding="utf-8") as fh:
-                return sum(1 for _ in fh) - 1  # subtract header
+                return sum(1 for _ in fh) - 1  # віднімаємо заголовок CSV
         except Exception:
             return 0
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  FileActionSource - read actions from CSV file
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class FileActionSource(ActionSource):
-    """Action source that reads from a local CSV file.
+    """Джерело дій реагування з локального CSV файла.
 
-    For production, implement SoarActionSource, DatabaseActionSource, etc.
+    Для production-режиму варто реалізувати SoarActionSource або
+    DatabaseActionSource.
     """
 
     def __init__(self, path: str):
-        """Initialize with file path.
-
-        Args:
-            path: Path to actions.csv file.
-        """
+        """Ініціалізує джерело шляхом до actions.csv."""
         self.path = Path(path)
 
     def get_actions(self, limit: int = 10000) -> list[dict[str, Any]]:
-        """Get list of actions from CSV file."""
+        """Повертає список дій із CSV файла."""
         if not self.path.exists():
             return []
 
@@ -624,7 +554,7 @@ class FileActionSource(ActionSource):
             return []
 
     def get_action_summary(self) -> dict[str, int]:
-        """Get summary of actions by status."""
+        """Повертає зведення дій за статусами."""
         if not self.path.exists():
             return {"total": 0, "applied": 0, "failed": 0, "emitted": 0}
 
@@ -647,28 +577,19 @@ class FileActionSource(ActionSource):
             log.warning("Failed to read action summary from %s: %s", self.path, e)
             return {"total": 0, "applied": 0, "failed": 0, "emitted": 0}
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  FileMetricsSource - read metrics from CSV file
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class FileMetricsSource(MetricsSource):
-    """Metrics source that reads from a local CSV file.
+    """Джерело метрик із локального CSV файла.
 
-    For production, implement PrometheusMetricsSource, DatabaseMetricsSource, etc.
+    Для production-режиму варто реалізувати PrometheusMetricsSource або
+    DatabaseMetricsSource.
     """
 
     def __init__(self, path: str):
-        """Initialize with file path.
-
-        Args:
-            path: Path to results.csv file.
-        """
+        """Ініціалізує джерело шляхом до results.csv."""
         self.path = Path(path)
 
     def get_metrics_by_policy(self) -> list[dict[str, Any]]:
-        """Get metrics grouped by security policy."""
+        """Повертає метрики, згруповані за політикою безпеки."""
         if not self.path.exists():
             return []
 
@@ -682,7 +603,7 @@ class FileMetricsSource(MetricsSource):
             return []
 
     def get_overall_metrics(self) -> dict[str, float]:
-        """Get overall system metrics."""
+        """Повертає агреговані метрики системи."""
         if not self.path.exists():
             return {}
 
@@ -691,7 +612,6 @@ class FileMetricsSource(MetricsSource):
 
             df = pd.read_csv(self.path)
 
-            # Aggregate metrics across all policies
             result = {}
             for col in ["availability", "mttd_sec", "mttr_sec", "downtime_sec"]:
                 if col in df.columns:
@@ -702,31 +622,22 @@ class FileMetricsSource(MetricsSource):
             log.warning("Failed to read overall metrics from %s: %s", self.path, e)
             return {}
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  FileStateSource - read component state from CSV file
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class FileStateSource(StateProvider):
-    """State provider that reads from a local CSV file.
+    """Провайдер стану, який читає локальний CSV файл.
 
-    For production, implement ScadaStateProvider, PrometheusStateProvider, etc.
+    Для production-режиму варто реалізувати ScadaStateProvider або
+    PrometheusStateProvider.
     """
 
     def __init__(self, path: str):
-        """Initialize with file path.
-
-        Args:
-            path: Path to state.csv file.
-        """
+        """Ініціалізує провайдер шляхом до state.csv."""
         self.path = Path(path)
         self._cache: dict[str, ComponentState] = {}
         self._blocked_actors: set[str] = set()
         self._isolated_components: set[str] = set()
 
     def _load(self) -> None:
-        """Load state from CSV file."""
+        """Завантажує стан із CSV файла."""
         if not self.path.exists():
             return
 
@@ -744,25 +655,26 @@ class FileStateSource(StateProvider):
                 status = row.get("status", "unknown")
                 details_str = row.get("details", "{}")
 
-                # Parse details
-                details = {}
+                details = self._parse_details(details_str)
                 if isinstance(details_str, str) and details_str.strip():
                     with contextlib.suppress(json.JSONDecodeError):
                         details = json.loads(details_str)
+
+                last_updated = row.get("last_updated", "")
+                if not last_updated:
+                    last_updated = row.get("timestamp_utc", "")
 
                 self._cache[comp_id] = ComponentState(
                     component_id=comp_id,
                     component_type=comp_id,
                     status=status,
                     details=details,
-                    last_updated=row.get("last_updated", ""),
+                    last_updated=last_updated,
                 )
 
-                # Track isolated components
                 if status == "isolated":
                     self._isolated_components.add(comp_id)
 
-                # Track blocked actors from details
                 if "blocked_actors" in details:
                     for actor in details.get("blocked_actors", []):
                         self._blocked_actors.add(actor)
@@ -770,22 +682,46 @@ class FileStateSource(StateProvider):
         except Exception as e:
             log.warning("Failed to load state from %s: %s", self.path, e)
 
+    @staticmethod
+    def _parse_details(details_str: Any) -> dict[str, Any]:
+        """Перетворює JSON або короткий текст details у словник."""
+        if not isinstance(details_str, str) or not details_str.strip():
+            return {}
+
+        stripped = details_str.strip()
+        with contextlib.suppress(json.JSONDecodeError):
+            parsed = json.loads(stripped)
+            if isinstance(parsed, dict):
+                return parsed
+
+        details: dict[str, Any] = {}
+        for part in stripped.split():
+            if "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            details[key.strip()] = value.strip().strip(",")
+
+        if details:
+            return details
+
+        return {"summary": stripped}
+
     def get_component_state(self, component_id: str) -> ComponentState | None:
-        """Get state of a specific component."""
+        """Повертає стан конкретного компонента."""
         self._load()
         return self._cache.get(component_id)
 
     def get_all_components(self) -> list[ComponentState]:
-        """Get state of all known components."""
+        """Повертає стан усіх відомих компонентів."""
         self._load()
         return list(self._cache.values())
 
     def is_actor_blocked(self, actor: str) -> bool:
-        """Check if an actor is currently blocked."""
+        """Перевіряє, чи актор зараз заблокований."""
         self._load()
         return actor in self._blocked_actors
 
     def is_component_isolated(self, component_id: str) -> bool:
-        """Check if a component is currently isolated."""
+        """Перевіряє, чи компонент зараз ізольований."""
         self._load()
         return component_id in self._isolated_components

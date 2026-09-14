@@ -19,11 +19,6 @@ def _diff_sec(a: str, b: str) -> float:
     return (_ts(b) - _ts(a)).total_seconds()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Public API
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def detect(
     events: list[Event],
     rules_cfg: dict[str, Any],
@@ -31,16 +26,10 @@ def detect(
 ) -> list[Alert]:
     """Запускає всі активні правила на подіях та повертає оповіщення.
 
-    Args:
-        events: Відсортований список подій.
-        rules_cfg: Конфігурація rules.yaml.
-        policy_modifiers: Модифікатори політики по threat_type.
-
-    Returns:
-        Відсортований список оповіщень.
+    Повертає відсортований список оповіщень.
     """
     if not events:
-        log.warning("No events to analyse — detector returns empty list")
+        log.warning("Немає подій для аналізу — детектор повертає порожній список")
         return []
 
     pm = policy_modifiers or {}
@@ -55,7 +44,6 @@ def detect(
         match_event = rule.get("match", {}).get("event", "")
         threat = rule.get("threat_type", "unknown")
 
-        # Apply policy multipliers to window and threshold
         mod = pm.get(threat, {})
         window = rule.get("window_sec", 60) * mod.get("window_multiplier", 1.0)
         threshold = max(1, round(rule.get("threshold", 1) * mod.get("threshold_multiplier", 1.0)))
@@ -77,20 +65,15 @@ def detect(
                 matched, rule, window, threshold, events, alert_counter
             )
         else:
-            log.debug("Unknown rule prefix for %s — skipped", rule_id)
+            log.debug("Невідомий префікс правила для %s — пропущено", rule_id)
             continue
 
         alert_counter += len(new_alerts)
         alerts.extend(new_alerts)
 
     alerts.sort(key=lambda a: a.timestamp)
-    log.info("Detector raised %d alerts from %d events", len(alerts), len(events))
+    log.info("Детектор створив %d оповіщень із %d подій", len(alerts), len(events))
     return alerts
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Rule implementations
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def _detect_brute_force(
@@ -100,7 +83,7 @@ def _detect_brute_force(
     threshold: int,
     counter: int,
 ) -> list[Alert]:
-    """RULE-BF-001 — N auth_failure from same IP within window seconds."""
+    """RULE-BF-001 — N auth_failure з одного IP у межах часового вікна."""
     alerts: list[Alert] = []
     groups: dict[tuple[str, str], list[Event]] = defaultdict(list)
     for e in auth_failures:
@@ -111,7 +94,6 @@ def _detect_brute_force(
         evts.sort(key=lambda e: e.timestamp)
         buf: list[Event] = []
         for e in evts:
-            # Slide window: remove events outside window
             buf = [b for b in buf if _diff_sec(b.timestamp, e.timestamp) <= window]
             buf.append(e)
             if len(buf) >= threshold:
@@ -128,8 +110,8 @@ def _detect_brute_force(
                         component=evts[0].component,
                         source=source,
                         description=(
-                            f"Brute-force: {len(buf)} auth failures from {ip} "
-                            f"to {source} within {window:.0f}s"
+                            f"Brute-force: {len(buf)} невдалих авторизацій з {ip} "
+                            f"до {source} за {window:.0f}s"
                         ),
                         event_count=len(buf),
                         event_ids=";".join(e.correlation_id or e.timestamp for e in buf),
@@ -149,7 +131,7 @@ def _detect_ddos(
     all_events: list[Event],
     counter: int,
 ) -> list[Alert]:
-    """RULE-DDOS-001 — N rate_exceeded events within window."""
+    """RULE-DDOS-001 — N подій rate_exceeded у межах часового вікна."""
     alerts: list[Alert] = []
     groups: dict[str, list[Event]] = defaultdict(list)
     for e in rate_events:
@@ -162,7 +144,6 @@ def _detect_ddos(
             buf = [b for b in buf if _diff_sec(b.timestamp, e.timestamp) <= window]
             buf.append(e)
             if len(buf) >= threshold:
-                # Check for service degradation within 120s (sub-rule escalation)
                 sev = rule.get("severity", "critical")
                 svc_impact = [
                     s
@@ -189,8 +170,8 @@ def _detect_ddos(
                         component=evts[0].component,
                         source=source,
                         description=(
-                            f"DDoS flood: {len(buf)} rate_exceeded on {source} "
-                            f"within {window:.0f}s" + (" + service impact" if svc_impact else "")
+                            f"DDoS-флуд: {len(buf)} rate_exceeded на {source} "
+                            f"за {window:.0f}s" + (" + вплив на сервіс" if svc_impact else "")
                         ),
                         event_count=len(buf),
                         event_ids=";".join(e.correlation_id or e.timestamp for e in buf),
@@ -209,7 +190,7 @@ def _detect_telemetry_spoof(
     threshold: int,
     counter: int,
 ) -> list[Alert]:
-    """RULE-SPOOF-001 — telemetry value out-of-bounds or large delta."""
+    """RULE-SPOOF-001 — телеметрія поза межами або з великим delta."""
     alerts: list[Alert] = []
     bounds = rule.get("bounds", {})
     deltas = rule.get("delta", {})
@@ -231,12 +212,10 @@ def _detect_telemetry_spoof(
 
             is_anomaly = False
 
-            # Static bounds check
             b = bounds.get(key)
             if b and (val < b.get("min", float("-inf")) or val > b.get("max", float("inf"))):
                 is_anomaly = True
 
-            # Delta check
             d = deltas.get(key)
             if d is not None and prev_val is not None and abs(val - prev_val) > d:
                 is_anomaly = True
@@ -246,7 +225,6 @@ def _detect_telemetry_spoof(
             if is_anomaly:
                 anomalies.append(e)
 
-        # Sliding window: group anomalies
         if len(anomalies) >= threshold:
             buf: list[Event] = []
             for a in anomalies:
@@ -267,8 +245,8 @@ def _detect_telemetry_spoof(
                             component=anomalies[0].component,
                             source=source,
                             description=(
-                                f"Telemetry anomaly: {len(buf)} out-of-range values "
-                                f"for {key} on {source} within {window:.0f}s"
+                                f"Аномалія телеметрії: {len(buf)} значень поза межами "
+                                f"для {key} на {source} за {window:.0f}s"
                             ),
                             event_count=len(buf),
                             event_ids=";".join(e.correlation_id or e.timestamp for e in buf),
@@ -285,11 +263,10 @@ def _detect_unauthorized_cmd(
     rule: dict,
     counter: int,
 ) -> list[Alert]:
-    """RULE-UCMD-001 — cmd_exec where actor ∉ allowed actors.
+    """RULE-UCMD-001 — cmd_exec від актора поза allowlist.
 
-    Groups unauthorized events by source, then splits each source's
-    events into time-clusters (gap > 120 s starts a new cluster) so
-    that repeated attack cycles produce separate alerts.
+    Події групуються за source і розбиваються на часові кластери. Якщо пауза
+    між подіями більша за 120 секунд, починається новий кластер.
     """
     alerts: list[Alert] = []
     allowed = set(rule.get("match", {}).get("actor_not_in", []))
@@ -304,16 +281,14 @@ def _detect_unauthorized_cmd(
     if not unauth:
         return alerts
 
-    # Group by source
     by_source: dict[str, list[Event]] = defaultdict(list)
     for e in unauth:
         by_source[e.source].append(e)
 
-    cluster_gap = 120.0  # seconds
+    cluster_gap = 120.0  # секунди
 
     for source, evts in by_source.items():
         evts.sort(key=lambda e: e.timestamp)
-        # Split into time clusters
         clusters: list[list[Event]] = [[evts[0]]]
         for e in evts[1:]:
             if _diff_sec(clusters[-1][-1].timestamp, e.timestamp) > cluster_gap:
@@ -336,8 +311,8 @@ def _detect_unauthorized_cmd(
                     component=cluster[0].component,
                     source=source,
                     description=(
-                        f"Unauthorized command: {len(cluster)} cmd_exec by "
-                        f"non-allowed actor(s) on {source}"
+                        f"Несанкціонована команда: {len(cluster)} cmd_exec від "
+                        f"неавторизованих акторів на {source}"
                     ),
                     event_count=len(cluster),
                     event_ids=";".join(e.correlation_id or e.timestamp for e in cluster),
@@ -356,11 +331,10 @@ def _detect_outage(
     all_events: list[Event],
     counter: int,
 ) -> list[Alert]:
-    """RULE-OUT-001/002 — service down/degraded or db_error events."""
+    """RULE-OUT-001/002 — service down/degraded або db_error події."""
     alerts: list[Alert] = []
     target_values = set(rule.get("match", {}).get("values", []))
 
-    # Filter events matching the rule's value conditions
     if target_values:
         matched = [e for e in svc_events if e.value in target_values]
     else:
@@ -377,7 +351,6 @@ def _detect_outage(
             buf = [b for b in buf if _diff_sec(b.timestamp, e.timestamp) <= window]
             buf.append(e)
             if len(buf) >= threshold:
-                # Check for severity override
                 sev = rule.get("severity", "high")
                 for ov in rule.get("severity_override", []):
                     if any(b.value == ov["value"] for b in buf):
@@ -397,8 +370,8 @@ def _detect_outage(
                         component=evts[0].component,
                         source=source,
                         description=(
-                            f"Outage: {len(buf)} {evts[0].event} events on "
-                            f"{source} (values: {', '.join(e.value for e in buf)})"
+                            f"Відмова: {len(buf)} подій {evts[0].event} на "
+                            f"{source} (значення: {', '.join(e.value for e in buf)})"
                         ),
                         event_count=len(buf),
                         event_ids=";".join(e.correlation_id or e.timestamp for e in buf),
@@ -418,7 +391,7 @@ def _detect_network_failure(
     all_events: list[Event],
     counter: int,
 ) -> list[Alert]:
-    """RULE-NET-001 — network degradation / port failure / connectivity loss."""
+    """RULE-NET-001 — деградація мережі, відмова портів або втрата зв'язку."""
     alerts: list[Alert] = []
     target_values = set(rule.get("match", {}).get("values", []))
     target_component = rule.get("match", {}).get("component", "")
@@ -448,7 +421,6 @@ def _detect_network_failure(
                         sev = ov["severity"]
                         break
 
-                # Sub-rule: port_status events escalate to critical
                 port_events = [
                     s
                     for s in all_events
@@ -471,9 +443,9 @@ def _detect_network_failure(
                         component=evts[0].component,
                         source=source,
                         description=(
-                            f"Network failure: {len(buf)} events on "
-                            f"{source} (values: {', '.join(e.value for e in buf)})"
-                            + (" + port failures" if port_events else "")
+                            f"Відмова мережі: {len(buf)} подій на "
+                            f"{source} (значення: {', '.join(e.value for e in buf)})"
+                            + (" + відмови портів" if port_events else "")
                         ),
                         event_count=len(buf),
                         event_ids=";".join(e.correlation_id or e.timestamp for e in buf),

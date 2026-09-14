@@ -1,23 +1,18 @@
-"""network-sim -- lightweight network condition simulator.
+"""Сервіс network-sim — легкий симулятор стану мережі.
 
-Provides HTTP endpoints AND action listener for network state control.
-Generates state-change events into data/live/events.jsonl so the Analyzer
-can observe them. Writes ACKs to data/live/actions_applied.jsonl.
+Надає HTTP-ендпоінти та listener дій для керування станом мережі.
+Генерує події зміни стану в data/live/events.jsonl, щоб аналізатор бачив
+ефект, і записує ACK у data/live/actions_applied.jsonl.
 
-Endpoints
----------
-GET  /status              -> current network state JSON
-POST /degrade             -> apply latency/drop_rate/disconnect
-POST /reset               -> return to healthy defaults
+Ендпоінти:
+GET  /status              -> поточний стан мережі у JSON
+POST /degrade             -> застосувати latency/drop_rate/disconnect
+POST /reset               -> повернути healthy-стан
 GET  /healthz             -> 200 OK
 
-Action Listener
----------------
-Tails data/live/actions.jsonl for:
+Listener дій читає data/live/actions.jsonl у tail-режимі для:
 - degrade_network (target_component=network)
 - reset_network (target_component=network)
-
-Writes ACKs to data/live/actions_applied.jsonl after execution.
 """
 
 from __future__ import annotations
@@ -33,8 +28,6 @@ from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("network-sim")
-
-# -- state --------------------------------------------------------------------
 
 _state_lock = threading.Lock()
 _state = {
@@ -55,7 +48,7 @@ def _now_iso() -> str:
 
 
 def _emit_event(event: str, value: str, severity: str = "high", correlation_id: str = "") -> None:
-    """Append a state-change event to the shared events.jsonl."""
+    """Додає подію зміни стану у спільний events.jsonl."""
     ev = {
         "timestamp": _now_iso(),
         "source": "network-sim",
@@ -76,7 +69,7 @@ def _emit_event(event: str, value: str, severity: str = "high", correlation_id: 
             fh.write(json.dumps(ev, ensure_ascii=False, separators=(",", ":")) + "\n")
             fh.flush()
     except OSError as exc:
-        log.error("Failed to write event: %s", exc)
+        log.error("Не вдалося записати подію: %s", exc)
 
 
 def _emit_ack(
@@ -87,7 +80,7 @@ def _emit_ack(
     state_event: str = "",
     error: str = "",
 ) -> None:
-    """Append an ACK to actions_applied.jsonl."""
+    """Додає ACK-запис в actions_applied.jsonl."""
     ack = {
         "action_id": action_id,
         "correlation_id": correlation_id,
@@ -104,10 +97,10 @@ def _emit_ack(
             fh.write(json.dumps(ack, ensure_ascii=False, separators=(",", ":")) + "\n")
             fh.flush()
         log.info(
-            "ACK emitted: action_id=%s result=%s state_event=%s", action_id, result, state_event
+            "ACK записано: action_id=%s result=%s state_event=%s", action_id, result, state_event
         )
     except OSError as exc:
-        log.error("Failed to emit ACK: %s", exc)
+        log.error("Не вдалося записати ACK: %s", exc)
 
 
 def _apply_degrade(
@@ -132,7 +125,6 @@ def _apply_degrade(
     _emit_event("network_degraded", val, "high", correlation_id)
     log.info("DEGRADED: %s", val)
 
-    # Emit ACK if action_id provided (from action listener)
     if action_id:
         _emit_ack(action_id, correlation_id, "degrade_network", "success", "network_degraded")
 
@@ -150,7 +142,6 @@ def _apply_reset(correlation_id: str = "", action_id: str = "") -> dict:
     _emit_event("network_reset_applied", "healthy", "medium", correlation_id)
     log.info("RESET: network healthy")
 
-    # Emit ACK if action_id provided (from action listener)
     if action_id:
         _emit_ack(action_id, correlation_id, "reset_network", "success", "network_reset_applied")
 
@@ -164,11 +155,8 @@ def _get_status() -> dict:
     return snap
 
 
-# -- TTL expiry thread --------------------------------------------------------
-
-
 def _ttl_watcher() -> None:
-    """Background thread: auto-reset when TTL expires."""
+    """Фоновий потік автоматично скидає стан після завершення TTL."""
     while True:
         time.sleep(1.0)
         with _state_lock:
@@ -178,14 +166,11 @@ def _ttl_watcher() -> None:
             elapsed = time.monotonic() - since
             if elapsed >= ttl:
                 _apply_reset()
-                log.info("TTL expired after %ds, auto-reset", int(elapsed))
-
-
-# -- Action listener thread ---------------------------------------------------
+                log.info("TTL завершився через %ds, виконано auto-reset", int(elapsed))
 
 
 def _action_listener() -> None:
-    """Tail actions.jsonl for degrade_network / reset_network actions."""
+    """Читає actions.jsonl у tail-режимі для degrade_network/reset_network."""
     offset = 0
     while True:
         try:
@@ -202,22 +187,21 @@ def _action_listener() -> None:
                                 act = json.loads(line)
                                 _handle_action(act)
                             except (json.JSONDecodeError, KeyError) as exc:
-                                log.debug("Skip bad action: %s", exc)
+                                log.debug("Пропущено невалідну дію: %s", exc)
                         offset = fh.tell()
         except OSError as exc:
-            log.debug("Action read error: %s", exc)
+            log.debug("Помилка читання дій: %s", exc)
         time.sleep(1.0)
 
 
 def _handle_action(act: dict) -> None:
-    """Process a single action from actions.jsonl."""
+    """Обробляє одну дію з actions.jsonl."""
     action = act.get("action", "")
     action_id = act.get("action_id", "")
     cor_id = act.get("correlation_id", "")
     target = act.get("target_component", "")
     params = act.get("params", {})
 
-    # Only handle network-targeted actions
     if target != "network":
         return
 
@@ -235,7 +219,7 @@ def _handle_action(act: dict) -> None:
             action_id=action_id,
         )
         log.info(
-            "ACTION degrade_network applied: latency=%dms drop=%.2f ttl=%ds",
+            "Дію degrade_network застосовано: latency=%dms drop=%.2f ttl=%ds",
             latency_ms,
             drop_rate,
             ttl_sec,
@@ -243,10 +227,7 @@ def _handle_action(act: dict) -> None:
 
     elif action == "reset_network":
         _apply_reset(correlation_id=cor_id, action_id=action_id)
-        log.info("ACTION reset_network applied")
-
-
-# -- HTTP handler -------------------------------------------------------------
+        log.info("Дію reset_network застосовано")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -300,16 +281,14 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     port = int(os.environ.get("PORT", "8090"))
 
-    # Start background threads
     threads = [
         threading.Thread(target=_ttl_watcher, daemon=True, name="ttl-watcher"),
         threading.Thread(target=_action_listener, daemon=True, name="action-listener"),
     ]
     for t in threads:
         t.start()
-        log.info("Started thread: %s", t.name)
+        log.info("Запущено потік: %s", t.name)
 
-    # Start HTTP server
     server = HTTPServer(("0.0.0.0", port), Handler)
     log.info("network-sim listening on :%d", port)
     log.info("  events -> %s", EVENTS_PATH)
@@ -319,7 +298,7 @@ def main() -> None:
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        log.info("Shutting down")
+        log.info("Зупинка сервісу")
         server.shutdown()
 
 

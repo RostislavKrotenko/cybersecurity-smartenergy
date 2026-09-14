@@ -1,1 +1,1 @@
-"""API route modules."""
+"""Модулі роутів API."""

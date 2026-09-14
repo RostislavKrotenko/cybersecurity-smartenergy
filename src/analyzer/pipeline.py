@@ -2,7 +2,7 @@
 
 Конвеєр включає етапи: завантаження подій, детекція, кореляція,
 розрахунок метрик, формування звітів і (опційно) емісію дій реагування.
-Модуль підтримує plug-and-play інтеграцію через інтерфейси `EventSource`,
+Модуль підтримує замінну інтеграцію через інтерфейси `EventSource`,
 `ActionSink` і `ActionFeedback`.
 """
 
@@ -90,11 +90,11 @@ def load_events(path: str) -> list[Event]:
 def load_events_from_source(event_source: EventSource, limit: int = 10000) -> list[Event]:
     """Завантажує події через адаптер `EventSource`.
 
-    Args:
+    Аргументи:
         event_source: Реалізація джерела подій (файл, Kafka, SIEM тощо).
         limit: Максимальна кількість подій для читання.
 
-    Returns:
+    Повертає:
         Список об'єктів `Event`.
     """
     events = event_source.read_batch(limit=limit)
@@ -111,14 +111,14 @@ def run_pipeline(
 ) -> dict[str, Any]:
     """Виконує повний аналітичний конвеєр та записує результати.
 
-    Args:
+    Аргументи:
         input_path: Шлях до вхідного файлу.
         out_dir: Директорія виводу.
         policy_names: Список політик для аналізу.
         config_dir: Директорія конфігурації.
         horizon_days: Горизонт аналізу в днях.
 
-    Returns:
+    Повертає:
         Словник з результатами аналізу.
     """
     events = load_events(input_path)
@@ -252,7 +252,7 @@ def watch_pipeline_with_adapters(
     integration_mode: str = "active",
     shadow_actions_path: str | None = None,
 ) -> None:
-    """Live watch-конвеєр на основі абстрактних адаптерів.
+    """Live/watch-конвеєр на основі абстрактних адаптерів.
 
     Усі live-операції введення/виведення виконуються через інтерфейси:
     `EventSource`, `ActionSink` та `ActionFeedback`.
@@ -539,7 +539,7 @@ def _read_acks(
     Для кожного ACK оновлює статус відповідної дії та, за потреби,
     генерує синтетичну state-change подію для `state_store`.
 
-    Returns:
+    Повертає:
         Кортеж `(new_offset, changed)`.
     """
     changed = False
@@ -693,7 +693,7 @@ def _confirm_actions(
 ) -> bool:
     """Підтверджує застосування дій за state-change подіями.
 
-    Returns:
+    Повертає:
         `True`, якщо оновлено статус хоча б однієї дії.
     """
     changed = False
@@ -726,7 +726,7 @@ def _incremental_detect(
 ) -> tuple[int, list[Any]]:
     """Виконує `detect -> correlate` для подій у межах кожної політики.
 
-    Returns:
+    Повертає:
         Оновлений лічильник інцидентів і список нових інцидентів.
     """
     new_incidents: list[Any] = []
@@ -849,9 +849,9 @@ def _run_analysis(
     out_dir: str,
     horizon_days: float | None,
 ) -> dict[str, Any]:
-    """Внутрішній helper для повного проходу `detect->correlate->metrics`.
+    """Внутрішня допоміжна функція для повного проходу `detect->correlate->metrics`.
 
-    Returns:
+    Повертає:
         Словник зі зведенням (`total_incidents`, `total_alerts`).
     """
     if horizon_days is not None and horizon_days > 0:
@@ -899,9 +899,9 @@ def run_pipeline_with_adapters(
     integration_mode: str = "active",
     shadow_actions_path: str | None = None,
 ) -> dict[str, Any]:
-    """Запускає конвеєр аналізу через plug-and-play адаптери.
+    """Запускає конвеєр аналізу через замінні адаптери.
 
-    Args:
+    Аргументи:
         event_source: Реалізація `EventSource` (файл, Kafka, SIEM тощо).
         action_sink: Опційний `ActionSink` для емісії дій реагування.
         out_dir: Директорія для звітів.
@@ -909,7 +909,7 @@ def run_pipeline_with_adapters(
         config_dir: Директорія конфігурації.
         horizon_days: Горизонт аналізу в днях.
 
-    Returns:
+    Повертає:
         Словник з результатами аналізу.
     """
     events = event_source.read_batch()
@@ -1052,12 +1052,12 @@ def create_file_adapters(
 ) -> tuple[EventSource, ActionSink | None]:
     """Створює файлові адаптери для офлайн/CLI запуску конвеєра.
 
-    Args:
+    Аргументи:
         events_path: Шлях до файлу подій (CSV або JSONL).
         actions_path: Опційний шлях до JSONL-файлу дій.
         actions_csv_path: Опційний шлях до CSV-зведення дій.
 
-    Returns:
+    Повертає:
         Кортеж `(EventSource, ActionSink | None)`.
     """
     from src.adapters.file_adapter import FileActionSink, FileEventSource

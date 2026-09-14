@@ -1,4 +1,4 @@
-"""Конвеєр нормалізації: raw логи -> парсинг -> фільтрація -> запис."""
+"""Конвеєр нормалізації: сирі логи -> парсинг -> фільтрація -> запис."""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ def _resolve_tz(tz_name: str) -> timezone | Any:
     """Повертає tzinfo об'єкт для вказаного імені часового поясу."""
     if tz_name.upper() == "UTC":
         return UTC
-    # Python 3.9+ zoneinfo
     from zoneinfo import ZoneInfo
 
     return ZoneInfo(tz_name)
@@ -40,13 +39,10 @@ class NormalizerPipeline:
         self.defaults: dict[str, str] = cfg.get("defaults", {})
         self.tz = _resolve_tz(tz_name)
 
-        # Dedup settings
         norm_cfg = cfg.get("normalizer", {})
         dedup_cfg = norm_cfg.get("dedup", {})
         self.dedup_enabled: bool = dedup_cfg.get("enabled", False)
         self.dedup_window: int = dedup_cfg.get("window_sec", 2)
-
-    # ── Public API ───────────────────────────────────────────────────────
 
     def run(
         self,
@@ -55,10 +51,10 @@ class NormalizerPipeline:
         quarantine_path: str,
         stats_path: str,
     ) -> None:
-        """Execute the full normalisation pipeline."""
+        """Виконує повний конвеєр нормалізації."""
         files = sorted(glob.glob(input_glob))
         if not files:
-            log.warning("No files match pattern: %s", input_glob)
+            log.warning("Файли не відповідають шаблону: %s", input_glob)
             return
 
         all_events: list[Event] = []
@@ -73,10 +69,8 @@ class NormalizerPipeline:
         for fpath in files:
             self._process_file(fpath, all_events, quarantine, stats)
 
-        # Sort by timestamp
         all_events.sort(key=lambda e: e.timestamp)
 
-        # Dedup
         if self.dedup_enabled and all_events:
             before = len(all_events)
             all_events = deduplicate(all_events, window_sec=self.dedup_window)
@@ -84,13 +78,12 @@ class NormalizerPipeline:
             stats["dedup_removed"] = removed
             stats["total_parsed"] -= removed
 
-        # Write outputs
         self._write_events(all_events, out_path)
         self._write_quarantine(quarantine, quarantine_path)
         self._write_stats(stats, stats_path)
 
         log.info(
-            "Done: %d events written, %d quarantined, %d total lines across %d files",
+            "Готово: записано %d подій, у карантині %d, усього рядків %d у %d файлах",
             len(all_events),
             stats["total_quarantined"],
             stats["total_lines"],
@@ -104,30 +97,14 @@ class NormalizerPipeline:
         quarantine_path: str,
         stats_path: str,
     ) -> int:
-        """Execute the full normalisation pipeline using EventSink interface.
+        """Виконує повний конвеєр нормалізації через EventSink.
 
-        This is the interface-based alternative to run().
-        Use this for plug-and-play integration with different backends.
-
-        Args:
-            input_glob: Pattern for input log files.
-            event_sink: EventSink implementation (file, Kafka, etc.)
-            quarantine_path: Path for quarantined lines.
-            stats_path: Path for statistics output.
-
-        Returns:
-            Number of events emitted.
-
-        Example:
-            from src.adapters import FileEventSink
-
-            sink = FileEventSink("data/live/normalized.jsonl")
-            pipeline.run_with_sink("data/raw/*.log", sink, "out/quarantine.csv", "out/stats.json")
-            sink.close()
+        Це інтерфейсна альтернатива run(), потрібна для підключення файлового,
+        Kafka або іншого backend-приймача.
         """
         files = sorted(glob.glob(input_glob))
         if not files:
-            log.warning("No files match pattern: %s", input_glob)
+            log.warning("Файли не відповідають шаблону: %s", input_glob)
             return 0
 
         all_events: list[Event] = []
@@ -142,10 +119,8 @@ class NormalizerPipeline:
         for fpath in files:
             self._process_file(fpath, all_events, quarantine, stats)
 
-        # Sort by timestamp
         all_events.sort(key=lambda e: e.timestamp)
 
-        # Dedup
         if self.dedup_enabled and all_events:
             before = len(all_events)
             all_events = deduplicate(all_events, window_sec=self.dedup_window)
@@ -153,16 +128,14 @@ class NormalizerPipeline:
             stats["dedup_removed"] = removed
             stats["total_parsed"] -= removed
 
-        # Emit via EventSink
         event_sink.emit_batch(all_events)
         event_sink.flush()
 
-        # Write other outputs
         self._write_quarantine(quarantine, quarantine_path)
         self._write_stats(stats, stats_path)
 
         log.info(
-            "Done: %d events emitted via EventSink, %d quarantined, %d total lines across %d files",
+            "Готово: через EventSink передано %d подій, у карантині %d, усього рядків %d у %d файлах",
             len(all_events),
             stats["total_quarantined"],
             stats["total_lines"],
@@ -171,8 +144,6 @@ class NormalizerPipeline:
 
         return len(all_events)
 
-    # ── File processing ──────────────────────────────────────────────────
-
     def _process_file(
         self,
         fpath: str,
@@ -180,16 +151,16 @@ class NormalizerPipeline:
         quarantine: list[dict[str, Any]],
         stats: dict[str, Any],
     ) -> None:
-        """Parse one input file, appending results to events/quarantine."""
+        """Парсить один файл і додає результат до подій або карантину."""
         fname = Path(fpath).name
         profile = select_profile(self.profiles, fname)
 
         if profile is None:
-            log.warning("No profile matches '%s' — all lines quarantined", fname)
+            log.warning("Немає профілю для '%s' — усі рядки відправлено в карантин", fname)
             self._quarantine_whole_file(fpath, quarantine, stats)
             return
 
-        log.info("Processing %s with profile '%s'", fpath, profile.name)
+        log.info("Обробка %s з профілем '%s'", fpath, profile.name)
         file_stats = {"lines": 0, "parsed": 0, "quarantined": 0}
 
         with open(fpath, encoding="utf-8", errors="replace") as fh:
@@ -223,7 +194,7 @@ class NormalizerPipeline:
         quarantine: list[dict[str, Any]],
         stats: dict[str, Any],
     ) -> None:
-        """Quarantine every line of a file that has no matching profile."""
+        """Кладе в карантин усі рядки файла без відповідного профілю."""
         file_stats = {"lines": 0, "parsed": 0, "quarantined": 0}
         with open(fpath, encoding="utf-8", errors="replace") as fh:
             for line_no, raw_line in enumerate(fh, 1):
@@ -241,8 +212,6 @@ class NormalizerPipeline:
         stats["total_lines"] += file_stats["lines"]
         stats["total_quarantined"] += file_stats["quarantined"]
 
-    # ── Output writers ───────────────────────────────────────────────────
-
     @staticmethod
     def _write_events(events: list[Event], path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -250,7 +219,7 @@ class NormalizerPipeline:
             fh.write(Event.csv_header() + "\n")
             for ev in events:
                 fh.write(ev.to_csv_row() + "\n")
-        log.info("Wrote %d events → %s", len(events), path)
+        log.info("Записано %d подій → %s", len(events), path)
 
     @staticmethod
     def _write_quarantine(quarantine: list[dict[str, Any]], path: str) -> None:
@@ -263,16 +232,14 @@ class NormalizerPipeline:
             )
             writer.writeheader()
             writer.writerows(quarantine)
-        log.info("Wrote %d quarantined lines → %s", len(quarantine), path)
+        log.info("Записано %d рядків карантину → %s", len(quarantine), path)
 
     @staticmethod
     def _write_stats(stats: dict[str, Any], path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(stats, fh, indent=2, ensure_ascii=False)
-        log.info("Wrote stats -> %s", path)
-
-    # ── Follow (live tail) mode ──────────────────────────────────────────
+        log.info("Записано статистику -> %s", path)
 
     def follow(
         self,
@@ -280,7 +247,7 @@ class NormalizerPipeline:
         out_path: str,
         poll_interval_sec: float = 1.0,
     ) -> None:
-        """Backward-compatible wrapper around adapter-based follow mode."""
+        """Сумісна обгортка над adapter-based follow-режимом."""
         from src.adapters import FileEventSink
 
         sink: EventSink = FileEventSink(out_path)
@@ -299,17 +266,17 @@ class NormalizerPipeline:
         event_sink: EventSink,
         poll_interval_sec: float = 1.0,
     ) -> None:
-        """Continuously tail logs and emit normalized events via EventSink."""
+        """Постійно читає логи tail-режимом і передає нормалізовані події через EventSink."""
         file_offsets: dict[str, int] = {}
         total_parsed = 0
         total_quarantined = 0
         iteration = 0
 
-        print("Normalizer follow mode (adapter-based)")
-        print(f"  inputs: {input_glob}")
-        print(f"  poll interval: {poll_interval_sec:.1f}s")
-        print("  output: EventSink")
-        print("  Press Ctrl+C to stop.")
+        print("Follow-режим нормалізатора (adapter-based)")
+        print(f"  вхідні файли: {input_glob}")
+        print(f"  інтервал опитування: {poll_interval_sec:.1f}s")
+        print("  вихід: EventSink")
+        print("  Натисніть Ctrl+C для зупинки.")
 
         try:
             while True:
@@ -344,7 +311,7 @@ class NormalizerPipeline:
                     event_sink.emit_batch(new_events)
                     event_sink.flush()
                     log.info(
-                        "[tick %d] +%d events normalized, total=%d parsed, %d quarantined",
+                        "[tick %d] +%d подій нормалізовано, усього=%d розпарсено, %d у карантині",
                         iteration,
                         len(new_events),
                         total_parsed,
@@ -354,6 +321,6 @@ class NormalizerPipeline:
                 time.sleep(poll_interval_sec)
         except KeyboardInterrupt:
             print(
-                f"\nNormalizer follow stopped. total_parsed={total_parsed}, "
+                f"\nFollow-режим нормалізатора зупинено. total_parsed={total_parsed}, "
                 f"quarantined={total_quarantined}"
             )

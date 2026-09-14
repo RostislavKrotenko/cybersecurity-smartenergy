@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "smartenergy-cyber"
 version = "0.1.0"
-description = "SmartEnergy Cyber-Resilience Analyzer — master's thesis prototype"
+description = "SmartEnergy Cyber-Resilience Analyzer — прототип магістерської роботи"
 requires-python = ">=3.11"
 dependencies = [
     "pyyaml>=6.0",
@@ -40,27 +40,28 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = [
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
+    "E",    # помилки pycodestyle
+    "W",    # попередження pycodestyle
     "F",    # pyflakes
     "I",    # isort
     "N",    # pep8-naming
     "UP",   # pyupgrade
     "B",    # flake8-bugbear
     "SIM",  # flake8-simplify
-    "RUF",  # ruff-specific rules
+    "RUF",  # правила Ruff
 ]
 ignore = [
-    "E501",   # line-length
+    "E501",   # довжина рядка
     "SIM108", # ternary
     "RUF012", # mutable class default
-    "B008",   # default arg in argparse
+    "B008",   # значення за замовчуванням в argparse
     "UP007",  # X | Y union syntax
     "UP017",  # datetime.UTC alias (ламає сумісність)
-    "RUF001", # ambiguous unicode in string (intentional: ×, →, etc.)
-    "RUF002", # ambiguous unicode in docstring
-    "B905",   # zip-without-strict (Python 3.11 compat)
-    "B007",   # unused loop variable
+    "RUF001", # неоднозначний unicode у рядку (навмисно: ×, → тощо)
+    "RUF002", # неоднозначний unicode у docstring
+    "RUF003", # неоднозначний unicode у коментарях
+    "B905",   # zip без strict для сумісності з Python 3.11
+    "B007",   # невикористана змінна циклу
     "UP042",  # replace-str-enum
 ]
 
@@ -81,29 +82,29 @@ addopts = [
     "-ra",
 ]
 markers = [
-    "slow: marks tests that need the full emulator run (deselect with -m 'not slow')",
-    "external: tests that require external services or system binaries",
-    "component_adapters: tests for adapters layer",
-    "component_analyzer: tests for analyzer layer",
-    "component_api: tests for API layer",
-    "component_contracts: tests for contracts and schemas",
-    "component_db: tests for database integration",
-    "component_emulator: tests for emulator layer",
-    "component_normalizer: tests for normalizer layer",
-    "component_pipeline: tests for multi-step pipelines",
-    "component_shared: tests for shared utilities",
-    "type_api: API endpoint and API behavior tests",
-    "type_cli: CLI argument and entrypoint tests",
-    "type_contract: interface and data contract tests",
-    "type_e2e: end-to-end scenarios across closed-loop system components",
-    "type_integration: integration tests across multiple modules",
-    "type_resilience: robustness tests for failures and malformed input",
-    "type_smoke: fast smoke checks for CI",
-    "type_unit: focused unit tests",
-    "priority_p0: highest priority smoke/regression checks",
-    "priority_p1: high priority integration and contract checks",
-    "priority_p2: regular unit and support checks",
-    "priority_p3: low priority and external-environment checks",
+    "slow: тести, яким потрібен повний запуск емулятора (виключити через -m 'not slow')",
+    "external: тести, що потребують зовнішніх сервісів або системних binary",
+    "component_adapters: тести шару адаптерів",
+    "component_analyzer: тести шару аналізатора",
+    "component_api: тести API-шару",
+    "component_contracts: тести контрактів і схем",
+    "component_db: тести інтеграції з базою даних",
+    "component_emulator: тести шару емулятора",
+    "component_normalizer: тести шару нормалізатора",
+    "component_pipeline: тести багатокрокових конвеєрів",
+    "component_shared: тести спільних утиліт",
+    "type_api: тести API-ендпоінтів і поведінки API",
+    "type_cli: тести CLI-аргументів і точок входу",
+    "type_contract: тести інтерфейсів і контрактів даних",
+    "type_e2e: end-to-end сценарії closed-loop системи",
+    "type_integration: інтеграційні тести між кількома модулями",
+    "type_resilience: тести стійкості до відмов і невалідних даних",
+    "type_smoke: швидкі smoke-перевірки для CI",
+    "type_unit: сфокусовані unit-тести",
+    "priority_p0: найвищий пріоритет smoke/regression перевірок",
+    "priority_p1: високий пріоритет інтеграційних і contract перевірок",
+    "priority_p2: звичайні unit і support перевірки",
+    "priority_p3: низький пріоритет і перевірки зовнішнього середовища",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

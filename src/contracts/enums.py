@@ -13,8 +13,10 @@ class Severity(str, Enum):
 
 
 class Component(str, Enum):
+    GATEWAY = "gateway"
     EDGE = "edge"
     API = "api"
+    AUTH = "auth"
     DB = "db"
     UI = "ui"
     COLLECTOR = "collector"

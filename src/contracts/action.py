@@ -1,4 +1,4 @@
-"""Action Contract -- commands from Analyzer to Emulator."""
+"""Контракт Action — команди від аналізатора до емулятора."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def _gen_action_id() -> str:
 
 @dataclass(slots=True)
 class Action:
-    """Command emitted by the Analyzer for the Emulator to apply."""
+    """Команда, яку аналізатор емітить для виконання емулятором."""
 
     ts_utc: str
     action: str
@@ -70,7 +70,6 @@ class Action:
             self.correlation_id,
             self.status,
         ]
-        # Escape commas in fields
         escaped = []
         for v in vals:
             s = str(v)
@@ -105,23 +104,18 @@ class Action:
         return cls.from_dict(json.loads(line))
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  ActionAck -- confirmation written by the Emulator after apply_action
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 @dataclass(slots=True)
 class ActionAck:
-    """Acknowledgement emitted by the Emulator after applying an action."""
+    """Підтвердження, яке емулятор емітить після застосування дії."""
 
     action_id: str
     correlation_id: str
     target_component: str
     action: str
     applied_ts_utc: str
-    result: str  # "success" or "failed"
+    result: str  # success або failed
     error: str = ""
-    state_event: str = ""  # e.g. "rate_limit_enabled"
+    state_event: str = ""  # наприклад, "rate_limit_enabled"
 
     def to_json(self) -> str:
         d = asdict(self)

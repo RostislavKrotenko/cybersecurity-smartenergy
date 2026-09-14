@@ -8,8 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api import data_provider as dp
-from src.api.main import app
+from src.api.main import app, cors_origins
 from src.api.routes import actions as actions_routes
+from src.api.routes import cybersecurity as cybersecurity_routes
 from src.api.routes import incidents as incidents_routes
 from src.api.routes import metrics as metrics_routes
 from src.api.routes import state as state_routes
@@ -128,6 +129,7 @@ def api_client(monkeypatch):
     provider = _StubProvider()
     monkeypatch.setattr(incidents_routes, "get_provider", lambda: provider)
     monkeypatch.setattr(actions_routes, "get_provider", lambda: provider)
+    monkeypatch.setattr(cybersecurity_routes, "get_provider", lambda: provider)
     monkeypatch.setattr(state_routes, "get_provider", lambda: provider)
     monkeypatch.setattr(metrics_routes, "get_provider", lambda: provider)
     return TestClient(app)
@@ -145,6 +147,28 @@ def test_health_and_root_endpoints(api_client: TestClient):
     r3 = api_client.get("/healthz")
     assert r3.status_code == 200
     assert r3.json() == {"status": "ok"}
+
+
+def test_cors_origins_are_restricted_and_configurable(monkeypatch):
+    monkeypatch.setenv(
+        "CYBERSECURITY_CORS_ORIGINS",
+        "https://dashboard.example,http://127.0.0.1:5173, ,",
+    )
+
+    assert cors_origins() == ["https://dashboard.example", "http://127.0.0.1:5173"]
+
+
+def test_default_cors_allows_local_frontend(api_client: TestClient):
+    response = api_client.options(
+        "/api/health",
+        headers={
+            "Origin": "http://127.0.0.1:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
 
 
 def test_incidents_positive_filters_and_contract(api_client: TestClient):
@@ -223,6 +247,23 @@ def test_metrics_endpoints(api_client: TestClient):
     overall = api_client.get("/api/metrics/overall")
     assert overall.status_code == 200
     assert overall.json()["avg_mttr_min"] == 2.4
+
+
+def test_cybersecurity_snapshot_contract(api_client: TestClient):
+    r = api_client.get("/api/cybersecurity/snapshot", params={"incident_limit": 2, "action_limit": 2})
+    assert r.status_code == 200
+    body = r.json()
+
+    assert body["backend"]["status"] == "degraded"
+    assert body["backend"]["integrationMode"] == "shadow"
+    assert body["backend"]["publicPort"] == 6049
+    assert body["api"]["component"]["status"] == "degraded"
+    assert body["readOnly"]["summary"]["total"] == 5
+    assert body["network"]["sources"][0]["source"]["id"] == "backend-network"
+    assert body["metrics"]["summary"]["policies"] == 1
+    assert body["incidents"]["summary"]["totalIncidents"] == 2
+    assert body["actions"]["summary"]["total"] == 2
+    assert {item["mode"] for item in body["actions"]["actions"]} == {"recommended", "unsupported"}
 
 
 def test_data_provider_missing_out_files_returns_safe_defaults(monkeypatch, tmp_path: Path):

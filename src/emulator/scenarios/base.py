@@ -10,7 +10,7 @@ from typing import Any
 
 from src.contracts.event import Event
 from src.emulator.devices import Device
-from src.shared.time_utils import format_iso_ts as _ts  # noqa: F401 — re-exported for scenarios
+from src.shared.time_utils import format_iso_ts as _ts  # noqa: F401 — повторний експорт
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ def _uniform(rng: _random_mod.Random, lo: float, hi: float) -> float:
 
 
 def _randint_range(rng: _random_mod.Random, r: list[int]) -> int:
-    """Return random int from a two-element [lo, hi] list."""
+    """Повертає випадкове ціле число з двоелементного діапазону [lo, hi]."""
     return rng.randint(int(r[0]), int(r[1]))
 
 
@@ -54,13 +54,11 @@ class BaseScenario(abc.ABC):
         self.target_sources: list[str] = cfg.get("target_sources", [])
         self.target_components: list[str] = cfg.get("target_components", [])
 
-    # Concrete scenarios implement this
     @abc.abstractmethod
     def generate(self) -> list[Event]:
-        """Return a list of attack events sorted by timestamp."""
+        """Повертає список подій атаки, відсортований за timestamp."""
         ...
 
-    # helpers available to subclasses
     def _resolve_ip(self, source: str) -> str:
         dev = self.devices.get(source)
         return dev.ip if dev else ""

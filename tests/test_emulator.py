@@ -109,11 +109,11 @@ class TestEmulatorEngineRun:
         engine = EmulatorEngine(comp, scen, seed=1)
         events = engine.run()
         assert isinstance(events, list)
-        # No bg generators configured → no events
+        # Фонові генератори не налаштовані → подій немає.
         assert len(events) == 0
 
     def test_run_returns_sorted_events(self):
-        """If there are events, they should be sorted by timestamp."""
+        """Якщо події є, вони мають бути відсортовані за timestamp."""
         comp = {"components": {"edge": {"instances": [{"id": "d1", "ip": "10.0.0.1"}]}}}
         scen = {
             "simulation": {"duration_sec": 10, "start_time": "2026-02-26T10:00:00Z"},
@@ -162,7 +162,7 @@ class TestWriters:
         assert path.exists()
         with open(path) as f:
             lines = f.readlines()
-        assert len(lines) == 2  # header + 1 row
+        assert len(lines) == 2  # header + 1 рядок
         assert "timestamp" in lines[0]
         assert "inv-01" in lines[1]
 
@@ -217,7 +217,7 @@ def _sha256(data: bytes) -> str:
 
 @pytest.mark.slow
 class TestSeedReproducibility:
-    """Two emulator runs with seed=42 MUST produce identical output."""
+    """Два запуски емулятора з seed=42 мають давати однаковий вихід."""
 
     def test_same_seed_same_hash(self):
         comp, scen = _load_real_configs()
@@ -226,10 +226,10 @@ class TestSeedReproducibility:
         assert _sha256(csv1) == _sha256(csv2), "Emulator is NOT deterministic"
 
     def test_event_count_4507(self):
-        """Default seed=42 + 1h duration → 4507 events."""
+        """Типовий seed=42 + тривалість 1 год → 4483 події."""
         comp, scen = _load_real_configs()
         events = EmulatorEngine(comp, scen, seed=42).run()
-        assert len(events) == 4483, f"Expected 4483 events, got {len(events)}"
+        assert len(events) == 4483, f"Очікувалось 4483 події, отримано {len(events)}"
 
     def test_different_seed_differs(self):
         comp, scen = _load_real_configs()
@@ -238,7 +238,7 @@ class TestSeedReproducibility:
         assert h1 != h2
 
     def test_write_csv_roundtrip(self, tmp_path):
-        """write_csv → read back → same number of rows."""
+        """write_csv → зчитування назад → та сама кількість рядків."""
         comp, scen = _load_real_configs()
         events = EmulatorEngine(comp, scen, seed=42).run()
         out = tmp_path / "events.csv"

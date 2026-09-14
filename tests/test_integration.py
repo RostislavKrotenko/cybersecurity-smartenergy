@@ -75,12 +75,12 @@ class TestDetectorToCorrelatorToMetrics:
         }
 
     def test_brute_force_e2e(self, brute_force_events, full_rules_cfg):
-        # Step 1: Detect
+        # Крок 1: детекція.
         alerts = detect(brute_force_events, full_rules_cfg)
         assert len(alerts) >= 1
         assert alerts[0].threat_type == "credential_attack"
 
-        # Step 2: Correlate
+        # Крок 2: кореляція.
         incidents = correlate(alerts, "baseline")
         assert len(incidents) >= 1
         inc = incidents[0]
@@ -88,7 +88,7 @@ class TestDetectorToCorrelatorToMetrics:
         assert inc.mttd_sec > 0
         assert inc.mttr_sec > 0
 
-        # Step 3: Metrics
+        # Крок 3: метрики.
         metrics = compute(incidents, "baseline", horizon_sec=3600)
         assert metrics.incidents_total >= 1
         assert metrics.incidents_by_threat.get("credential_attack", 0) >= 1
@@ -97,7 +97,7 @@ class TestDetectorToCorrelatorToMetrics:
 
     def test_mixed_attacks_e2e(self, full_rules_cfg):
         events = []
-        # Brute force: 6 auth failures
+        # Brute-force: 6 auth_failure подій.
         for i in range(6):
             events.append(
                 make_event(
@@ -109,7 +109,7 @@ class TestDetectorToCorrelatorToMetrics:
                     correlation_id=f"COR-BF-{i}",
                 )
             )
-        # DDoS: 12 rate_exceeded
+        # DDoS: 12 rate_exceeded подій.
         for i in range(12):
             events.append(
                 make_event(
@@ -120,7 +120,7 @@ class TestDetectorToCorrelatorToMetrics:
                     correlation_id=f"COR-DD-{i}",
                 )
             )
-        # Spoof: 4 out-of-range voltage readings
+        # Спуфінг: 4 значення напруги поза діапазоном.
         for i in range(4):
             events.append(
                 make_event(
@@ -136,22 +136,22 @@ class TestDetectorToCorrelatorToMetrics:
 
         events.sort(key=lambda e: e.timestamp)
 
-        # Detect
+        # Детекція.
         alerts = detect(events, full_rules_cfg)
-        assert len(alerts) >= 3  # at least one per threat type
+        assert len(alerts) >= 3  # щонайменше один алерт на тип загрози
 
-        # Correlate
+        # Кореляція.
         incidents = correlate(alerts, "baseline")
-        assert len(incidents) >= 1  # groups may merge some
+        assert len(incidents) >= 1  # частина груп може об'єднатися
 
-        # Metrics
+        # Метрики.
         metrics = compute(incidents, "baseline", horizon_sec=3600)
         assert metrics.incidents_total >= 1
         assert metrics.availability_pct <= 100.0
 
     def test_policy_comparison_e2e(self, brute_force_events, full_rules_cfg):
-        """Standard policy should yield better metrics than minimal."""
-        # Minimal — higher multipliers = slower detection
+        """Політика standard має давати кращі метрики за minimal."""
+        # Minimal: вищі множники = повільніша детекція.
         minimal_mods = {
             "credential_attack": {
                 "mttd_multiplier": 1.5,
@@ -160,7 +160,7 @@ class TestDetectorToCorrelatorToMetrics:
                 "impact_multiplier": 1.2,
             }
         }
-        # Standard — lower multipliers = faster detection
+        # Standard: нижчі множники = швидша детекція.
         standard_mods = {
             "credential_attack": {
                 "mttd_multiplier": 0.5,
@@ -179,7 +179,7 @@ class TestDetectorToCorrelatorToMetrics:
         metrics_min = compute(incidents_min, "minimal", horizon_sec=3600)
         metrics_std = compute(incidents_std, "standard", horizon_sec=3600)
 
-        # Standard should have lower MTTD (faster detection)
+        # Standard має нижчий MTTD, тобто швидшу детекцію.
         if incidents_min and incidents_std:
             assert metrics_std.mean_mttd_min <= metrics_min.mean_mttd_min
 

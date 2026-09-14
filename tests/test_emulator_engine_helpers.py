@@ -1,4 +1,4 @@
-"""Додаткові тести helper-функцій емулятора для підняття покриття."""
+"""Додаткові тести допоміжних функцій емулятора для підняття покриття."""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def test_timestamp_and_line_format_helpers_cover_branches():
     auth_event = _mk_event(event="auth_failure", actor="admin", ip="192.168.1.10", tags="auth")
     auth_line = _format_auth_line(auth_event, dt, DeterministicRng([0.0, 0.0]))
     assert "Failed password" in auth_line
-    assert "192.168.1.10" not in auth_line  # branch with omitted 'from' part
+    assert "192.168.1.10" not in auth_line  # гілка без частини 'from'
 
     api_event = _mk_event(event="http_request", value="/api/v1/state", severity="high")
     api_line = _format_api_line(api_event, dt, DeterministicRng([0.9, 0.9]))

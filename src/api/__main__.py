@@ -11,18 +11,18 @@ import sys
 
 def main() -> None:
     """Парсить аргументи CLI та запускає Uvicorn-сервер."""
-    parser = argparse.ArgumentParser(description="SmartEnergy Cyber-Resilience API")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
-    parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
-    parser.add_argument("--workers", type=int, default=1, help="Number of workers")
+    parser = argparse.ArgumentParser(description="API кіберстійкості SmartEnergy")
+    parser.add_argument("--host", default="0.0.0.0", help="Адреса, на якій слухає сервер")
+    parser.add_argument("--port", type=int, default=8000, help="Порт сервера")
+    parser.add_argument("--reload", action="store_true", help="Увімкнути автоматичне перезавантаження")
+    parser.add_argument("--workers", type=int, default=1, help="Кількість worker-процесів")
 
     args = parser.parse_args()
 
     try:
         import uvicorn
     except ImportError:
-        print("Error: uvicorn not installed. Run: pip install uvicorn", file=sys.stderr)
+        print("Помилка: uvicorn не встановлено. Виконайте: pip install uvicorn", file=sys.stderr)
         sys.exit(1)
 
     uvicorn.run(

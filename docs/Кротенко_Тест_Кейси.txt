@@ -1,0 +1,262 @@
+Студент: Кротенко Ростислав Олександрович
+Керівник: Олег Володимирович Барабаш
+Тема: Методи кіберзахисту для підвищення функціональної стійкості програмного комплексу SmartEnergy.
+
+Приймальні тест-кейси інтеграції з реальною системою SmartEnergy
+
+1. Загальні умови виконання
+
+Усі тест-кейси виконуються тільки у режимі shadow:
+
+  --integration-mode shadow
+
+Shadow-режим означає, що Analyzer приймає реальні або staging-події SmartEnergy, виконує детекцію, кореляцію, розрахунок метрик і формує об'єкти реагування Action, але не передає ці Action у production ActionSink для виконання.
+
+Емулятор SmartEnergy під час цих тестів не використовується.
+
+2. Оточення
+
+- ОС тестового вузла: Linux x86_64 Ubuntu 22.04 LTS або macOS 13+.
+- Python: 3.11+.
+- Репозиторій: cybersecurity-smartenergy, зафіксований commit або release archive.
+- Конфігурація правил і політик:
+  - config/rules.yaml
+  - config/policies.yaml
+- Production/staging EventSource:
+  - джерело реальних журналів, телеметрії або подій безпеки SmartEnergy;
+  - події мають бути нормалізовані у контракт Event;
+  - для поточної реалізації допускається інтеграційний bridge, який експортує нормалізовані Event у data/integration/events.jsonl.
+- Production ActionSink:
+  - під час цих тестів не підключається;
+  - жодні команди не повинні виконуватися у реальній системі.
+- Вихідні артефакти тесту:
+  - out/integration/results.csv
+  - out/integration/incidents.csv
+  - out/integration/report.txt
+  - out/integration/report.html
+  - out/integration/actions_shadow.csv
+
+3. Підготовка перед кожним тестом
+
+1. Перейти у корінь репозиторію cybersecurity-smartenergy.
+2. Встановити залежності, якщо вони ще не встановлені:
+
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   pip install -e ".[analyzer,dev]"
+
+3. Підготувати директорії:
+
+   mkdir -p data/integration out/integration
+
+4. Очистити артефакти попереднього запуску:
+
+   rm -f data/integration/events.jsonl
+   rm -f out/integration/results.csv
+   rm -f out/integration/incidents.csv
+   rm -f out/integration/report.txt
+   rm -f out/integration/report.html
+   rm -f out/integration/actions_shadow.csv
+
+5. Переконатися, що production ActionSink не підключений. У команді запуску не використовується параметр --actions-path.
+
+4. Контракти даних
+
+Event - вхідна подія від SmartEnergy EventSource. Обов'язкові поля:
+
+- timestamp - час події в ISO-8601 UTC, наприклад 2026-05-07T11:00:00Z.
+- source - джерело події, наприклад api-gw-01 або db-primary.
+- component - компонент системи: api, db, collector, network, edge, auth тощо.
+- event - тип події, наприклад cmd_exec, rate_exceeded, db_error, service_status.
+- key - назва параметра.
+- value - значення параметра.
+- severity - low, medium, high або critical.
+- correlation_id - ідентифікатор кореляції тестового сценарію.
+
+Action - об'єкт реагування, який формує Analyzer. Саме Action є тим, що раніше було нечітко названо "критичним рішенням". Основні поля:
+
+- action_id - унікальний ідентифікатор дії.
+- action - тип дії, наприклад isolate_component, enable_rate_limit, backup_db, restore_db.
+- target_component - компонент, до якого належить дія.
+- target_id - конкретний вузол або компонент, якщо визначено.
+- params - параметри дії.
+- correlation_id - ідентифікатор інциденту.
+- status - у shadow-режимі має бути planned.
+
+5. Стандартна команда запуску Analyzer
+
+Для всіх тест-кейсів використовується одна команда:
+
+  python -m src.analyzer.cli \
+    --input data/integration/events.jsonl \
+    --out-dir out/integration \
+    --config-dir config \
+    --policies all \
+    --integration-mode shadow \
+    --shadow-actions-path out/integration/actions_shadow.csv \
+    --log-level INFO
+
+Критерій безпеки для всіх тестів: після запуску Analyzer не має бути фактичних змін у production/staging системі, оскільки ActionSink не підключений.
+
+Тест-кейс 1.1: Приймання реального потоку подій EventSource
+
+Мета:
+Перевірити, що Analyzer приймає нормалізовані події від реального або staging EventSource без використання емулятора.
+
+Передумови:
+- EventSource або інтеграційний bridge налаштований на експорт подій у data/integration/events.jsonl.
+- У тесті використовуються тільки безпечні read-only події або події з тестового сегмента SmartEnergy.
+- Формат Event відповідає розділу "Контракти даних".
+
+Кроки:
+1. Отримати від EventSource не менше двох нормалізованих подій SmartEnergy.
+2. Переконатися, що data/integration/events.jsonl містить записи такого формату:
+
+   {"timestamp":"2026-05-07T10:00:00Z","source":"api-gw-01","component":"api","event":"http_request","actor":"operator","ip":"10.0.0.10","key":"endpoint","value":"/api/v1/status","severity":"low","correlation_id":"COR-INGEST-001"}
+   {"timestamp":"2026-05-07T10:00:05Z","source":"db-primary","component":"db","event":"service_status","actor":"system","ip":"","key":"status","value":"healthy","severity":"low","correlation_id":"COR-INGEST-002"}
+
+3. Запустити стандартну команду Analyzer з розділу 5.
+4. Перевірити наявність файлів out/integration/results.csv та out/integration/incidents.csv.
+
+Очікуваний результат:
+- Analyzer завершується без помилки.
+- out/integration/results.csv створено.
+- out/integration/incidents.csv створено.
+- Якщо події не містять ознак інциденту, actions_shadow.csv може бути відсутній або містити лише заголовок.
+- Production/staging система не змінила стан.
+
+Тест-кейс 1.2: Формування Action для несанкціонованої команди
+
+Мета:
+Перевірити, що Analyzer виявляє несанкціоновану керувальну команду та у shadow-режимі формує Action типу isolate_component без виконання цієї дії у production.
+
+Передумови:
+- У production/staging системі є дозволений тестовий спосіб сформувати журнал cmd_exec від неавторизованого або read-only користувача.
+- Якщо пряме формування такої події у production заборонене, використовується staging/test EventSource або погоджений test hook, який створює лише журнал події, а не реальну керувальну дію.
+
+Кроки:
+1. Забезпечити появу в EventSource події:
+
+   {"timestamp":"2026-05-07T11:00:00Z","source":"scada-hmi-01","component":"collector","event":"cmd_exec","actor":"guest","ip":"10.0.0.10","key":"command","value":"firmware_update","severity":"critical","correlation_id":"COR-UCMD-001"}
+
+2. Запустити стандартну команду Analyzer з розділу 5.
+3. Відкрити out/integration/incidents.csv.
+4. Відкрити out/integration/actions_shadow.csv.
+
+Очікуваний результат:
+- В incidents.csv є інцидент з threat_type=integrity_attack та severity=critical.
+- В actions_shadow.csv є Action:
+  - action=isolate_component
+  - target_component=collector
+  - status=planned
+- У production/staging системі компонент collector не ізольований фактично.
+- Production ActionSink не отримав команду isolate_component.
+
+Тест-кейс 1.3: Формування Action для DDoS/API abuse
+
+Мета:
+Перевірити, що Analyzer виявляє перевищення rate limit на API/Gateway і формує план реагування без фактичного обмеження production-трафіку.
+
+Передумови:
+- Тест виконується на staging або на погодженому тестовому source, щоб не створювати реальне навантаження на production API.
+- EventSource має видати щонайменше 10 подій rate_exceeded для одного source у межах 30 секунд.
+
+Кроки:
+1. Забезпечити появу в EventSource 10 подій такого типу з однаковим source=api-gw-01 і різними timestamp у межах 30 секунд:
+
+   {"timestamp":"2026-05-07T12:00:00Z","source":"api-gw-01","component":"api","event":"rate_exceeded","actor":"unknown","ip":"203.0.113.10","key":"requests_per_sec","value":"1200","unit":"req/s","severity":"critical","correlation_id":"COR-DDOS-001"}
+
+2. Запустити стандартну команду Analyzer з розділу 5.
+3. Перевірити out/integration/incidents.csv.
+4. Перевірити out/integration/actions_shadow.csv.
+
+Очікуваний результат:
+- В incidents.csv є інцидент з threat_type=availability_attack та severity=critical.
+- В actions_shadow.csv є Action:
+  - action=enable_rate_limit
+  - target_component=gateway
+  - status=planned
+- Для critical availability_attack також очікується Action:
+  - action=isolate_component
+  - target_component=api
+  - status=planned
+- У production/staging системі не змінені реальні rate limit правила.
+- Production ActionSink не отримав команду enable_rate_limit або isolate_component.
+
+Тест-кейс 1.4: Формування Action для пошкодження БД
+
+Мета:
+Перевірити, що Analyzer виявляє ознаки пошкодження БД і формує план backup/restore без фактичного запуску backup або restore у production.
+
+Передумови:
+- Тест виконується тільки на staging/test DB source або на погодженому логічному джерелі подій.
+- Заборонено навмисно пошкоджувати production БД.
+- EventSource має видати дві події db_error для одного source у межах 120 секунд.
+
+Кроки:
+1. Забезпечити появу в EventSource таких подій:
+
+   {"timestamp":"2026-05-07T13:00:00Z","source":"db-primary","component":"db","event":"db_error","actor":"system","ip":"","key":"error_type","value":"integrity_violation","severity":"critical","correlation_id":"COR-DB-001"}
+   {"timestamp":"2026-05-07T13:00:30Z","source":"db-primary","component":"db","event":"db_error","actor":"system","ip":"","key":"error_type","value":"checksum_mismatch","severity":"critical","correlation_id":"COR-DB-001"}
+
+2. Запустити стандартну команду Analyzer з розділу 5.
+3. Перевірити out/integration/incidents.csv.
+4. Перевірити out/integration/actions_shadow.csv.
+
+Очікуваний результат:
+- В incidents.csv є інцидент з threat_type=outage та severity=critical.
+- В actions_shadow.csv є Action:
+  - action=backup_db
+  - target_component=db
+  - status=planned
+- В actions_shadow.csv є Action:
+  - action=restore_db
+  - target_component=db
+  - status=planned
+- У production/staging системі backup і restore фактично не запускалися.
+
+Тест-кейс 1.5: Перевірка безпечності shadow-режиму
+
+Мета:
+Підтвердити, що shadow-режим не змінює стан реальної системи навіть тоді, коли Analyzer формує Action для реагування.
+
+Передумови:
+- Виконано тест-кейс 1.2 або 1.3, у якому сформовано хоча б один Action у actions_shadow.csv.
+- Є доступ до read-only перевірки стану відповідного компонента у production/staging системі.
+
+Кроки:
+1. До запуску Analyzer зафіксувати початковий стан компонента:
+   - для тесту 1.2: стан collector;
+   - для тесту 1.3: стан Gateway/API rate limit або isolation.
+2. Запустити стандартну команду Analyzer з розділу 5 на подіях, що формують Action.
+3. Перевірити actions_shadow.csv і переконатися, що Action має status=planned.
+4. Перевірити стан production/staging компонента після запуску Analyzer.
+5. Перевірити журнал production ActionSink або системи керування, якщо такий журнал доступний.
+
+Очікуваний результат:
+- actions_shadow.csv містить запланований Action.
+- Стан production/staging компонента не змінився.
+- У production ActionSink немає запису про виконання Action.
+- Немає фактичного isolate_component, enable_rate_limit, backup_db або restore_db у production.
+
+6. Підсумкова таблиця відповідності
+
+| Тест-кейс | Що перевіряє | Очікуваний production-вплив |
+|---|---|---|
+| 1.1 | Приймання EventSource | Без змін |
+| 1.2 | План isolate_component | Без фактичної ізоляції |
+| 1.3 | План enable_rate_limit/isolate_component | Без фактичного rate limit або isolation |
+| 1.4 | План backup_db/restore_db | Без фактичного backup або restore |
+| 1.5 | Safety shadow-режиму | Без змін |
+
+7. Критерій успішного завершення набору тестів
+
+Набір тестів вважається пройденим, якщо:
+
+- Analyzer успішно обробив події EventSource.
+- Для сценаріїв 1.2-1.4 сформовані очікувані Action у out/integration/actions_shadow.csv.
+- Усі Action мають status=planned.
+- Production/staging ActionSink не виконав жодної дії.
+- Production/staging стан компонентів не змінився внаслідок запуску Analyzer.
+- Створені звітні артефакти results.csv, incidents.csv, report.txt або report.html.

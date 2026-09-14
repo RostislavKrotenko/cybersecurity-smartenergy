@@ -15,7 +15,7 @@ const STATUS_CONFIG = {
 } as const
 
 const COMPONENT_LABELS: Record<string, string> = {
-  gateway: 'Шлюз',
+  gateway: 'Gateway',
   api: 'API',
   auth: 'Авторизація',
   db: 'База даних',

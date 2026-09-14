@@ -1,14 +1,11 @@
-"""Abstract interfaces for plug-and-play integration with real SmartEnergy systems.
+"""Абстрактні інтерфейси для інтеграції з реальними системами SmartEnergy.
 
-These interfaces decouple the analyzer/responder from specific data sources and
-action executors. To integrate with a real SmartEnergy system:
+Інтерфейси відділяють аналізатор і реагування від конкретних джерел даних,
+сховищ та виконавців дій. Для реальної інфраструктури потрібно реалізувати
+відповідні адаптери, наприклад KafkaEventSource, SoarActionSink або
+ScadaStateProvider, і передати їх у конвеєр.
 
-1. Implement EventSource for your data source (Kafka, SIEM, Modbus, etc.)
-2. Implement ActionSink for your response system (SOAR, SCADA API, etc.)
-3. Pass your implementations to the pipeline functions
-
-The file-based implementations (FileEventSource, FileActionSink) serve as
-reference implementations and are used for simulation/testing.
+Файлові адаптери залишаються еталонною реалізацією для симуляції й тестів.
 """
 
 from __future__ import annotations
@@ -22,119 +19,79 @@ from typing import Any
 from src.contracts.action import Action, ActionAck
 from src.contracts.event import Event
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  EventSource - abstraction for event input
-# ═══════════════════════════════════════════════════════════════════════════
-
 
 class EventSource(ABC):
-    """Abstract source of security events.
+    """Джерело подій безпеки.
 
-    Implement this interface to connect the analyzer to different data sources:
-    - FileEventSource: CSV/JSONL files (simulation)
-    - KafkaEventSource: Apache Kafka topics
-    - SiemEventSource: Splunk/Elastic/QRadar APIs
-    - ModbusEventSource: Direct Modbus device polling
-    - MqttEventSource: MQTT broker subscription
+    Реалізації можуть читати події з різних джерел:
+    - FileEventSource: CSV/JSONL файли для симуляції
+    - KafkaEventSource: топіки Apache Kafka
+    - SiemEventSource: API Splunk/Elastic/QRadar
+    - ModbusEventSource: пряме опитування Modbus-пристроїв
+    - MqttEventSource: підписка на MQTT broker
     """
 
     @abstractmethod
     def read_batch(self, limit: int = 10000) -> list[Event]:
-        """Read a batch of events from the source.
-
-        Args:
-            limit: Maximum number of events to read.
-
-        Returns:
-            List of Event objects.
-        """
+        """Зчитує пакет подій з джерела."""
         pass
 
     @abstractmethod
     def read_stream(self, poll_interval_sec: float = 1.0) -> Iterator[list[Event]]:
-        """Stream events in batches (for watch mode).
-
-        Yields batches of new events as they become available.
-
-        Args:
-            poll_interval_sec: How often to check for new events.
-
-        Yields:
-            Batches of Event objects.
-        """
+        """Повертає потік пакетів подій для режиму спостереження."""
         pass
 
     @abstractmethod
     def get_offset(self) -> Any:
-        """Get current read position for resumption."""
+        """Повертає поточну позицію читання для відновлення."""
         pass
 
     @abstractmethod
     def seek(self, offset: Any) -> None:
-        """Seek to a specific position in the source."""
+        """Переходить до вказаної позиції у джерелі."""
         pass
 
     @abstractmethod
     def close(self) -> None:
-        """Release any resources held by the source."""
+        """Звільняє ресурси джерела."""
         pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  EventSink - abstraction for event output
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class EventSink(ABC):
-    """Abstract sink for outputting events.
+    """Приймач нормалізованих або згенерованих подій.
 
-    Implement this interface to send events to different destinations:
-    - FileEventSink: JSONL/CSV files (simulation)
-    - KafkaEventSink: Apache Kafka topics
-    - SiemEventSink: Forward to SIEM (Splunk, Elastic)
-    - MqttEventSink: Publish to MQTT broker
+    Реалізації можуть передавати події в різні напрямки:
+    - FileEventSink: JSONL/CSV файли для симуляції
+    - KafkaEventSink: топіки Apache Kafka
+    - SiemEventSink: передача в SIEM (Splunk, Elastic)
+    - MqttEventSink: публікація в MQTT broker
 
-    Used by:
-    - Emulator: to output generated events
-    - Normalizer: to output normalized events
+    Використовується емулятором і нормалізатором.
     """
 
     @abstractmethod
     def emit(self, event: Event) -> None:
-        """Emit a single event.
-
-        Args:
-            event: The event to emit.
-        """
+        """Передає одну подію."""
         pass
 
     @abstractmethod
     def emit_batch(self, events: list[Event]) -> None:
-        """Emit multiple events.
-
-        Args:
-            events: List of events to emit.
-        """
+        """Передає пакет подій."""
         pass
 
     @abstractmethod
     def flush(self) -> None:
-        """Flush any buffered events to the destination."""
+        """Записує буферизовані події в цільове сховище."""
         pass
 
     @abstractmethod
     def close(self) -> None:
-        """Release any resources held by the sink."""
+        """Звільняє ресурси приймача."""
         pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  ActionSink - abstraction for action output
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class ActionStatus(str, Enum):
-    """Status of an emitted action."""
+    """Статус дії реагування."""
 
     PENDING = "pending"
     EMITTED = "emitted"
@@ -144,7 +101,7 @@ class ActionStatus(str, Enum):
 
 @dataclass
 class ActionResult:
-    """Result of action execution."""
+    """Результат виконання дії реагування."""
 
     success: bool
     action_id: str
@@ -155,301 +112,290 @@ class ActionResult:
 
 
 class ActionSink(ABC):
-    """Abstract sink for response actions.
+    """Приймач дій реагування.
 
-    Implement this interface to send actions to different execution backends:
-    - FileActionSink: JSONL file (for emulator consumption)
-    - SoarActionSink: SOAR platform API (Phantom, XSOAR, etc.)
-    - ScadaActionSink: Direct SCADA/PLC commands
-    - RestActionSink: Generic REST API calls
+    Реалізації можуть передавати дії у файл, SOAR-платформу, SCADA/PLC API
+    або інший REST-сервіс.
     """
 
     @abstractmethod
     def emit(self, action: Action) -> str:
-        """Emit a single action.
-
-        Args:
-            action: The action to emit.
-
-        Returns:
-            Tracking ID for the action.
-        """
+        """Передає одну дію і повертає її ідентифікатор відстеження."""
         pass
 
     @abstractmethod
     def emit_batch(self, actions: list[Action]) -> list[str]:
-        """Emit multiple actions.
-
-        Args:
-            actions: List of actions to emit.
-
-        Returns:
-            List of tracking IDs.
-        """
+        """Передає пакет дій і повертає їхні ідентифікатори."""
         pass
 
     @abstractmethod
     def get_status(self, action_id: str) -> ActionStatus:
-        """Get the status of a previously emitted action.
-
-        Args:
-            action_id: The action ID to check.
-
-        Returns:
-            Current status of the action.
-        """
+        """Повертає статус раніше переданої дії."""
         pass
 
     @abstractmethod
     def close(self) -> None:
-        """Release any resources held by the sink."""
+        """Звільняє ресурси приймача."""
         pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  ActionFeedback - abstraction for action acknowledgements
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class ActionFeedback(ABC):
-    """Abstract source of action acknowledgements.
+    """Джерело підтверджень виконання дій.
 
-    Implement this to receive feedback when actions are executed:
-    - FileActionFeedback: Read from actions_applied.jsonl
-    - WebhookActionFeedback: Receive HTTP callbacks
-    - QueueActionFeedback: Subscribe to response queue
+    Реалізації можуть читати ACK із JSONL, HTTP callback або черги повідомлень.
     """
 
     @abstractmethod
     def read_acks(self, since: Any = None) -> tuple[list[ActionAck], Any]:
-        """Read new action acknowledgements.
-
-        Args:
-            since: Offset/cursor from previous read.
-
-        Returns:
-            Tuple of (list of ActionAck, new offset).
-        """
+        """Зчитує нові підтвердження та повертає новий offset/cursor."""
         pass
 
     @abstractmethod
     def close(self) -> None:
-        """Release any resources."""
+        """Звільняє ресурси джерела."""
         pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  ActionExecutor - abstraction for direct action execution
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class ActionExecutor(ABC):
-    """Abstract executor for direct action execution on infrastructure.
+    """Виконавець дій безпосередньо в інфраструктурі.
 
-    This is used when the analyzer directly controls infrastructure,
-    rather than emitting actions for a separate executor.
-
-    Implement this for:
-    - SimulatedExecutor: Update WorldState (current emulator)
-    - FirewallExecutor: Configure firewall rules via API
-    - ScadaExecutor: Send SCADA commands
-    - CloudExecutor: AWS/GCP/Azure infrastructure actions
+    Цей інтерфейс потрібен, коли аналізатор не лише емітить дії, а й одразу
+    застосовує їх через емулятор, firewall API, SCADA API або хмарні сервіси.
     """
 
     @abstractmethod
     def execute(self, action: Action) -> ActionResult:
-        """Execute an action on the target infrastructure.
-
-        Args:
-            action: The action to execute.
-
-        Returns:
-            ActionResult with success/failure and any state events.
-        """
+        """Виконує дію в цільовій інфраструктурі."""
         pass
 
     @abstractmethod
     def supports_action(self, action_type: str) -> bool:
-        """Check if this executor supports a given action type.
-
-        Args:
-            action_type: The action type string.
-
-        Returns:
-            True if this executor can handle the action.
-        """
+        """Перевіряє, чи підтримується вказаний тип дії."""
         pass
 
     @abstractmethod
     def get_component_status(self, component_id: str) -> dict[str, Any]:
-        """Get current status of a component.
-
-        Args:
-            component_id: The component identifier.
-
-        Returns:
-            Dict with component status information.
-        """
+        """Повертає поточний статус компонента."""
         pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  StateProvider - abstraction for infrastructure state
-# ═══════════════════════════════════════════════════════════════════════════
+class GatewayControl(ABC):
+    """Інтерфейс керування API/IoT gateway.
+
+    Реалізація може звертатися до емулятора, Nginx/WAF API, MQTT command topic
+    або іншого gateway-management бекенду. Аналізатор і далі емітить загальний
+    Action, а ActionRouter перетворює його на конкретний виклик.
+    """
+
+    @abstractmethod
+    def enable_rate_limit(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        rps: int,
+        burst: int,
+        duration_sec: int,
+    ) -> ActionResult:
+        """Вмикає тимчасовий rate limiting на gateway."""
+        pass
+
+    @abstractmethod
+    def disable_rate_limit(self, *, action_id: str, correlation_id: str) -> ActionResult:
+        """Вимикає активний rate limiting на gateway."""
+        pass
+
+
+class ApiControl(ABC):
+    """Інтерфейс керування API та бекенд-сервісами."""
+
+    @abstractmethod
+    def isolate_component(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        component_id: str,
+        target_id: str,
+        duration_sec: int,
+    ) -> ActionResult:
+        """Тимчасово ізолює компонент, доступний через API."""
+        pass
+
+    @abstractmethod
+    def release_isolation(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        component_id: str,
+        target_id: str,
+    ) -> ActionResult:
+        """Знімає ізоляцію з API-компонента."""
+        pass
+
+
+class AuthControl(ABC):
+    """Інтерфейс керування автентифікацією та доступом."""
+
+    @abstractmethod
+    def block_actor(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        actor: str,
+        ip: str,
+        duration_sec: int,
+    ) -> ActionResult:
+        """Тимчасово блокує користувача, актора, IP-адресу або їх комбінацію."""
+        pass
+
+    @abstractmethod
+    def unblock_actor(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        actor: str,
+        ip: str,
+    ) -> ActionResult:
+        """Знімає блокування користувача або IP-адреси."""
+        pass
+
+
+class DatabaseControl(ABC):
+    """Інтерфейс керування БД, зокрема Postgres, InfluxDB або MongoDB."""
+
+    @abstractmethod
+    def backup(self, *, action_id: str, correlation_id: str, name: str) -> ActionResult:
+        """Створює backup/snapshot бази даних."""
+        pass
+
+    @abstractmethod
+    def restore(self, *, action_id: str, correlation_id: str, snapshot: str) -> ActionResult:
+        """Відновлює базу даних із вказаного snapshot."""
+        pass
+
+    @abstractmethod
+    def corrupt(self, *, action_id: str, correlation_id: str) -> ActionResult:
+        """Позначає або симулює пошкодження БД для контрольованого тесту."""
+        pass
+
+    @abstractmethod
+    def verify_integrity(self) -> bool:
+        """Повертає результат перевірки цілісності БД."""
+        pass
+
+
+class NetworkControl(ABC):
+    """Інтерфейс керування мережевою інфраструктурою або симулятором."""
+
+    @abstractmethod
+    def degrade_network(
+        self,
+        *,
+        action_id: str,
+        correlation_id: str,
+        latency_ms: int,
+        drop_rate: float,
+        ttl_sec: int,
+        disconnected: bool,
+    ) -> ActionResult:
+        """Застосовує тимчасову деградацію мережі."""
+        pass
+
+    @abstractmethod
+    def reset_network(self, *, action_id: str, correlation_id: str) -> ActionResult:
+        """Скидає стан деградації або відмови мережі."""
+        pass
 
 
 @dataclass
 class ComponentState:
-    """State of a single component."""
+    """Стан одного компонента інфраструктури."""
 
     component_id: str
     component_type: str
-    status: str  # healthy, degraded, isolated, down
+    status: str  # допустимі стани: healthy, degraded, isolated, down
     details: dict[str, Any] = field(default_factory=dict)
     last_updated: str = ""
 
 
 class StateProvider(ABC):
-    """Abstract provider for infrastructure state.
+    """Провайдер стану інфраструктури.
 
-    Implement this to query real infrastructure state:
-    - SimulatedStateProvider: From WorldState (current)
-    - ScadaStateProvider: Query SCADA/RTU status
-    - MonitoringStateProvider: From Prometheus/Grafana
+    Реалізації можуть читати стан із WorldState, SCADA/RTU, Prometheus/Grafana
+    або іншої системи моніторингу.
     """
 
     @abstractmethod
     def get_component_state(self, component_id: str) -> ComponentState | None:
-        """Get state of a specific component.
-
-        Args:
-            component_id: The component identifier.
-
-        Returns:
-            ComponentState or None if not found.
-        """
+        """Повертає стан конкретного компонента."""
         pass
 
     @abstractmethod
     def get_all_components(self) -> list[ComponentState]:
-        """Get state of all known components.
-
-        Returns:
-            List of ComponentState objects.
-        """
+        """Повертає стан усіх відомих компонентів."""
         pass
 
     @abstractmethod
     def is_actor_blocked(self, actor: str) -> bool:
-        """Check if an actor is currently blocked.
-
-        Args:
-            actor: The actor identifier.
-
-        Returns:
-            True if the actor is blocked.
-        """
+        """Перевіряє, чи актор зараз заблокований."""
         pass
 
     @abstractmethod
     def is_component_isolated(self, component_id: str) -> bool:
-        """Check if a component is currently isolated.
-
-        Args:
-            component_id: The component identifier.
-
-        Returns:
-            True if the component is isolated.
-        """
+        """Перевіряє, чи компонент зараз ізольований."""
         pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Dashboard Data Sources - abstractions for dashboard data
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class IncidentSource(ABC):
-    """Abstract source for incident data.
+    """Джерело даних про інциденти для dashboard/API.
 
-    Implement this to fetch incidents from different backends:
-    - FileIncidentSource: Read from incidents.csv
-    - SiemIncidentSource: Query SIEM API
-    - DatabaseIncidentSource: Query incident database
+    Реалізації можуть читати інциденти з CSV, SIEM API або бази даних.
     """
 
     @abstractmethod
     def get_incidents(self, limit: int = 10000) -> list[dict[str, Any]]:
-        """Get list of incidents.
-
-        Args:
-            limit: Maximum number of incidents to return.
-
-        Returns:
-            List of incident dictionaries.
-        """
+        """Повертає список інцидентів."""
         pass
 
     @abstractmethod
     def get_incident_count(self) -> int:
-        """Get total number of incidents."""
+        """Повертає загальну кількість інцидентів."""
         pass
 
 
 class ActionSource(ABC):
-    """Abstract source for action data.
+    """Джерело даних про дії реагування.
 
-    Implement this to fetch actions from different backends:
-    - FileActionSource: Read from actions.csv
-    - SoarActionSource: Query SOAR platform
-    - DatabaseActionSource: Query action database
+    Реалізації можуть читати дії з CSV, SOAR-платформи або бази даних.
     """
 
     @abstractmethod
     def get_actions(self, limit: int = 10000) -> list[dict[str, Any]]:
-        """Get list of actions.
-
-        Args:
-            limit: Maximum number of actions to return.
-
-        Returns:
-            List of action dictionaries.
-        """
+        """Повертає список дій реагування."""
         pass
 
     @abstractmethod
     def get_action_summary(self) -> dict[str, int]:
-        """Get summary of actions by status.
-
-        Returns:
-            Dict with keys: total, applied, failed, pending/emitted.
-        """
+        """Повертає зведення дій за статусами."""
         pass
 
 
 class MetricsSource(ABC):
-    """Abstract source for resilience metrics.
+    """Джерело метрик кіберстійкості.
 
-    Implement this to fetch metrics from different backends:
-    - FileMetricsSource: Read from results.csv
-    - PrometheusMetricsSource: Query Prometheus
-    - DatabaseMetricsSource: Query metrics database
+    Реалізації можуть читати метрики з CSV, Prometheus або бази даних.
     """
 
     @abstractmethod
     def get_metrics_by_policy(self) -> list[dict[str, Any]]:
-        """Get metrics grouped by security policy.
-
-        Returns:
-            List of dicts with policy, availability, mttd, mttr, etc.
-        """
+        """Повертає метрики, згруповані за політикою безпеки."""
         pass
 
     @abstractmethod
     def get_overall_metrics(self) -> dict[str, float]:
-        """Get overall system metrics.
-
-        Returns:
-            Dict with aggregated metrics.
-        """
+        """Повертає агреговані метрики системи."""
         pass

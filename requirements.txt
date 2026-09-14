@@ -1,15 +1,14 @@
-# SmartEnergy Cyber-Resilience Analyzer — dependencies
+# SmartEnergy Cyber-Resilience Analyzer — залежності
 # Python ≥ 3.11
 
-# Config
+# Конфігурація
 pyyaml>=6.0
 matplotlib>=3.7
 
-# Data processing
+# Обробка даних
 pandas>=2.1
 
 # API (FastAPI)
 fastapi>=0.109
 uvicorn[standard]>=0.27
 pydantic>=2.5
-

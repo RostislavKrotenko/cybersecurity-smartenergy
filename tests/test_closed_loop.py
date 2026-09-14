@@ -1,4 +1,4 @@
-"""Tests for closed-loop: Action contract, world state, decision engine, atomic writes."""
+"""Тести closed-loop: контракт Action, WorldState, двигун рішень, атомарні записи."""
 
 from __future__ import annotations
 
@@ -22,10 +22,6 @@ from src.emulator.world import (
     read_new_actions,
 )
 from src.shared.file_utils import atomic_write as _atomic_write
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Action contract tests
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestActionContract:
@@ -91,11 +87,6 @@ class TestActionContract:
         ]
         for name in expected:
             assert ActionType(name) is not None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  World state / apply_actions tests
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestWorldState:
@@ -204,6 +195,20 @@ class TestWorldState:
         assert "snap_test" in state.db.snapshots
         assert events[0].event == "backup_created"
 
+    def test_backup_db_keeps_only_five_snapshots(self):
+        state = WorldState()
+        for idx in range(7):
+            apply_action(
+                state,
+                self._make_action(
+                    "backup_db",
+                    target="db",
+                    params={"name": f"snap_{idx}"},
+                ),
+            )
+
+        assert state.db.snapshots == ["snap_2", "snap_3", "snap_4", "snap_5", "snap_6"]
+
     def test_restore_db(self):
         state = WorldState()
         action = self._make_action(
@@ -233,7 +238,7 @@ class TestWorldState:
     def test_expire_state_rate_limit(self):
         state = WorldState()
         state.gateway.rate_limit_enabled = True
-        state.gateway.rate_limit_expires = time.monotonic() - 1  # already expired
+        state.gateway.rate_limit_expires = time.monotonic() - 1  # вже завершено
         events = expire_state(state)
         assert not state.gateway.rate_limit_enabled
         assert len(events) >= 1
@@ -241,15 +246,10 @@ class TestWorldState:
     def test_expire_state_db_restore(self):
         state = WorldState()
         state.db.status = "restoring"
-        state.db.restoring_until = time.monotonic() - 1  # already done
+        state.db.restoring_until = time.monotonic() - 1  # вже завершено
         events = expire_state(state)
         assert state.db.status == "healthy"
         assert any(e.event == "restore_completed" for e in events)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Decision engine tests
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestDecisionEngine:
@@ -269,13 +269,15 @@ class TestDecisionEngine:
             mttd_sec=30.0,
             mttr_sec=120.0,
             impact_score=0.7,
-            description=desc or f"Test {threat}",
+            description=desc or f"Тест {threat}",
             response_action="notify",
         )
 
     def test_decide_credential_attack(self):
         inc = self._make_incident(
-            "INC-0001", "credential_attack", desc="Brute-force: 8 auth failures from 10.0.0.1"
+            "INC-0001",
+            "credential_attack",
+            desc="Brute-force: 8 невдалих авторизацій з 10.0.0.1",
         )
         acted = set()
         actions = decide([inc], acted)
@@ -329,11 +331,6 @@ class TestDecisionEngine:
             assert obj["action"] == "enable_rate_limit"
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Action JSONL reader tests
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class TestReadNewActions:
     def test_read_new_actions(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -353,12 +350,12 @@ class TestReadNewActions:
             assert actions[0].action == "block_actor"
             assert offset > 0
 
-            # Second read: no new data
+            # Друге читання: нових даних немає.
             actions2, offset2 = read_new_actions(path, offset)
             assert len(actions2) == 0
             assert offset2 == offset
 
-            # Append another action
+            # Додаємо ще одну дію.
             a2 = Action(
                 ts_utc="2026-03-01T12:01:00Z",
                 action="backup_db",
@@ -372,11 +369,6 @@ class TestReadNewActions:
             actions3, _offset3 = read_new_actions(path, offset)
             assert len(actions3) == 1
             assert actions3[0].action == "backup_db"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Atomic write tests
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestAtomicWrite:
@@ -402,7 +394,7 @@ class TestAtomicWrite:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "test.csv")
             _atomic_write(path, "complete content\n")
-            # No .tmp files should remain
+            # .tmp файли не мають залишатися.
             tmp_files = [f for f in os.listdir(tmpdir) if f.endswith(".tmp")]
             assert len(tmp_files) == 0
 
@@ -430,13 +422,8 @@ class TestAtomicWrite:
             write_actions_csv(actions, path)
             with open(path) as f:
                 lines = f.readlines()
-            assert len(lines) == 3  # header + 2 rows
+            assert len(lines) == 3  # header + 2 рядки
             assert lines[0].strip().startswith("action_id")
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Metrics correctness (integration with actions)
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestMetricsWithActions:
@@ -458,7 +445,7 @@ class TestMetricsWithActions:
                 mttd_sec=15.0,
                 mttr_sec=180.0,
                 impact_score=0.98,
-                description="DDoS flood",
+                description="DDoS-флуд",
                 response_action="rate_limit",
             ),
         ]
@@ -476,16 +463,11 @@ class TestMetricsWithActions:
         assert m.total_downtime_hr == 0.0
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  End-to-end closed-loop test
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class TestEndToEndClosedLoop:
-    """Verify the full feedback cycle: events -> detect -> decide -> apply."""
+    """Перевіряє повний цикл зворотного зв'язку: events -> detect -> decide -> apply."""
 
     def test_full_closed_loop_cycle(self):
-        """Emulate a full cycle: brute-force events -> incident -> action -> world state."""
+        """Емулює повний цикл: brute-force події -> інцидент -> дія -> WorldState."""
         from src.analyzer.correlator import correlate
         from src.analyzer.detector import detect
         from src.contracts.event import Event
@@ -493,7 +475,7 @@ class TestEndToEndClosedLoop:
 
         rules_cfg = load_yaml("config/rules.yaml")
 
-        # 1. Generate brute-force events (8 auth_failure from same IP)
+        # 1. Генерація brute-force подій (8 auth_failure з одного IP).
         events = []
         for i in range(8):
             events.append(
@@ -512,32 +494,32 @@ class TestEndToEndClosedLoop:
                 )
             )
 
-        # 2. Detect -> should produce alerts
+        # 2. Detect має сформувати алерти.
         alerts = detect(events, rules_cfg)
         assert len(alerts) > 0
 
-        # 3. Correlate -> should produce incidents
+        # 3. Correlate має сформувати інциденти.
         incidents = correlate(alerts, "baseline")
         assert len(incidents) > 0
         for i, inc in enumerate(incidents):
             inc.incident_id = f"INC-{i + 1:04d}"
 
-        # 4. Decide -> should produce block_actor action
+        # 4. Decide має сформувати дію block_actor.
         acted = set()
         actions = decide(incidents, acted)
         assert len(actions) >= 1
         assert any(a.action == "block_actor" for a in actions)
 
-        # 5. Apply to world state -> actor should be blocked
+        # 5. Застосування до WorldState має заблокувати актора.
         state = WorldState()
         for action in actions:
             apply_action(state, action)
 
-        # The block_actor action should have blocked something
+        # Дія block_actor має заблокувати actor або IP.
         assert len(state.auth.blocked_actors) > 0 or len(state.auth.blocked_ips) > 0
 
     def test_actions_roundtrip_through_file(self):
-        """Write actions to JSONL, read them back, apply to world."""
+        """Записує дії в JSONL, читає назад і застосовує до WorldState."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "actions.jsonl")
             actions = [
@@ -560,11 +542,11 @@ class TestEndToEndClosedLoop:
             ]
             emit_actions(actions, path)
 
-            # Read back
+            # Зчитування назад.
             read_actions, _offset = read_new_actions(path, 0)
             assert len(read_actions) == 2
 
-            # Apply to world
+            # Застосування до WorldState.
             state = WorldState()
             all_events = []
             for a in read_actions:
@@ -576,7 +558,7 @@ class TestEndToEndClosedLoop:
             assert len(all_events) >= 2
 
     def test_availability_critical_triggers_isolation(self):
-        """Critical availability_attack should trigger both rate_limit AND isolation."""
+        """Critical availability_attack має запускати rate_limit та ізоляцію."""
         inc = Incident(
             incident_id="INC-0010",
             policy="baseline",
@@ -590,7 +572,7 @@ class TestEndToEndClosedLoop:
             mttd_sec=15.0,
             mttr_sec=180.0,
             impact_score=0.98,
-            description="DDoS flood: 15 rate_exceeded on api-gw-01 + service impact",
+            description="DDoS-флуд: 15 rate_exceeded на api-gw-01 + вплив на сервіс",
             response_action="rate_limit",
         )
         acted = set()
@@ -600,7 +582,7 @@ class TestEndToEndClosedLoop:
         assert "isolate_component" in action_names
 
     def test_availability_high_no_isolation(self):
-        """High (non-critical) availability_attack should NOT trigger isolation."""
+        """High availability_attack без critical не має запускати ізоляцію."""
         inc = Incident(
             incident_id="INC-0011",
             policy="baseline",
@@ -614,7 +596,7 @@ class TestEndToEndClosedLoop:
             mttd_sec=15.0,
             mttr_sec=180.0,
             impact_score=0.7,
-            description="DDoS flood",
+            description="DDoS-флуд",
             response_action="rate_limit",
         )
         acted = set()

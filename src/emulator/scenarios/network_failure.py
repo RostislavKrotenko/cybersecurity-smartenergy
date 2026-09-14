@@ -37,7 +37,6 @@ class NetworkFailureScenario(BaseScenario):
                 phase_end_times.append(t.timestamp())
                 continue
 
-            # Handle inter-phase delays
             delay_key = [k for k in phase if k.startswith("delay_after_phase")]
             if delay_key:
                 d = phase[delay_key[0]]
