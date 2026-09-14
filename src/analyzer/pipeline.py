@@ -1045,29 +1045,85 @@ def _mark_actions_planned(actions: list[Action]) -> None:
         action.status = "planned"
 
 
-def create_file_adapters(
+def create_file_live_adapters(
     events_path: str,
+    state_events_path: str | None = None,
     actions_path: str | None = None,
+    applied_path: str | None = None,
     actions_csv_path: str | None = None,
-) -> tuple[EventSource, ActionSink | None]:
-    """Створює файлові адаптери для офлайн/CLI запуску конвеєра.
+) -> tuple[
+    EventSource,
+    EventSource | None,
+    ActionSink | None,
+    ActionFeedback | None,
+]:
+    """Створює файлові адаптери live-режиму з checkpoint-ами."""
+    from src.adapters.file_adapter import (
+        FileActionFeedback,
+        FileActionSink,
+        FileEventSource,
+    )
 
-    Аргументи:
-        events_path: Шлях до файлу подій (CSV або JSONL).
-        actions_path: Опційний шлях до JSONL-файлу дій.
-        actions_csv_path: Опційний шлях до CSV-зведення дій.
+    event_checkpoint_path = (
+        os.getenv(
+            "ANALYZER_EVENT_CHECKPOINT_PATH",
+            "",
+        ).strip()
+        or None
+    )
+    state_checkpoint_path = (
+        os.getenv(
+            "ANALYZER_STATE_CHECKPOINT_PATH",
+            "",
+        ).strip()
+        or None
+    )
+    ack_checkpoint_path = (
+        os.getenv(
+            "ANALYZER_ACK_CHECKPOINT_PATH",
+            "",
+        ).strip()
+        or None
+    )
 
-    Повертає:
-        Кортеж `(EventSource, ActionSink | None)`.
-    """
-    from src.adapters.file_adapter import FileActionSink, FileEventSource
+    event_source = FileEventSource(
+        events_path,
+        checkpoint_path=event_checkpoint_path,
+    )
 
-    event_source = FileEventSource(events_path)
+    state_source = None
+
+    if (
+        state_events_path
+        and state_events_path != events_path
+    ):
+        state_source = FileEventSource(
+            state_events_path,
+            checkpoint_path=state_checkpoint_path,
+        )
+
     action_sink = None
-    if actions_path:
-        action_sink = FileActionSink(actions_path, csv_path=actions_csv_path)
 
-    return event_source, action_sink
+    if actions_path:
+        action_sink = FileActionSink(
+            actions_path,
+            csv_path=actions_csv_path,
+        )
+
+    action_feedback = None
+
+    if applied_path:
+        action_feedback = FileActionFeedback(
+            applied_path,
+            checkpoint_path=ack_checkpoint_path,
+        )
+
+    return (
+        event_source,
+        state_source,
+        action_sink,
+        action_feedback,
+    )
 
 
 def create_file_live_adapters(

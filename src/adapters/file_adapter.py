@@ -36,7 +36,11 @@ from src.contracts.interfaces import (
     MetricsSource,
     StateProvider,
 )
-from src.shared.file_utils import atomic_write
+from src.shared.file_utils import (
+    atomic_write,
+    load_offset_checkpoint,
+    save_offset_checkpoint,
+)
 
 log = logging.getLogger(__name__)
 
@@ -44,135 +48,275 @@ log = logging.getLogger(__name__)
 class FileEventSource(EventSource):
     """Джерело подій із локального CSV або JSONL файла.
 
-    Для production-інтеграції варто реалізувати KafkaEventSource,
-    SiemEventSource або інший адаптер реального джерела.
+    У потоковому режимі позиція читання може зберігатися
+    у checkpoint, щоб після перезапуску не обробляти старі події.
     """
 
-    def __init__(self, path: str):
-        """Ініціалізує джерело шляхом до CSV або JSONL файла."""
+    def __init__(
+        self,
+        path: str,
+        checkpoint_path: str | Path | None = None,
+    ) -> None:
+        """Ініціалізує файлове джерело та відновлює offset."""
         self.path = Path(path)
-        self._offset: int = 0
-        self._is_jsonl = self.path.suffix in (".jsonl", ".ndjson")
+        self._checkpoint_path = (
+            Path(checkpoint_path)
+            if checkpoint_path is not None
+            else None
+        )
+        self._offset, self._inode = load_offset_checkpoint(
+            self._checkpoint_path,
+            self.path,
+        )
+        self._is_jsonl = self.path.suffix in {
+            ".jsonl",
+            ".ndjson",
+        }
         self._last_mtime_ns: int | None = None
 
     def read_batch(self, limit: int = 10000) -> list[Event]:
         """Зчитує події з файла у пакетному режимі."""
         if not self.path.exists():
-            log.warning("Event source file not found: %s", self.path)
+            log.warning(
+                "Event source file not found: %s",
+                self.path,
+            )
             return []
 
         if self._is_jsonl:
             return self._read_jsonl(limit)
+
         return self._read_csv(limit)
 
     def _read_csv(self, limit: int) -> list[Event]:
         """Зчитує події з CSV файла."""
         events: list[Event] = []
-        with open(self.path, encoding="utf-8") as fh:
-            reader = csv.DictReader(fh)
-            for i, row in enumerate(reader):
-                if i >= limit:
+
+        with self.path.open(
+            "r",
+            encoding="utf-8",
+        ) as stream:
+            reader = csv.DictReader(stream)
+
+            for index, row in enumerate(reader):
+                if index >= limit:
                     break
+
                 events.append(Event.from_dict(row))
-        log.info("FileEventSource: loaded %d events from CSV: %s", len(events), self.path)
+
+        log.info(
+            "FileEventSource: loaded %d events from CSV: %s",
+            len(events),
+            self.path,
+        )
         return events
 
     def _read_jsonl(self, limit: int) -> list[Event]:
-        """Зчитує події з JSONL файла."""
+        """Зчитує події з JSONL файла у пакетному режимі."""
         events: list[Event] = []
-        with open(self.path, encoding="utf-8") as fh:
-            for i, line in enumerate(fh):
-                if i >= limit:
+
+        with self.path.open(
+            "r",
+            encoding="utf-8",
+        ) as stream:
+            for index, line in enumerate(stream):
+                if index >= limit:
                     break
-                line = line.strip()
-                if not line:
+
+                stripped = line.strip()
+
+                if not stripped:
                     continue
+
                 try:
-                    obj = json.loads(line)
-                    events.append(Event.from_dict(obj))
-                except (json.JSONDecodeError, KeyError) as exc:
-                    log.warning("Skipping JSONL line %d: %s", i + 1, exc)
-        log.info("FileEventSource: loaded %d events from JSONL: %s", len(events), self.path)
+                    payload = json.loads(stripped)
+
+                    if not isinstance(payload, dict):
+                        raise TypeError(
+                            "JSONL-запис повинен бути об'єктом"
+                        )
+
+                    events.append(Event.from_dict(payload))
+
+                except (
+                    json.JSONDecodeError,
+                    KeyError,
+                    TypeError,
+                    AttributeError,
+                ) as error:
+                    log.warning(
+                        "Skipping JSONL line %d: %s",
+                        index + 1,
+                        error,
+                    )
+
+        log.info(
+            "FileEventSource: loaded %d events from JSONL: %s",
+            len(events),
+            self.path,
+        )
         return events
 
-    def read_stream(self, poll_interval_sec: float = 1.0) -> Iterator[list[Event]]:
+    def read_stream(
+        self,
+        poll_interval_sec: float = 1.0,
+    ) -> Iterator[list[Event]]:
         """Повертає нові події через tail-читання файла."""
         while True:
-            events = self._read_new_lines()
-            yield events
+            yield self._read_new_lines()
             time.sleep(poll_interval_sec)
 
     def _read_new_lines(self) -> list[Event]:
-        """Зчитує рядки, додані після попереднього читання."""
+        """Зчитує рядки після збереженого offset."""
         if not self.path.exists():
             return []
 
         try:
-            st = self.path.stat()
-            current_size = st.st_size
-            current_mtime_ns = st.st_mtime_ns
+            source_stat = self.path.stat()
         except OSError:
             return []
 
-        # Файл обрізано або ротовано, тому читаємо з початку.
+        current_size = source_stat.st_size
+        current_inode = source_stat.st_ino
+        current_mtime_ns = source_stat.st_mtime_ns
+
+        if (
+            self._inode is not None
+            and self._inode != current_inode
+        ):
+            log.info(
+                "FileEventSource: виявлено заміну файла %s",
+                self.path,
+            )
+            self._offset = 0
+            self._last_mtime_ns = None
+
         if current_size < self._offset:
             log.info(
-                "FileEventSource: detected truncate/rotation for %s (offset=%d -> 0)",
+                "FileEventSource: файл %s скорочено "
+                "(offset=%d -> 0)",
                 self.path,
                 self._offset,
             )
             self._offset = 0
+            self._last_mtime_ns = None
 
-        # Файл могли перезаписати без зміни розміру.
+        self._inode = current_inode
+
         if current_size == self._offset:
-            if self._last_mtime_ns is not None and current_mtime_ns != self._last_mtime_ns:
+            if (
+                self._last_mtime_ns is not None
+                and current_mtime_ns != self._last_mtime_ns
+            ):
                 log.info(
-                    "FileEventSource: detected same-size rewrite for %s (offset=%d -> 0)",
+                    "FileEventSource: файл %s було "
+                    "перезаписано без зміни розміру",
                     self.path,
-                    self._offset,
                 )
                 self._offset = 0
             else:
                 self._last_mtime_ns = current_mtime_ns
+                self._save_checkpoint()
                 return []
 
         if current_size == 0:
             self._last_mtime_ns = current_mtime_ns
+            self._save_checkpoint()
             return []
 
         events: list[Event] = []
-        with open(self.path, encoding="utf-8") as fh:
-            fh.seek(self._offset)
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                    events.append(Event.from_dict(obj))
-                except (json.JSONDecodeError, KeyError) as exc:
-                    log.debug("Skipping line: %s", exc)
-            self._offset = fh.tell()
+
+        try:
+            with self.path.open(
+                "r",
+                encoding="utf-8",
+            ) as stream:
+                stream.seek(self._offset)
+
+                while len(events) < 10000:
+                    line_start = stream.tell()
+                    line = stream.readline()
+
+                    if not line:
+                        break
+
+                    if not line.endswith("\n"):
+                        stream.seek(line_start)
+                        break
+
+                    stripped = line.strip()
+
+                    if not stripped:
+                        continue
+
+                    try:
+                        payload = json.loads(stripped)
+
+                        if not isinstance(payload, dict):
+                            raise TypeError(
+                                "JSONL-запис повинен бути об'єктом"
+                            )
+
+                        events.append(
+                            Event.from_dict(payload)
+                        )
+
+                    except (
+                        json.JSONDecodeError,
+                        KeyError,
+                        TypeError,
+                        AttributeError,
+                    ) as error:
+                        log.warning(
+                            "Пропущено некоректну подію: %s",
+                            error,
+                        )
+
+                self._offset = stream.tell()
+
+        except OSError:
+            log.exception(
+                "Не вдалося прочитати події з %s",
+                self.path,
+            )
+            return []
 
         with contextlib.suppress(OSError):
-            self._last_mtime_ns = self.path.stat().st_mtime_ns
+            source_stat = self.path.stat()
+            self._inode = source_stat.st_ino
+            self._last_mtime_ns = source_stat.st_mtime_ns
 
+        self._save_checkpoint()
         return events
 
     def get_offset(self) -> int:
-        """Повертає поточний offset файла."""
+        """Повертає поточний byte-offset файла."""
         return self._offset
 
     def seek(self, offset: Any) -> None:
-        """Переходить до вказаного offset файла."""
-        if isinstance(offset, int):
-            self._offset = offset
+        """Установлює новий byte-offset файла."""
+        if not isinstance(offset, int) or offset < 0:
+            raise ValueError(
+                "Offset подій має бути невід'ємним цілим числом"
+            )
+
+        self._offset = offset
+        self._save_checkpoint()
 
     def close(self) -> None:
-        """Файлове джерело не тримає додаткових ресурсів."""
-        pass
+        """Зберігає поточну позицію перед закриттям."""
+        self._save_checkpoint()
 
-
+    def _save_checkpoint(self) -> None:
+        """Зберігає позицію потокового читання."""
+        save_offset_checkpoint(
+            self._checkpoint_path,
+            self.path,
+            self._offset,
+            self._inode,
+        )
+        
+        
 class FileEventSink(EventSink):
     """Приймач подій, який записує їх у локальний JSONL файл.
 

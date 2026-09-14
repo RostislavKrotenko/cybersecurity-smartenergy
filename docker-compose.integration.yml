@@ -93,6 +93,11 @@ services:
   cybersecurity-analyzer:
     <<: *cybersecurity-service
     container_name: cybersecurity-analyzer
+    environment:
+      ANALYZER_EVENT_CHECKPOINT_PATH: >-
+        /work/data/integration/checkpoints/analyzer-events.json
+      ANALYZER_ACK_CHECKPOINT_PATH: >-
+        /work/data/integration/checkpoints/analyzer-acks.json
     command:
       - python
       - -m
