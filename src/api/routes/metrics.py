@@ -25,7 +25,10 @@ def get_metrics() -> MetricsResponse:
                 total_downtime_hr=m.get("total_downtime_hr", 0.0),
                 mean_mttd_min=m.get("mean_mttd_min", 0.0),
                 mean_mttr_min=m.get("mean_mttr_min", 0.0),
-                incident_count=m.get("incident_count", 0),
+                incident_count=m.get(
+                        "incident_count",
+                        m.get("incidents_total", 0),
+                )
             )
         )
 

@@ -603,7 +603,7 @@ class FileMetricsSource(MetricsSource):
             return []
 
     def get_overall_metrics(self) -> dict[str, float]:
-        """Повертає агреговані метрики системи."""
+        """Повертає агреговані метрики системи у форматі API."""
         if not self.path.exists():
             return {}
 
@@ -612,14 +612,75 @@ class FileMetricsSource(MetricsSource):
 
             df = pd.read_csv(self.path)
 
-            result = {}
-            for col in ["availability", "mttd_sec", "mttr_sec", "downtime_sec"]:
-                if col in df.columns:
-                    result[col] = df[col].mean()
+            if df.empty:
+                return {}
+
+            def numeric_mean(column: str) -> float:
+                """Обчислює середнє лише для коректних числових значень."""
+                values = pd.to_numeric(
+                    df[column],
+                    errors="coerce",
+                ).dropna()
+
+                if values.empty:
+                    return 0.0
+
+                return float(values.mean())
+
+            result: dict[str, float] = {}
+
+            # Підтримка старого формату CSV.
+            for column in [
+                "availability",
+                "mttd_sec",
+                "mttr_sec",
+                "downtime_sec",
+            ]:
+                if column in df.columns:
+                    result[column] = numeric_mean(column)
+
+            if "availability_pct" in df.columns:
+                result["avg_availability_pct"] = numeric_mean(
+                    "availability_pct"
+                )
+            elif "availability" in result:
+                result["avg_availability_pct"] = result["availability"]
+
+            if "mean_mttd_min" in df.columns:
+                result["avg_mttd_min"] = numeric_mean(
+                    "mean_mttd_min"
+                )
+            elif "mttd_sec" in result:
+                result["avg_mttd_min"] = result["mttd_sec"] / 60.0
+
+            if "mean_mttr_min" in df.columns:
+                result["avg_mttr_min"] = numeric_mean(
+                    "mean_mttr_min"
+                )
+            elif "mttr_sec" in result:
+                result["avg_mttr_min"] = result["mttr_sec"] / 60.0
+
+            if "incidents_total" in df.columns:
+                incidents = pd.to_numeric(
+                    df["incidents_total"],
+                    errors="coerce",
+                ).fillna(0)
+                result["total_incidents"] = float(incidents.sum())
+            elif "incident_count" in df.columns:
+                incidents = pd.to_numeric(
+                    df["incident_count"],
+                    errors="coerce",
+                ).fillna(0)
+                result["total_incidents"] = float(incidents.sum())
 
             return result
-        except Exception as e:
-            log.warning("Failed to read overall metrics from %s: %s", self.path, e)
+
+        except Exception as error:
+            log.warning(
+                "Failed to read overall metrics from %s: %s",
+                self.path,
+                error,
+            )
             return {}
 
 class FileStateSource(StateProvider):

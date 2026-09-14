@@ -69,7 +69,22 @@ class APIDataProvider:
 
     def get_overall_metrics(self) -> dict[str, float]:
         """Повертає загальні агреговані метрики системи."""
-        return self.metrics_source.get_overall_metrics()
+        overall = dict(self.metrics_source.get_overall_metrics())
+
+        if not overall:
+            return {}
+
+        overall.setdefault(
+            "total_incidents",
+            float(self.incident_source.get_incident_count()),
+        )
+
+        action_summary = self.action_source.get_action_summary()
+        overall["total_actions"] = float(
+            action_summary.get("total", 0)
+        )
+
+        return overall
 
     def get_state(self) -> list[ComponentState]:
         """Повертає стан усіх компонентів інфраструктури."""

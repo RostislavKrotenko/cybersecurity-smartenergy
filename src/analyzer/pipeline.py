@@ -645,7 +645,7 @@ def _build_ack_value(ack: ActionAck, act: Action | None) -> str:
     if ack.state_event == "isolation_enabled":
         dur = params.get("duration_sec", 120)
         return f"duration={dur}"
-    if ack.state_event == "actor_blocked":
+    if ack.state_event in ("actor_blocked", "actor_unblocked"):
         actor = params.get("actor", "")
         ip = params.get("ip", "")
         dur = params.get("duration_sec", 600)

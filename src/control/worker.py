@@ -18,6 +18,14 @@ from src.control.models import ActionStatus, ActionType, SecurityAction
 
 log = logging.getLogger(__name__)
 
+_GATEWAY_ACTION_TO_STATE_EVENT: dict[str, str] = {
+    "block_actor": "actor_blocked",
+    "unblock_actor": "actor_unblocked",
+    "enable_rate_limit": "rate_limit_enabled",
+    "disable_rate_limit": "rate_limit_disabled",
+    "isolate_component": "isolation_enabled",
+    "release_isolation": "isolation_released",
+}
 
 def _utc_now() -> str:
     """Повертає поточний час у форматі ISO-8601 UTC."""
@@ -212,7 +220,18 @@ class GatewayActionWorker:
 
         gateway_ack = await self._dispatcher.dispatch(security_action)
         success = gateway_ack.status == ActionStatus.APPLIED
-        state_event = str(gateway_ack.gateway_response.get("action", "")) if gateway_ack.gateway_response else ""
+
+        gateway_action = (
+            str(gateway_ack.gateway_response.get("action", "")).strip()
+            if gateway_ack.gateway_response
+            else ""
+        )
+
+        state_event = (
+            _GATEWAY_ACTION_TO_STATE_EVENT.get(gateway_action, "")
+            if success
+            else ""
+        )
 
         return ContractActionAck(
             action_id=action.action_id,
