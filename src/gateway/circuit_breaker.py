@@ -1,184 +1,209 @@
-"""Потокобезпечне обмеження частоти запитів за алгоритмом Token Bucket."""
+"""Автомат станів Circuit Breaker для контрольованої деградації."""
 
 from __future__ import annotations
 
 import threading
 import time
 from dataclasses import dataclass
+from enum import Enum
 from typing import Callable
 
 
+class CircuitMode(str, Enum):
+    """Можливі автоматичні стани Circuit Breaker."""
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
 @dataclass(frozen=True, slots=True)
-class RateLimitResult:
-    """Результат перевірки ліміту для одного клієнта."""
+class CircuitDecision:
+    """Рішення Circuit Breaker перед зверненням до upstream."""
 
     allowed: bool
-    remaining_tokens: float
+    mode: CircuitMode
+    reason: str
     retry_after_sec: float
 
 
-@dataclass(slots=True)
-class _TokenBucket:
-    tokens: float
-    updated_at: float
-    last_seen_at: float
+class CircuitBreaker:
+    """Зупиняє запити до нестабільного або ізольованого upstream.
 
-
-class TokenBucketRateLimiter:
-    """Обмежує частоту запитів окремо для кожного ідентифікатора.
-
-    Реалізація розрахована на один worker-процес gateway. Для кількох
-    worker-процесів стан необхідно винести в Redis або інше спільне сховище.
+    Після перевищення порога помилок автомат переходить у стан `open`.
+    Після завершення recovery timeout дозволяється один пробний запит.
+    Успішний пробний запит закриває circuit, а невдалий відкриває його знову.
     """
 
     def __init__(
         self,
         *,
-        rate_per_second: float,
-        burst_capacity: int,
+        failure_threshold: int,
+        recovery_timeout_sec: float,
         clock: Callable[[], float] = time.monotonic,
     ):
-        """Створює обмежувач із заданою швидкістю поповнення токенів."""
+        """Створює Circuit Breaker з указаними порогами."""
 
-        if rate_per_second <= 0:
-            raise ValueError("Швидкість поповнення має бути більше нуля")
+        if failure_threshold < 1:
+            raise ValueError("Поріг помилок має бути не менше 1")
 
-        if burst_capacity < 1:
-            raise ValueError("Місткість burst має бути не менше 1")
+        if recovery_timeout_sec <= 0:
+            raise ValueError("Час відновлення має бути більше нуля")
 
-        self._rate_per_second = float(rate_per_second)
-        self._burst_capacity = float(burst_capacity)
+        self._failure_threshold = failure_threshold
+        self._recovery_timeout_sec = recovery_timeout_sec
         self._clock = clock
 
-        self._buckets: dict[str, _TokenBucket] = {}
+        self._mode = CircuitMode.CLOSED
+        self._failure_count = 0
+        self._opened_at: float | None = None
+        self._probe_in_flight = False
+        self._manual_isolation = False
+        self._manual_reason = ""
+
         self._lock = threading.RLock()
-        self._request_counter = 0
 
-    @property
-    def rate_per_second(self) -> float:
-        """Повертає поточну швидкість поповнення токенів."""
-
-        with self._lock:
-            return self._rate_per_second
-
-    @property
-    def burst_capacity(self) -> int:
-        """Повертає поточну максимальну кількість токенів."""
-
-        with self._lock:
-            return int(self._burst_capacity)
-
-    def allow(
-        self,
-        identity: str,
-        *,
-        cost: float = 1.0,
-    ) -> RateLimitResult:
-        """Перевіряє, чи можна пропустити запит заданого клієнта."""
-
-        if not identity:
-            identity = "unknown"
-
-        if cost <= 0:
-            raise ValueError("Вартість запиту має бути більше нуля")
+    def before_request(self) -> CircuitDecision:
+        """Визначає, чи дозволене нове звернення до upstream."""
 
         now = self._clock()
 
         with self._lock:
-            bucket = self._buckets.get(identity)
-
-            if bucket is None:
-                bucket = _TokenBucket(
-                    tokens=self._burst_capacity,
-                    updated_at=now,
-                    last_seen_at=now,
-                )
-                self._buckets[identity] = bucket
-
-            elapsed = max(0.0, now - bucket.updated_at)
-            bucket.tokens = min(
-                self._burst_capacity,
-                bucket.tokens + elapsed * self._rate_per_second,
-            )
-            bucket.updated_at = now
-            bucket.last_seen_at = now
-
-            if bucket.tokens >= cost:
-                bucket.tokens -= cost
-                result = RateLimitResult(
-                    allowed=True,
-                    remaining_tokens=bucket.tokens,
+            if self._manual_isolation:
+                return CircuitDecision(
+                    allowed=False,
+                    mode=CircuitMode.OPEN,
+                    reason=self._manual_reason or "Ручна ізоляція компонента",
                     retry_after_sec=0.0,
                 )
-            else:
-                missing_tokens = cost - bucket.tokens
-                result = RateLimitResult(
+
+            if self._mode == CircuitMode.CLOSED:
+                return CircuitDecision(
+                    allowed=True,
+                    mode=self._mode,
+                    reason="Upstream працює у штатному режимі",
+                    retry_after_sec=0.0,
+                )
+
+            if self._mode == CircuitMode.OPEN:
+                retry_after = self._retry_after_unlocked(now)
+
+                if retry_after > 0:
+                    return CircuitDecision(
+                        allowed=False,
+                        mode=self._mode,
+                        reason="Circuit відкритий після помилок upstream",
+                        retry_after_sec=retry_after,
+                    )
+
+                self._mode = CircuitMode.HALF_OPEN
+                self._probe_in_flight = True
+
+                return CircuitDecision(
+                    allowed=True,
+                    mode=self._mode,
+                    reason="Дозволено пробний запит для перевірки відновлення",
+                    retry_after_sec=0.0,
+                )
+
+            if self._probe_in_flight:
+                return CircuitDecision(
                     allowed=False,
-                    remaining_tokens=bucket.tokens,
-                    retry_after_sec=missing_tokens / self._rate_per_second,
+                    mode=CircuitMode.HALF_OPEN,
+                    reason="Пробний запит до upstream уже виконується",
+                    retry_after_sec=1.0,
                 )
 
-            self._request_counter += 1
-            if self._request_counter % 256 == 0:
-                self._remove_idle_buckets(now)
+            self._probe_in_flight = True
+            return CircuitDecision(
+                allowed=True,
+                mode=CircuitMode.HALF_OPEN,
+                reason="Дозволено пробний запит до upstream",
+                retry_after_sec=0.0,
+            )
 
-            return result
-
-    def configure(
-        self,
-        *,
-        rate_per_second: float,
-        burst_capacity: int,
-    ) -> None:
-        """Атомарно змінює параметри обмеження частоти."""
-
-        if rate_per_second <= 0:
-            raise ValueError("Швидкість поповнення має бути більше нуля")
-
-        if burst_capacity < 1:
-            raise ValueError("Місткість burst має бути не менше 1")
+    def record_success(self) -> None:
+        """Фіксує успішну відповідь і повертає circuit у штатний стан."""
 
         with self._lock:
-            self._rate_per_second = float(rate_per_second)
-            self._burst_capacity = float(burst_capacity)
-
-            for bucket in self._buckets.values():
-                bucket.tokens = min(
-                    bucket.tokens,
-                    self._burst_capacity,
-                )
-
-    def reset(self, identity: str | None = None) -> None:
-        """Очищає стан одного клієнта або всіх клієнтів."""
-
-        with self._lock:
-            if identity is None:
-                self._buckets.clear()
+            if self._manual_isolation:
+                self._probe_in_flight = False
                 return
 
-            self._buckets.pop(identity, None)
+            self._mode = CircuitMode.CLOSED
+            self._failure_count = 0
+            self._opened_at = None
+            self._probe_in_flight = False
+
+    def record_failure(self) -> None:
+        """Фіксує помилку upstream та за потреби відкриває circuit."""
+
+        now = self._clock()
+
+        with self._lock:
+            self._probe_in_flight = False
+
+            if self._manual_isolation:
+                return
+
+            self._failure_count += 1
+
+            if (
+                self._mode == CircuitMode.HALF_OPEN
+                or self._failure_count >= self._failure_threshold
+            ):
+                self._open_unlocked(now)
+
+    def isolate(self, reason: str) -> None:
+        """Примусово ізолює upstream за рішенням dispatcher."""
+
+        with self._lock:
+            self._manual_isolation = True
+            self._manual_reason = reason.strip() or "Ручна ізоляція компонента"
+            self._open_unlocked(self._clock())
+
+    def release_isolation(self) -> None:
+        """Знімає ручну ізоляцію та повертає circuit у штатний стан."""
+
+        with self._lock:
+            self._manual_isolation = False
+            self._manual_reason = ""
+            self._mode = CircuitMode.CLOSED
+            self._failure_count = 0
+            self._opened_at = None
+            self._probe_in_flight = False
 
     def snapshot(self) -> dict[str, object]:
-        """Повертає агрегований стан обмежувача."""
+        """Повертає поточний стан Circuit Breaker."""
+
+        now = self._clock()
 
         with self._lock:
             return {
-                "ratePerSecond": self._rate_per_second,
-                "burstCapacity": int(self._burst_capacity),
-                "trackedIdentities": len(self._buckets),
+                "mode": self._mode.value,
+                "failureCount": self._failure_count,
+                "failureThreshold": self._failure_threshold,
+                "recoveryTimeoutSec": self._recovery_timeout_sec,
+                "retryAfterSec": self._retry_after_unlocked(now),
+                "manualIsolation": self._manual_isolation,
+                "manualReason": self._manual_reason,
+                "probeInFlight": self._probe_in_flight,
             }
 
-    def _remove_idle_buckets(self, now: float) -> None:
-        idle_ttl = max(
-            60.0,
-            (self._burst_capacity / self._rate_per_second) * 4,
-        )
+    def _open_unlocked(self, now: float) -> None:
+        self._mode = CircuitMode.OPEN
+        self._opened_at = now
+        self._probe_in_flight = False
 
-        expired = [
-            identity
-            for identity, bucket in self._buckets.items()
-            if now - bucket.last_seen_at > idle_ttl
-        ]
+    def _retry_after_unlocked(self, now: float) -> float:
+        if self._mode != CircuitMode.OPEN:
+            return 0.0
 
-        for identity in expired:
-            self._buckets.pop(identity, None)
+        if self._manual_isolation:
+            return 0.0
+
+        if self._opened_at is None:
+            return 0.0
+
+        elapsed = max(0.0, now - self._opened_at)
+        return max(0.0, self._recovery_timeout_sec - elapsed)

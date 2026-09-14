@@ -14,9 +14,9 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
-from src.gateway.circuit_breaker import CircuitBreaker
-from src.gateway.config import GatewaySettings
-from src.gateway.control_models import (
+from .circuit_breaker import CircuitBreaker
+from .config import GatewaySettings
+from .control_models import (
     BlockControlRequest,
     ControlActionResponse,
     IsolationControlRequest,
@@ -24,9 +24,9 @@ from src.gateway.control_models import (
     ReleaseIsolationControlRequest,
     UnblockControlRequest,
 )
-from src.gateway.event_emitter import SecurityEventEmitter
-from src.gateway.metrics import GatewayMetrics
-from src.gateway.proxy_utils import (
+from .event_emitter import SecurityEventEmitter
+from .metrics import GatewayMetrics
+from .proxy_utils import (
     build_request_headers,
     build_response_headers,
     build_upstream_url,
@@ -37,10 +37,10 @@ from src.gateway.proxy_utils import (
     resolve_client_identity,
     response_may_be_cached,
 )
-from src.gateway.rate_limiter import TokenBucketRateLimiter
-from src.gateway.response_cache import LastKnownGoodCache
-from src.gateway.state_store import GatewayStateStore
-from src.gateway.violation_tracker import ViolationTracker
+from .rate_limiter import TokenBucketRateLimiter
+from .response_cache import LastKnownGoodCache
+from .state_store import GatewayStateStore
+from .violation_tracker import ViolationTracker
 
 log = logging.getLogger(__name__)
 
