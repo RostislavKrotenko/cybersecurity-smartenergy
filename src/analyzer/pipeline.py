@@ -1124,29 +1124,3 @@ def create_file_live_adapters(
         action_sink,
         action_feedback,
     )
-
-
-def create_file_live_adapters(
-    events_path: str,
-    state_events_path: str | None = None,
-    actions_path: str | None = None,
-    applied_path: str | None = None,
-    actions_csv_path: str | None = None,
-) -> tuple[EventSource, EventSource | None, ActionSink | None, ActionFeedback | None]:
-    """Створює набір файлових адаптерів для live watch-режиму."""
-    from src.adapters.file_adapter import FileActionFeedback, FileActionSink, FileEventSource
-
-    event_source = FileEventSource(events_path)
-    state_source = None
-    if state_events_path and state_events_path != events_path:
-        state_source = FileEventSource(state_events_path)
-
-    action_sink = None
-    if actions_path:
-        action_sink = FileActionSink(actions_path, csv_path=actions_csv_path)
-
-    action_feedback = None
-    if applied_path:
-        action_feedback = FileActionFeedback(applied_path)
-
-    return event_source, state_source, action_sink, action_feedback

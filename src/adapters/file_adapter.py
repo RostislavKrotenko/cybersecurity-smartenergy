@@ -444,80 +444,175 @@ class FileActionSink(ActionSink):
             self.write_csv_summary()
 
 class FileActionFeedback(ActionFeedback):
-    """Джерело підтверджень дій із локального JSONL файла."""
+    """Читає підтвердження дій із JSONL-файла.
 
-    def __init__(self, path: str):
-        """Ініціалізує читач шляхом до actions_applied.jsonl."""
+    Позиція читання зберігається у checkpoint, тому після
+    перезапуску старі ACK не обробляються повторно.
+    """
+
+    def __init__(
+        self,
+        path: str,
+        checkpoint_path: str | Path | None = None,
+    ) -> None:
+        """Ініціалізує читач ACK та відновлює offset."""
         self.path = Path(path)
-        self._offset: int = 0
+        self._checkpoint_path = (
+            Path(checkpoint_path)
+            if checkpoint_path is not None
+            else None
+        )
+        self._offset, self._inode = load_offset_checkpoint(
+            self._checkpoint_path,
+            self.path,
+        )
         self._last_mtime_ns: int | None = None
 
-    def read_acks(self, since: Any = None) -> tuple[list[ActionAck], int]:
-        """Зчитує нові ACK-записи з файла."""
-        if since is not None and isinstance(since, int):
+    def read_acks(
+        self,
+        since: Any = None,
+    ) -> tuple[list[ActionAck], int]:
+        """Зчитує нові ACK після збереженої позиції."""
+        if isinstance(since, int):
+            if since < 0:
+                raise ValueError(
+                    "Offset ACK має бути невід'ємним"
+                )
             self._offset = since
 
         if not self.path.exists():
             return [], self._offset
 
         try:
-            st = self.path.stat()
-            size = st.st_size
-            mtime_ns = st.st_mtime_ns
+            source_stat = self.path.stat()
         except OSError:
             return [], self._offset
 
-        # ACK-файл обрізано або ротовано, тому читаємо з початку.
-        if size < self._offset:
+        current_size = source_stat.st_size
+        current_inode = source_stat.st_ino
+        current_mtime_ns = source_stat.st_mtime_ns
+
+        if (
+            self._inode is not None
+            and self._inode != current_inode
+        ):
             log.info(
-                "FileActionFeedback: detected truncate/rotation for %s (offset=%d -> 0)",
+                "FileActionFeedback: виявлено заміну файла %s",
+                self.path,
+            )
+            self._offset = 0
+            self._last_mtime_ns = None
+
+        if current_size < self._offset:
+            log.info(
+                "FileActionFeedback: файл %s скорочено "
+                "(offset=%d -> 0)",
                 self.path,
                 self._offset,
             )
             self._offset = 0
+            self._last_mtime_ns = None
 
-        if size == self._offset:
-            if self._last_mtime_ns is not None and mtime_ns != self._last_mtime_ns:
+        self._inode = current_inode
+
+        if current_size == self._offset:
+            if (
+                self._last_mtime_ns is not None
+                and current_mtime_ns != self._last_mtime_ns
+            ):
                 log.info(
-                    "FileActionFeedback: detected same-size rewrite for %s (offset=%d -> 0)",
+                    "FileActionFeedback: файл %s було "
+                    "перезаписано без зміни розміру",
                     self.path,
-                    self._offset,
                 )
                 self._offset = 0
             else:
-                self._last_mtime_ns = mtime_ns
+                self._last_mtime_ns = current_mtime_ns
+                self._save_checkpoint()
                 return [], self._offset
 
-        if size == 0:
-            self._last_mtime_ns = mtime_ns
+        if current_size == 0:
+            self._last_mtime_ns = current_mtime_ns
+            self._save_checkpoint()
             return [], self._offset
 
-        acks: list[ActionAck] = []
-        with open(self.path, encoding="utf-8") as fh:
-            fh.seek(self._offset)
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    ack = ActionAck.from_json(line)
-                    acks.append(ack)
-                except (json.JSONDecodeError, KeyError) as exc:
-                    log.debug("Skipping bad ACK line: %s", exc)
-            self._offset = fh.tell()
+        acknowledgements: list[ActionAck] = []
+
+        try:
+            with self.path.open(
+                "r",
+                encoding="utf-8",
+            ) as stream:
+                stream.seek(self._offset)
+
+                while True:
+                    line_start = stream.tell()
+                    line = stream.readline()
+
+                    if not line:
+                        break
+
+                    if not line.endswith("\n"):
+                        stream.seek(line_start)
+                        break
+
+                    stripped = line.strip()
+
+                    if not stripped:
+                        continue
+
+                    try:
+                        acknowledgements.append(
+                            ActionAck.from_json(stripped)
+                        )
+                    except (
+                        json.JSONDecodeError,
+                        KeyError,
+                        TypeError,
+                        AttributeError,
+                    ) as error:
+                        log.warning(
+                            "Пропущено некоректний ACK: %s",
+                            error,
+                        )
+
+                self._offset = stream.tell()
+
+        except OSError:
+            log.exception(
+                "Не вдалося прочитати ACK із %s",
+                self.path,
+            )
+            return [], self._offset
 
         with contextlib.suppress(OSError):
-            self._last_mtime_ns = self.path.stat().st_mtime_ns
+            source_stat = self.path.stat()
+            self._inode = source_stat.st_ino
+            self._last_mtime_ns = source_stat.st_mtime_ns
 
-        if acks:
-            log.info("FileActionFeedback: read %d ACKs from %s", len(acks), self.path)
+        self._save_checkpoint()
 
-        return acks, self._offset
+        if acknowledgements:
+            log.info(
+                "FileActionFeedback: read %d ACKs from %s",
+                len(acknowledgements),
+                self.path,
+            )
+
+        return acknowledgements, self._offset
 
     def close(self) -> None:
-        """Файловий читач не тримає додаткових ресурсів."""
-        pass
+        """Зберігає поточну позицію читання ACK."""
+        self._save_checkpoint()
 
+    def _save_checkpoint(self) -> None:
+        """Зберігає checkpoint ACK-файла."""
+        save_offset_checkpoint(
+            self._checkpoint_path,
+            self.path,
+            self._offset,
+            self._inode,
+        )
 
 class SimulatedStateProvider(StateProvider):
     """Провайдер стану, що читає дані з WorldState емулятора.
