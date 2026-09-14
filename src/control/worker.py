@@ -62,9 +62,9 @@ class WorkerSettings:
             raise ValueError("CONTROL_POLL_INTERVAL_SEC має бути більше нуля")
 
         return cls(
-            actions_path=Path(os.getenv("CONTROL_ACTIONS_PATH", "/work/data/live/actions.jsonl")),
-            applied_path=Path(os.getenv("CONTROL_APPLIED_PATH", "/work/data/live/actions_applied.jsonl")),
-            idempotency_path=Path(os.getenv("CONTROL_IDEMPOTENCY_PATH", "/work/data/control/idempotency.sqlite3")),
+            actions_path=Path(os.getenv("CONTROL_ACTIONS_PATH", "/work/data/integration/actions.jsonl")),
+            applied_path=Path(os.getenv("CONTROL_APPLIED_PATH", "/work/data/integration/actions_applied.jsonl")),
+            idempotency_path=Path(os.getenv("CONTROL_IDEMPOTENCY_PATH", "/work/data/integration/control/idempotency.sqlite3")),
             poll_interval_sec=poll_interval_sec,
             gateway_service_id=os.getenv("CONTROL_GATEWAY_SERVICE_ID", "iot-gateway").strip(),
             default_rate_per_second=default_rate_per_second,

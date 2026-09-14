@@ -92,13 +92,13 @@ class GatewaySettings:
             event_log_path=Path(
                 os.getenv(
                     "GATEWAY_EVENT_LOG_PATH",
-                    "/work/data/live/events.jsonl",
+                    "/work/data/integration/events.jsonl",
                 )
             ),
             state_path=Path(
                 os.getenv(
                     "GATEWAY_STATE_PATH",
-                    "/work/data/gateway/state.json",
+                    "/work/data/integration/state.json",
                 )
             ),
             rate_per_second=_env_float("GATEWAY_RATE_PER_SECOND", 25.0),

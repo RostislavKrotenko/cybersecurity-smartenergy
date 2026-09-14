@@ -98,7 +98,7 @@ class CollectorSettings:
             output_path=Path(
                 os.getenv(
                     "COLLECTOR_OUTPUT_PATH",
-                    "/work/data/live/collected_events.jsonl",
+                    "/work/data/integration/collected_events.jsonl",
                 )
             ),
             poll_interval_sec=_env_float(
@@ -116,13 +116,13 @@ class CollectorSettings:
             gateway_events_path=Path(
                 os.getenv(
                     "COLLECTOR_GATEWAY_EVENTS_PATH",
-                    "/work/data/live/events.jsonl",
+                    "/work/data/integration/events.jsonl",
                 )
             ),
             gateway_checkpoint_path=Path(
                 os.getenv(
                     "COLLECTOR_GATEWAY_CHECKPOINT_PATH",
-                    "/work/data/collector/gateway-offset.json",
+                    "/work/data/integration/gateway-offset.json",
                 )
             ),
             http_enabled=_env_bool(
@@ -142,7 +142,7 @@ class CollectorSettings:
                     "COLLECTOR_HTTP_TARGETS",
                     (
                         "gateway-health|gateway|status|"
-                        "[cybersecurity-gateway](http://cybersecurity-gateway:8080/)"
+                        "http://cybersecurity-gateway:8080/"
                         "_cybersecurity/healthz"
                     ),
                 )
