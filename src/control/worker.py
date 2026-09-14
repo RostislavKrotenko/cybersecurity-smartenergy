@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -121,7 +120,7 @@ class ActionTailSource:
 
                     try:
                         action = Action.from_json(stripped)
-                    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+                    except (ValueError, TypeError, KeyError):
                         log.exception("Пропущено некоректний Action")
                         continue
 

@@ -1,0 +1,192 @@
+name: smartenergy-cybersecurity-integration
+
+x-cybersecurity-service: &cybersecurity-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: smartenergy-cybersecurity:integration
+  restart: unless-stopped
+  volumes:
+    - cybersecurity-data:/work/data/integration
+    - cybersecurity-output:/work/out
+    - ./config:/work/config:ro
+  networks:
+    - cybersecurity-network
+
+services:
+  cybersecurity-gateway:
+    <<: *cybersecurity-service
+    container_name: cybersecurity-gateway
+    command:
+      - python
+      - -m
+      - src.gateway
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --log-level
+      - info
+    environment:
+      GATEWAY_SERVICE_ID: iot-gateway
+      GATEWAY_COMPONENT: gateway
+      GATEWAY_UPSTREAM_URL: ${SMARTENERGY_UPSTREAM_URL:-http://host.docker.internal:6006}
+      GATEWAY_EVENT_LOG_PATH: /work/data/integration/events.jsonl
+      GATEWAY_STATE_PATH: /work/data/integration/state.json
+      GATEWAY_CONTROL_TOKEN: ${GATEWAY_CONTROL_TOKEN:?GATEWAY_CONTROL_TOKEN is required}
+      GATEWAY_RATE_PER_SECOND: ${GATEWAY_RATE_PER_SECOND:-25}
+      GATEWAY_BURST_CAPACITY: ${GATEWAY_BURST_CAPACITY:-50}
+      GATEWAY_COMMAND_RATE_PER_MINUTE: ${GATEWAY_COMMAND_RATE_PER_MINUTE:-12}
+      GATEWAY_VIOLATION_THRESHOLD: ${GATEWAY_VIOLATION_THRESHOLD:-8}
+      GATEWAY_VIOLATION_WINDOW_SEC: ${GATEWAY_VIOLATION_WINDOW_SEC:-30}
+      GATEWAY_BLOCK_TTL_SEC: ${GATEWAY_BLOCK_TTL_SEC:-120}
+      GATEWAY_UPSTREAM_TIMEOUT_SEC: ${GATEWAY_UPSTREAM_TIMEOUT_SEC:-3}
+      GATEWAY_CIRCUIT_FAILURE_THRESHOLD: ${GATEWAY_CIRCUIT_FAILURE_THRESHOLD:-5}
+      GATEWAY_CIRCUIT_RECOVERY_TIMEOUT_SEC: ${GATEWAY_CIRCUIT_RECOVERY_TIMEOUT_SEC:-15}
+      GATEWAY_STALE_CACHE_TTL_SEC: ${GATEWAY_STALE_CACHE_TTL_SEC:-30}
+    ports:
+      - "${CYBERSECURITY_GATEWAY_PORT:-8080}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - http://localhost:8080/_cybersecurity/healthz
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+
+  cybersecurity-collector:
+    <<: *cybersecurity-service
+    container_name: cybersecurity-collector
+    command:
+      - python
+      - -m
+      - src.collector
+    environment:
+      COLLECTOR_OUTPUT_PATH: /work/data/integration/collected_events.jsonl
+      COLLECTOR_GATEWAY_ENABLED: "true"
+      COLLECTOR_GATEWAY_EVENTS_PATH: /work/data/integration/events.jsonl
+      COLLECTOR_GATEWAY_CHECKPOINT_PATH: /work/data/integration/gateway-offset.json
+      COLLECTOR_HTTP_ENABLED: "true"
+      COLLECTOR_HTTP_TARGETS: >-
+        gateway-health|gateway|status|http://cybersecurity-gateway:8080/_cybersecurity/healthz
+      COLLECTOR_HTTP_TIMEOUT_SEC: ${COLLECTOR_HTTP_TIMEOUT_SEC:-2}
+      COLLECTOR_HTTP_POLL_INTERVAL_SEC: ${COLLECTOR_HTTP_POLL_INTERVAL_SEC:-10}
+      COLLECTOR_MQTT_ENABLED: ${COLLECTOR_MQTT_ENABLED:-false}
+      COLLECTOR_MQTT_HOST: ${SMARTENERGY_MQTT_HOST:-host.docker.internal}
+      COLLECTOR_MQTT_PORT: ${SMARTENERGY_MQTT_PORT:-6030}
+      COLLECTOR_MQTT_TOPICS: ${SMARTENERGY_MQTT_TOPICS:-smartenergy/#}
+      COLLECTOR_MQTT_QOS: ${COLLECTOR_MQTT_QOS:-1}
+      COLLECTOR_MQTT_USERNAME: ${SMARTENERGY_MQTT_USERNAME:-}
+      COLLECTOR_MQTT_PASSWORD: ${SMARTENERGY_MQTT_PASSWORD:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      cybersecurity-gateway:
+        condition: service_healthy
+
+  cybersecurity-analyzer:
+    <<: *cybersecurity-service
+    container_name: cybersecurity-analyzer
+    command:
+      - python
+      - -m
+      - src.analyzer
+      - --input
+      - /work/data/integration/collected_events.jsonl
+      - --watch
+      - --poll-interval-ms
+      - "1000"
+      - --rolling-window-min
+      - "5"
+      - --out-dir
+      - /work/out
+      - --policies
+      - all
+      - --actions-path
+      - /work/data/integration/actions.jsonl
+      - --applied-path
+      - /work/data/integration/actions_applied.jsonl
+      - --integration-mode
+      - active
+      - --log-level
+      - INFO
+    depends_on:
+      cybersecurity-collector:
+        condition: service_started
+
+  cybersecurity-control:
+    <<: *cybersecurity-service
+    container_name: cybersecurity-control
+    command:
+      - python
+      - -m
+      - src.control
+    environment:
+      GATEWAY_CONTROL_URL: http://cybersecurity-gateway:8080
+      GATEWAY_CONTROL_TOKEN: ${GATEWAY_CONTROL_TOKEN:?GATEWAY_CONTROL_TOKEN is required}
+      GATEWAY_CONTROL_TIMEOUT_SECONDS: ${GATEWAY_CONTROL_TIMEOUT_SECONDS:-5}
+      CONTROL_ACTIONS_PATH: /work/data/integration/actions.jsonl
+      CONTROL_APPLIED_PATH: /work/data/integration/actions_applied.jsonl
+      CONTROL_IDEMPOTENCY_PATH: /work/data/integration/control/idempotency.sqlite3
+      CONTROL_GATEWAY_SERVICE_ID: iot-gateway
+      CONTROL_POLL_INTERVAL_SEC: ${CONTROL_POLL_INTERVAL_SEC:-0.5}
+      CONTROL_DEFAULT_RATE_PER_SECOND: ${GATEWAY_RATE_PER_SECOND:-25}
+      CONTROL_DEFAULT_BURST_CAPACITY: ${GATEWAY_BURST_CAPACITY:-50}
+      CONTROL_ALLOWED_ISOLATION_COMPONENTS: gateway,api,edge,iot-gateway
+    depends_on:
+      cybersecurity-gateway:
+        condition: service_healthy
+      cybersecurity-analyzer:
+        condition: service_started
+
+  cybersecurity-api:
+    <<: *cybersecurity-service
+    container_name: cybersecurity-api
+    command:
+      - python
+      - -m
+      - src.api
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      SMARTENERGY_LIVE_MODE: "1"
+      CYBERSECURITY_INTEGRATION_MODE: active
+      CYBERSECURITY_SNAPSHOT_SOURCE: real-collector
+      CYBERSECURITY_EXTERNAL_READS: "false"
+      CYBERSECURITY_PUBLIC_PORT: ${CYBERSECURITY_API_PORT:-6049}
+      CYBERSECURITY_CORS_ORIGINS: ${CYBERSECURITY_CORS_ORIGINS:-http://localhost:5173}
+    ports:
+      - "${CYBERSECURITY_API_PORT:-6049}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - http://localhost:8000/healthz
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    depends_on:
+      cybersecurity-analyzer:
+        condition: service_started
+
+networks:
+  cybersecurity-network:
+    name: smartenergy-cybersecurity-network
+    driver: bridge
+
+volumes:
+  cybersecurity-data:
+    name: smartenergy-cybersecurity-data
+  cybersecurity-output:
+    name: smartenergy-cybersecurity-output
