@@ -18,7 +18,7 @@ from src.control.models import (
 
 
 class ActionDispatcher:
-    """Перевіряє ідемпотентність та передає команди до Gateway."""
+    """Перевіряє ідемпотентність і передає команди до Gateway."""
 
     def __init__(
         self,
@@ -29,7 +29,9 @@ class ActionDispatcher:
         """Створює диспетчер з обмеженням паралельного виконання."""
 
         if max_concurrency <= 0:
-            raise ValueError("max_concurrency має бути більше нуля")
+            raise ValueError(
+                "max_concurrency має бути більше нуля"
+            )
 
         self._gateway_control = gateway_control
         self._idempotency_store = idempotency_store
@@ -42,28 +44,29 @@ class ActionDispatcher:
         """Виконує одну команду не більше одного разу."""
 
         validated_action = self._validate_action(action)
-        claim = self._idempotency_store.claim(
-            validated_action.action_id
-        )
-
-        if claim.cached_ack is not None:
-            return claim.[cached_ack.as](http://cached_ack.as)_duplicate()
-
-        if [claim.in](http://claim.in)_progress:
-            return [ActionAck.in](http://ActionAck.in)_progress(validated_action)
 
         async with self._semaphore:
+            claim = self._idempotency_store.claim(
+                validated_action.action_id
+            )
+
+            if claim.cached_ack is not None:
+                return claim.cached_ack.as_duplicate()
+
+            if claim.in_progress:
+                return ActionAck.in_progress(validated_action)
+
             try:
                 ack = await self._gateway_control.execute(
                     validated_action
                 )
             except Exception as error:
                 ack = ActionAck(
-                    actionId=validated_action.action_id,
-                    actionType=validated_action.action_type,
+                    action_id=validated_action.action_id,
+                    action_type=validated_action.action_type,
                     status=ActionStatus.FAILED,
                     target=validated_action.target,
-                    serviceId=validated_action.service_id,
+                    service_id=validated_action.service_id,
                     message=(
                         "Непередбачена помилка під час виконання "
                         f"команди: {error}"
@@ -76,7 +79,9 @@ class ActionDispatcher:
 
     async def dispatch_many(
         self,
-        actions: Iterable[SecurityAction | dict[str, Any]],
+        actions: Iterable[
+            SecurityAction | dict[str, Any]
+        ],
     ) -> list[ActionAck]:
         """Виконує набір команд з обмеженою паралельністю."""
 
@@ -88,7 +93,8 @@ class ActionDispatcher:
         if not tasks:
             return []
 
-        return list(await asyncio.gather(*tasks))
+        results = await asyncio.gather(*tasks)
+        return list(results)
 
     async def close(self) -> None:
         """Закриває ресурси засобу керування Gateway."""
@@ -99,7 +105,7 @@ class ActionDispatcher:
     def _validate_action(
         action: SecurityAction | dict[str, Any],
     ) -> SecurityAction:
-        """Перетворює вхідне значення на перевірену модель команди."""
+        """Перетворює вхідні дані на перевірену модель команди."""
 
         if isinstance(action, SecurityAction):
             return action
