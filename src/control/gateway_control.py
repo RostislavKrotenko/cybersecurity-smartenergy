@@ -1,11 +1,10 @@
-"""HTTP-клієнт для передавання керувальних команд до захисного Gateway."""
+"""HTTP-клієнт для керування захисним Gateway."""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol
-from urllib.parse import urlparse
+from typing import Any, Protocol
 
 import httpx
 
@@ -17,97 +16,47 @@ from src.control.models import (
 )
 
 
-class GatewayControl(Protocol):
-    """Контракт засобу виконання керувальних дій через Gateway."""
+CONTROL_PATHS: dict[ActionType, str] = {
+    ActionType.BLOCK_SOURCE: "/_cybersecurity/control/block",
+    ActionType.UNBLOCK_SOURCE: "/_cybersecurity/control/unblock",
+    ActionType.ISOLATE_SERVICE: "/_cybersecurity/control/isolate",
+    ActionType.RESTORE_SERVICE: (
+        "/_cybersecurity/control/release-isolation"
+    ),
+    ActionType.SET_RATE_LIMIT: (
+        "/_cybersecurity/control/rate-limit"
+    ),
+}
 
-    async def execute(self, action: SecurityAction) -> ActionAck:
-        """Передає команду до Gateway і повертає підтвердження."""
+
+class GatewayControl(Protocol):
+    """Контракт керування захисним Gateway."""
+
+    async def execute(
+        self,
+        action: SecurityAction,
+    ) -> ActionAck:
+        """Передає команду до Gateway."""
 
         ...
 
     async def close(self) -> None:
-        """Звільняє мережеві ресурси клієнта."""
+        """Звільняє ресурси клієнта."""
 
         ...
 
 
 @dataclass(frozen=True, slots=True)
 class GatewayControlSettings:
-    """Налаштування з'єднання з керувальним API Gateway."""
+    """Налаштування клієнта керувального API Gateway."""
 
     base_url: str
     token: str
     timeout_seconds: float = 5.0
-    default_block_ttl_seconds: float = 120.0
-
-    block_path: str = "/_cybersecurity/control/block"
-    unblock_path: str = "/_cybersecurity/control/unblock"
-    isolate_path: str = "/_cybersecurity/control/isolate"
-    restore_path: str = (
-        "/_cybersecurity/control/release-isolation"
-    )
-    rate_limit_path: str = (
-        "/_cybersecurity/control/rate-limit"
-    )
-
-    def __post_init__(self) -> None:
-        """Перевіряє коректність параметрів керувального клієнта."""
-
-        parsed_url = urlparse(self.base_url)
-
-        if parsed_url.scheme not in {"http", "https"}:
-            raise ValueError(
-                "GATEWAY_CONTROL_URL має використовувати http або https"
-            )
-
-        if not parsed_url.hostname:
-            raise ValueError(
-                "GATEWAY_CONTROL_URL не містить hostname"
-            )
-
-        if len(self.token) < 16:
-            raise ValueError(
-                "GATEWAY_CONTROL_TOKEN має містити щонайменше "
-                "16 символів"
-            )
-
-        if self.timeout_seconds <= 0:
-            raise ValueError(
-                "timeout_seconds має бути більше нуля"
-            )
-
-        if not 0 < self.default_block_ttl_seconds <= 86_400:
-            raise ValueError(
-                "default_block_ttl_seconds має бути в межах "
-                "від 0 до 86400"
-            )
-
-        paths = (
-            self.block_path,
-            self.unblock_path,
-            self.isolate_path,
-            self.restore_path,
-            self.rate_limit_path,
-        )
-
-        for path in paths:
-            if not path.startswith("/"):
-                raise ValueError(
-                    f"Шлях Gateway має починатися з '/': {path}"
-                )
 
     @classmethod
     def from_env(cls) -> "GatewayControlSettings":
         """Створює налаштування зі змінних середовища."""
-
-        timeout_seconds = cls._read_float_env(
-            "GATEWAY_CONTROL_TIMEOUT_SECONDS",
-            5.0,
-        )
-        default_block_ttl_seconds = cls._read_float_env(
-            "GATEWAY_DEFAULT_BLOCK_TTL_SECONDS",
-            120.0,
-        )
 
         base_url = os.getenv(
             "GATEWAY_CONTROL_URL",
@@ -124,89 +73,46 @@ class GatewayControlSettings:
                 "Змінна GATEWAY_CONTROL_TOKEN є обов'язковою"
             )
 
+        try:
+            timeout_seconds = float(
+                os.getenv(
+                    "GATEWAY_CONTROL_TIMEOUT_SECONDS",
+                    "5",
+                )
+            )
+        except ValueError as error:
+            raise ValueError(
+                "GATEWAY_CONTROL_TIMEOUT_SECONDS має бути числом"
+            ) from error
+
+        if timeout_seconds <= 0:
+            raise ValueError(
+                "GATEWAY_CONTROL_TIMEOUT_SECONDS має бути більше нуля"
+            )
+
         return cls(
             base_url=base_url,
             token=token,
             timeout_seconds=timeout_seconds,
-            default_block_ttl_seconds=(
-                default_block_ttl_seconds
-            ),
-            block_path=os.getenv(
-                "GATEWAY_BLOCK_PATH",
-                "/_cybersecurity/control/block",
-            ).strip(),
-            unblock_path=os.getenv(
-                "GATEWAY_UNBLOCK_PATH",
-                "/_cybersecurity/control/unblock",
-            ).strip(),
-            isolate_path=os.getenv(
-                "GATEWAY_ISOLATE_PATH",
-                "/_cybersecurity/control/isolate",
-            ).strip(),
-            restore_path=os.getenv(
-                "GATEWAY_RESTORE_PATH",
-                "/_cybersecurity/control/release-isolation",
-            ).strip(),
-            rate_limit_path=os.getenv(
-                "GATEWAY_RATE_LIMIT_PATH",
-                "/_cybersecurity/control/rate-limit",
-            ).strip(),
         )
-
-    def path_for(self, action_type: ActionType) -> str:
-        """Повертає шлях API для відповідного типу команди."""
-
-        paths = {
-            ActionType.BLOCK_SOURCE: self.block_path,
-            ActionType.UNBLOCK_SOURCE: self.unblock_path,
-            ActionType.ISOLATE_SERVICE: self.isolate_path,
-            ActionType.RESTORE_SERVICE: self.restore_path,
-            ActionType.SET_RATE_LIMIT: self.rate_limit_path,
-        }
-
-        try:
-            return paths[action_type]
-        except KeyError as error:
-            raise ValueError(
-                f"Непідтримуваний тип дії: {action_type}"
-            ) from error
-
-    @staticmethod
-    def _read_float_env(
-        name: str,
-        default: float,
-    ) -> float:
-        """Читає числове значення зі змінної середовища."""
-
-        raw_value = os.getenv(name)
-
-        if raw_value is None or not raw_value.strip():
-            return default
-
-        try:
-            return float(raw_value)
-        except ValueError as error:
-            raise ValueError(
-                f"{name} має містити число"
-            ) from error
 
 
 class HttpGatewayControl:
-    """Виконує керувальні дії через захищений HTTP API Gateway."""
+    """Виконує керувальні дії через HTTP API Gateway."""
 
     def __init__(
         self,
         settings: GatewayControlSettings,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        """Створює HTTP-клієнт або використовує переданий клієнт."""
+        """Ініціалізує HTTP-клієнт."""
 
         self._settings = settings
         self._owns_client = client is None
 
         self._client = client or httpx.AsyncClient(
             base_url=settings.base_url,
-            timeout=httpx.Timeout(settings.timeout_seconds),
+            timeout=settings.timeout_seconds,
             follow_redirects=False,
         )
 
@@ -214,94 +120,54 @@ class HttpGatewayControl:
         self,
         action: SecurityAction,
     ) -> ActionAck:
-        """Передає одну перевірену команду до Gateway."""
+        """Виконує одну керувальну дію."""
 
         try:
-            path = self._settings.path_for(
-                action.action_type
-            )
-            body = self._build_request_body(action)
-        except ValueError as error:
-            return ActionAck(
-                action_id=action.action_id,
-                action_type=action.action_type,
+            path = CONTROL_PATHS[action.action_type]
+            payload = self._build_payload(action)
+        except (KeyError, TypeError, ValueError) as error:
+            return self._create_ack(
+                action=action,
                 status=ActionStatus.REJECTED,
-                target=action.target,
-                service_id=action.service_id,
                 message=str(error),
-                retryable=False,
             )
-
-        headers = {
-            "X-Cybersecurity-Control-Token": (
-                self._settings.token
-            ),
-            "Idempotency-Key": action.action_id,
-            "Accept": "application/json",
-        }
 
         try:
             response = await self._client.post(
                 path,
-                json=body,
-                headers=headers,
+                json=payload,
+                headers={
+                    "X-Cybersecurity-Control-Token": (
+                        self._settings.token
+                    ),
+                    "Idempotency-Key": action.action_id,
+                    "Accept": "application/json",
+                },
             )
         except httpx.HTTPError as error:
-            return ActionAck(
-                action_id=action.action_id,
-                action_type=action.action_type,
+            return self._create_ack(
+                action=action,
                 status=ActionStatus.FAILED,
-                target=action.target,
-                service_id=action.service_id,
                 message=f"Gateway недоступний: {error}",
                 retryable=True,
             )
 
-        response_body = self._read_response_body(response)
+        response_body = self._read_response(response)
 
         if 200 <= response.status_code < 300:
-            applied = response_body.get("applied", True)
-
-            if applied is False:
-                return ActionAck(
-                    action_id=action.action_id,
-                    action_type=action.action_type,
-                    status=ActionStatus.REJECTED,
-                    target=action.target,
-                    service_id=action.service_id,
-                    message=(
-                        "Gateway прийняв запит, але не застосував дію"
-                    ),
-                    retryable=False,
-                    http_status=response.status_code,
-                    gateway_response=response_body,
-                )
-
-            return ActionAck(
-                action_id=action.action_id,
-                action_type=action.action_type,
+            return self._create_ack(
+                action=action,
                 status=ActionStatus.APPLIED,
-                target=action.target,
-                service_id=action.service_id,
-                message=(
-                    "Gateway успішно застосував керувальну дію"
-                ),
-                retryable=False,
+                message="Gateway успішно застосував дію",
                 http_status=response.status_code,
                 gateway_response=response_body,
             )
 
         if response.status_code == 409:
-            return ActionAck(
-                action_id=action.action_id,
-                action_type=action.action_type,
+            return self._create_ack(
+                action=action,
                 status=ActionStatus.APPLIED,
-                target=action.target,
-                service_id=action.service_id,
-                message=(
-                    "Gateway уже виконав команду з таким actionId"
-                ),
-                retryable=False,
+                message="Команду вже було виконано",
                 duplicate=True,
                 http_status=response.status_code,
                 gateway_response=response_body,
@@ -309,18 +175,15 @@ class HttpGatewayControl:
 
         retryable = response.status_code >= 500
 
-        return ActionAck(
-            action_id=action.action_id,
-            action_type=action.action_type,
+        return self._create_ack(
+            action=action,
             status=(
                 ActionStatus.FAILED
                 if retryable
                 else ActionStatus.REJECTED
             ),
-            target=action.target,
-            service_id=action.service_id,
             message=(
-                "Gateway не зміг застосувати керувальну дію: "
+                "Gateway відхилив команду: "
                 f"HTTP {response.status_code}"
             ),
             retryable=retryable,
@@ -329,34 +192,22 @@ class HttpGatewayControl:
         )
 
     async def close(self) -> None:
-        """Закриває клієнт, якщо він був створений цим об'єктом."""
+        """Закриває внутрішній HTTP-клієнт."""
 
         if self._owns_client:
             await self._client.aclose()
 
-    def _build_request_body(
-        self,
+    @staticmethod
+    def _build_payload(
         action: SecurityAction,
-    ) -> Mapping[str, Any]:
-        """Формує тіло запиту відповідно до моделей Gateway."""
+    ) -> dict[str, Any]:
+        """Формує тіло запиту відповідно до API Gateway."""
 
         if action.action_type == ActionType.BLOCK_SOURCE:
-            ttl_seconds = (
-                action.ttl_seconds
-                if action.ttl_seconds is not None
-                else self._settings.default_block_ttl_seconds
-            )
-
-            if not 0 < ttl_seconds <= 86_400:
-                raise ValueError(
-                    "Тривалість блокування має бути в межах "
-                    "від 0 до 86400 секунд"
-                )
-
             return {
                 "action_id": action.action_id,
                 "identity": action.target,
-                "ttl_sec": ttl_seconds,
+                "ttl_sec": action.ttl_seconds or 120.0,
                 "reason": action.reason,
             }
 
@@ -380,46 +231,33 @@ class HttpGatewayControl:
             }
 
         if action.action_type == ActionType.SET_RATE_LIMIT:
-            enabled = action.parameters.get(
-                "enabled",
-                True,
-            )
-
-            if not isinstance(enabled, bool):
-                raise ValueError(
-                    "Параметр enabled має бути логічним значенням"
-                )
-
-            rate_per_second = self._read_number_parameter(
-                action.parameters,
+            rate = action.parameters.get(
                 "rate_per_second",
-                "ratePerSecond",
-                "requestsPerSecond",
+                action.parameters.get("ratePerSecond"),
             )
-            burst_capacity = self._read_integer_parameter(
-                action.parameters,
+            burst = action.parameters.get(
                 "burst_capacity",
-                "burstCapacity",
-                "burst",
+                action.parameters.get("burstCapacity"),
             )
 
-            if not 0 < rate_per_second <= 10_000:
+            if rate is None:
                 raise ValueError(
-                    "rate_per_second має бути в межах "
-                    "від 0 до 10000"
+                    "Не вказано параметр rate_per_second"
                 )
 
-            if not 1 <= burst_capacity <= 100_000:
+            if burst is None:
                 raise ValueError(
-                    "burst_capacity має бути в межах "
-                    "від 1 до 100000"
+                    "Не вказано параметр burst_capacity"
                 )
 
             return {
                 "action_id": action.action_id,
-                "enabled": enabled,
-                "rate_per_second": rate_per_second,
-                "burst_capacity": burst_capacity,
+                "enabled": action.parameters.get(
+                    "enabled",
+                    True,
+                ),
+                "rate_per_second": rate,
+                "burst_capacity": burst,
                 "reason": action.reason,
             }
 
@@ -428,79 +266,10 @@ class HttpGatewayControl:
         )
 
     @staticmethod
-    def _read_number_parameter(
-        parameters: Mapping[str, Any],
-        *names: str,
-    ) -> float:
-        """Читає обов'язковий числовий параметр команди."""
-
-        value: Any = None
-
-        for name in names:
-            if name in parameters:
-                value = parameters[name]
-                break
-
-        if value is None:
-            raise ValueError(
-                f"Відсутній параметр {names[0]}"
-            )
-
-        if isinstance(value, bool):
-            raise ValueError(
-                f"Параметр {names[0]} має бути числом"
-            )
-
-        try:
-            return float(value)
-        except (TypeError, ValueError) as error:
-            raise ValueError(
-                f"Параметр {names[0]} має бути числом"
-            ) from error
-
-    @staticmethod
-    def _read_integer_parameter(
-        parameters: Mapping[str, Any],
-        *names: str,
-    ) -> int:
-        """Читає обов'язковий цілий параметр команди."""
-
-        value: Any = None
-
-        for name in names:
-            if name in parameters:
-                value = parameters[name]
-                break
-
-        if value is None:
-            raise ValueError(
-                f"Відсутній параметр {names[0]}"
-            )
-
-        if isinstance(value, bool):
-            raise ValueError(
-                f"Параметр {names[0]} має бути цілим числом"
-            )
-
-        try:
-            converted = int(value)
-        except (TypeError, ValueError) as error:
-            raise ValueError(
-                f"Параметр {names[0]} має бути цілим числом"
-            ) from error
-
-        if isinstance(value, float) and not value.is_integer():
-            raise ValueError(
-                f"Параметр {names[0]} має бути цілим числом"
-            )
-
-        return converted
-
-    @staticmethod
-    def _read_response_body(
+    def _read_response(
         response: httpx.Response,
     ) -> dict[str, Any]:
-        """Безпечно перетворює відповідь Gateway на словник."""
+        """Читає JSON-відповідь без ризику помилки декодування."""
 
         try:
             value = response.json()
@@ -515,3 +284,29 @@ class HttpGatewayControl:
         return {
             "value": value,
         }
+
+    @staticmethod
+    def _create_ack(
+        *,
+        action: SecurityAction,
+        status: ActionStatus,
+        message: str,
+        retryable: bool = False,
+        duplicate: bool = False,
+        http_status: int | None = None,
+        gateway_response: dict[str, Any] | None = None,
+    ) -> ActionAck:
+        """Створює уніфіковане підтвердження команди."""
+
+        return ActionAck(
+            action_id=action.action_id,
+            action_type=action.action_type,
+            status=status,
+            target=action.target,
+            service_id=action.service_id,
+            message=message,
+            retryable=retryable,
+            duplicate=duplicate,
+            http_status=http_status,
+            gateway_response=gateway_response,
+        )
