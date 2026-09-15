@@ -54,7 +54,7 @@ services:
         - curl
         - --fail
         - --silent
-        - http://localhost/_cybersecurity/healthz
+        - http://localhost:8080/_cybersecurity/healthz
       interval: 10s
       timeout: 3s
       start_period: 10s
