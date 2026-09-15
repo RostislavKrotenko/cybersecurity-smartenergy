@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import queue
 import time
@@ -125,7 +126,7 @@ class GatewayEventSource(EventSource):
         try:
             payload = json.loads(self._checkpoint_path.read_text(encoding="utf-8"))
             self._offset = max(0, int(payload.get("offset", 0)))
-            
+
             inode = payload.get("inode")
             self._inode = int(inode) if inode is not None else None
         except (OSError, ValueError, json.JSONDecodeError):
@@ -357,7 +358,9 @@ class MqttEventSource(EventSource):
         try:
             import paho.mqtt.client as mqtt
         except ImportError as error:
-            raise RuntimeError("Для MQTT Collector потрібно встановити paho-mqtt") from error
+            raise RuntimeError(
+                "Для MQTT Collector потрібно встановити paho-mqtt"
+            ) from error
 
         self._mqtt = mqtt
         self._host = host
@@ -372,7 +375,10 @@ class MqttEventSource(EventSource):
         callback_version = getattr(mqtt, "CallbackAPIVersion", None)
 
         if callback_version is not None:
-            self._client = mqtt.Client(callback_version.VERSION2, client_id=client_id)
+            self._client = mqtt.Client(
+                callback_version.VERSION2,
+                client_id=client_id,
+            )
         else:
             self._client = mqtt.Client(client_id=client_id)
 
@@ -454,25 +460,36 @@ class MqttEventSource(EventSource):
         for topic in self._topics:
             client.subscribe(topic, qos=self._qos)
 
-        log.info("Collector підписався на MQTT topics: %s", ", ".join(self._topics))
+        log.info(
+            "Collector підписався на MQTT topics: %s",
+            ", ".join(self._topics),
+        )
 
-    def _on_message(self, client: Any, userdata: Any, message: Any) -> None:
+    def _on_message(
+        self,
+        client: Any,
+        userdata: Any,
+        message: Any,
+    ) -> None:
         """Перетворює MQTT-повідомлення на канонічну подію."""
         try:
-            event = self._message_to_event(
+            events = self._message_to_events(
                 topic=str(message.topic),
                 payload=bytes(message.payload),
             )
-            self._events.put_nowait(event)
-        except queue.Full:
-            self._dropped += 1
-            log.error("Черга MQTT Collector переповнена")
+
+            for event in events:
+                try:
+                    self._events.put_nowait(event)
+                except queue.Full:
+                    self._dropped += 1
+                    log.error("Черга MQTT Collector переповнена")
         except Exception:
             log.exception("Не вдалося обробити MQTT-повідомлення")
 
     @staticmethod
-    def _message_to_event(*, topic: str, payload: bytes) -> Event:
-        """Перетворює MQTT payload на Event."""
+    def _decode_payload(payload: bytes) -> dict[str, Any]:
+        """Декодує MQTT payload у словник із безпечним fallback для тексту."""
         text = payload.decode("utf-8", errors="replace")
 
         try:
@@ -483,6 +500,61 @@ class MqttEventSource(EventSource):
         if not isinstance(decoded, dict):
             decoded = {"value": decoded}
 
+        return decoded
+
+    @staticmethod
+    def _normalize_timestamp(value: Any) -> str:
+        """Перетворює ISO або Unix timestamp у канонічний UTC ISO-рядок."""
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return _utc_now()
+
+            try:
+                numeric = float(stripped)
+            except ValueError:
+                try:
+                    parsed = datetime.fromisoformat(
+                        stripped.replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    return _utc_now()
+
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+
+                return (
+                    parsed.astimezone(timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                )
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            numeric = float(value)
+        else:
+            return _utc_now()
+
+        if not math.isfinite(numeric):
+            return _utc_now()
+
+        if abs(numeric) >= 10_000_000_000:
+            numeric /= 1000.0
+
+        try:
+            return (
+                datetime.fromtimestamp(numeric, tz=timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+        except (OSError, OverflowError, ValueError):
+            return _utc_now()
+
+    @staticmethod
+    def _event_from_decoded(
+        *,
+        topic: str,
+        decoded: dict[str, Any],
+    ) -> Event:
+        """Створює одну канонічну подію із довільного MQTT-словника."""
         raw_tags = decoded.get("tags", "collector,mqtt")
         if isinstance(raw_tags, list):
             tags = ",".join(str(item) for item in raw_tags)
@@ -491,14 +563,21 @@ class MqttEventSource(EventSource):
 
         value = decoded.get("value", decoded)
         if isinstance(value, (dict, list)):
-            value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+            value = json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
 
         component = str(
-            decoded.get("component") or MqttEventSource._component_from_topic(topic)
+            decoded.get("component")
+            or MqttEventSource._component_from_topic(topic)
         )
 
         return Event(
-            timestamp=str(decoded.get("timestamp") or decoded.get("ts") or _utc_now()),
+            timestamp=MqttEventSource._normalize_timestamp(
+                decoded.get("timestamp") or decoded.get("ts")
+            ),
             source=str(
                 decoded.get("source")
                 or decoded.get("device_id")
@@ -520,6 +599,268 @@ class MqttEventSource(EventSource):
                 or f"mqtt-{time.time_ns()}"
             ),
         )
+
+    @staticmethod
+    def _message_to_event(
+        *,
+        topic: str,
+        payload: bytes,
+    ) -> Event:
+        """Перетворює довільний MQTT payload на одну канонічну подію."""
+        return MqttEventSource._event_from_decoded(
+            topic=topic,
+            decoded=MqttEventSource._decode_payload(payload),
+        )
+
+    @staticmethod
+    def _message_to_events(
+        *,
+        topic: str,
+        payload: bytes,
+    ) -> list[Event]:
+        """Розгортає SmartEnergy payload у набір окремих вимірювань."""
+        decoded = MqttEventSource._decode_payload(payload)
+
+        if MqttEventSource._is_smartenergy_telemetry(
+            topic,
+            decoded,
+        ):
+            events = MqttEventSource._smartenergy_telemetry_events(
+                decoded
+            )
+            if events:
+                return events
+
+        return [
+            MqttEventSource._event_from_decoded(
+                topic=topic,
+                decoded=decoded,
+            )
+        ]
+
+    @staticmethod
+    def _is_smartenergy_telemetry(
+        topic: str,
+        decoded: dict[str, Any],
+    ) -> bool:
+        """Перевіряє формат телеметрії ESP32 загального проєкту."""
+        if topic.strip("/").lower() != "sensor/data":
+            return False
+
+        return any(
+            key in decoded
+            for key in (
+                "solar",
+                "charge",
+                "discharge",
+                "battery",
+                "devices",
+            )
+        )
+
+    @staticmethod
+    def _numeric_value(
+        container: Any,
+        key: str,
+    ) -> float | None:
+        """Повертає скінченне числове поле вкладеного об'єкта."""
+        if not isinstance(container, dict):
+            return None
+
+        value = container.get(key)
+        if isinstance(value, bool):
+            return None
+
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+
+        return numeric if math.isfinite(numeric) else None
+
+    @staticmethod
+    def _format_metric(value: float) -> str:
+        """Форматує число компактно без втрати корисної точності."""
+        return format(value, ".12g")
+
+    @staticmethod
+    def _smartenergy_telemetry_events(
+        decoded: dict[str, Any],
+    ) -> list[Event]:
+        """Нормалізує реальну телеметрію ESP32 без вигаданих показників."""
+        timestamp = MqttEventSource._normalize_timestamp(
+            decoded.get("timestamp") or decoded.get("ts")
+        )
+        base_source = str(
+            decoded.get("source")
+            or decoded.get("device_id")
+            or decoded.get("deviceId")
+            or "esp32-simulator"
+        )
+        base_correlation_id = str(
+            decoded.get("correlation_id")
+            or decoded.get("correlationId")
+            or f"mqtt-{time.time_ns()}"
+        )
+        tags = "collector,mqtt,telemetry,normalized"
+        events: list[Event] = []
+
+        def append_event(
+            *,
+            source_suffix: str,
+            key: str,
+            value: float | str,
+            unit: str,
+            suffix: str,
+            event: str = "telemetry_read",
+            severity: str = "low",
+        ) -> None:
+            """Додає одне нормалізоване вимірювання до поточного пакета."""
+            rendered = (
+                MqttEventSource._format_metric(value)
+                if isinstance(value, float)
+                else value
+            )
+            events.append(
+                Event(
+                    timestamp=timestamp,
+                    source=f"{base_source}:{source_suffix}",
+                    component="edge",
+                    event=event,
+                    key=key,
+                    value=rendered,
+                    severity=severity,
+                    unit=unit,
+                    tags=tags,
+                    correlation_id=f"{base_correlation_id}:{suffix}",
+                )
+            )
+
+        status = str(decoded.get("status") or "").strip().lower()
+        if status:
+            normalized_status = {
+                "online": "healthy",
+                "ok": "healthy",
+                "offline": "down",
+                "error": "degraded",
+            }.get(status, status)
+            append_event(
+                source_suffix="controller",
+                key="status",
+                value=normalized_status,
+                unit="",
+                suffix="status",
+                event="service_status",
+                severity=(
+                    "low"
+                    if normalized_status == "healthy"
+                    else "high"
+                ),
+            )
+
+        for channel_name in (
+            "solar",
+            "charge",
+            "discharge",
+        ):
+            channel = decoded.get(channel_name)
+            voltage = MqttEventSource._numeric_value(
+                channel,
+                "v",
+            )
+            current = MqttEventSource._numeric_value(
+                channel,
+                "i",
+            )
+
+            if voltage is not None:
+                append_event(
+                    source_suffix=channel_name,
+                    key=f"{channel_name}_voltage_v",
+                    value=voltage,
+                    unit="V",
+                    suffix=f"{channel_name}-voltage",
+                )
+
+            if current is not None:
+                append_event(
+                    source_suffix=channel_name,
+                    key=f"{channel_name}_current_a",
+                    value=current,
+                    unit="A",
+                    suffix=f"{channel_name}-current",
+                )
+
+            if voltage is not None and current is not None:
+                append_event(
+                    source_suffix=channel_name,
+                    key="power_kw",
+                    value=(voltage * current) / 1000.0,
+                    unit="kW",
+                    suffix=f"{channel_name}-power",
+                )
+
+        battery_charge = MqttEventSource._numeric_value(
+            decoded.get("battery"),
+            "charge",
+        )
+        if battery_charge is not None:
+            append_event(
+                source_suffix="battery",
+                key="battery_charge_pct",
+                value=battery_charge,
+                unit="%",
+                suffix="battery-charge",
+            )
+
+        devices = decoded.get("devices")
+        if isinstance(devices, dict):
+            for device_name, device in sorted(
+                devices.items()
+            ):
+                voltage = MqttEventSource._numeric_value(
+                    device,
+                    "v",
+                )
+                current = MqttEventSource._numeric_value(
+                    device,
+                    "i",
+                )
+                source_suffix = str(device_name)
+
+                if voltage is not None:
+                    voltage_key = (
+                        "voltage"
+                        if voltage >= 100.0
+                        else "device_voltage_v"
+                    )
+                    append_event(
+                        source_suffix=source_suffix,
+                        key=voltage_key,
+                        value=voltage,
+                        unit="V",
+                        suffix=f"{source_suffix}-voltage",
+                    )
+
+                if current is not None:
+                    append_event(
+                        source_suffix=source_suffix,
+                        key="current_a",
+                        value=current,
+                        unit="A",
+                        suffix=f"{source_suffix}-current",
+                    )
+
+                if voltage is not None and current is not None:
+                    append_event(
+                        source_suffix=source_suffix,
+                        key="power_kw",
+                        value=(voltage * current) / 1000.0,
+                        unit="kW",
+                        suffix=f"{source_suffix}-power",
+                    )
+
+        return events
 
     @staticmethod
     def _component_from_topic(topic: str) -> str:
