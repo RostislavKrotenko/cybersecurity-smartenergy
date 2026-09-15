@@ -178,7 +178,7 @@ services:
         - curl
         - --fail
         - --silent
-        - localhost/healthz
+        - http://localhost:8000/healthz
       interval: 15s
       timeout: 5s
       start_period: 10s
