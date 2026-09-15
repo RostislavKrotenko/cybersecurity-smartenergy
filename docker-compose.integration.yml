@@ -125,7 +125,7 @@ services:
       cybersecurity-collector:
         condition: service_started
 
-    cybersecurity-control:
+  cybersecurity-control:
       <<: *cybersecurity-service
       container_name: cybersecurity-control
       command:
