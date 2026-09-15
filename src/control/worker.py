@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +18,7 @@ from src.control.dispatcher import ActionDispatcher
 from src.control.gateway_control import GatewayControlSettings, HttpGatewayControl
 from src.control.idempotency import IdempotencyStore
 from src.control.models import ActionStatus, ActionType, SecurityAction
-from src.shared.file_utils import load_offset_checkpoint, save_offset_checkpoint
+from src.shared.file_utils import atomic_write, load_offset_checkpoint, save_offset_checkpoint
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +45,7 @@ class WorkerSettings:
     applied_path: Path
     idempotency_path: Path
     actions_checkpoint_path: Path
+    isolation_schedule_path: Path
     poll_interval_sec: float
     gateway_service_id: str
     default_rate_per_second: float
@@ -58,6 +62,15 @@ class WorkerSettings:
         except ValueError as error:
             raise ValueError("Числові параметри control worker некоректні") from error
 
+        if poll_interval_sec <= 0:
+            raise ValueError("CONTROL_POLL_INTERVAL_SEC має бути більше нуля")
+
+        if default_rate_per_second <= 0:
+            raise ValueError("CONTROL_DEFAULT_RATE_PER_SECOND має бути більше нуля")
+
+        if default_burst_capacity < 1:
+            raise ValueError("CONTROL_DEFAULT_BURST_CAPACITY має бути не менше 1")
+
         allowed_components = frozenset(
             item.strip()
             for item in os.getenv(
@@ -66,14 +79,6 @@ class WorkerSettings:
             ).split(",")
             if item.strip()
         )
-
-        if poll_interval_sec <= 0:
-            raise ValueError("CONTROL_POLL_INTERVAL_SEC має бути більше нуля")
-
-        gateway_service_id = os.getenv("CONTROL_GATEWAY_SERVICE_ID", "iot-gateway").strip()
-
-        if not gateway_service_id:
-            raise ValueError("CONTROL_GATEWAY_SERVICE_ID не може бути порожнім")
 
         return cls(
             actions_path=Path(
@@ -94,8 +99,14 @@ class WorkerSettings:
                     "/work/data/integration/checkpoints/control-actions.json",
                 )
             ),
+            isolation_schedule_path=Path(
+                os.getenv(
+                    "CONTROL_ISOLATION_SCHEDULE_PATH",
+                    "/work/data/integration/control/isolation-schedule.json",
+                )
+            ),
             poll_interval_sec=poll_interval_sec,
-            gateway_service_id=gateway_service_id,
+            gateway_service_id=os.getenv("CONTROL_GATEWAY_SERVICE_ID", "iot-gateway").strip(),
             default_rate_per_second=default_rate_per_second,
             default_burst_capacity=default_burst_capacity,
             allowed_isolation_components=allowed_components,
@@ -106,24 +117,24 @@ class ActionTailSource:
     """Читає нові Action із JSONL-файла Analyzer.
 
     Позиція читання зберігається лише після успішного
-    опрацювання всього пакета дій.
+    оброблення всього пакета дій.
     """
 
     def __init__(self, path: str | Path, checkpoint_path: str | Path) -> None:
-        """Ініціалізує читання дій зі збереженого offset."""
+        """Ініціалізує tail-читання та відновлює offset."""
         self._path = Path(path)
         self._checkpoint_path = Path(checkpoint_path)
         self._offset, self._inode = load_offset_checkpoint(self._checkpoint_path, self._path)
 
     def read_batch(self, limit: int = 1000) -> list[Action]:
-        """Зчитує пакет дій після збереженого offset."""
+        """Зчитує пакет нових дій після поточного offset."""
         if limit < 1 or not self._path.exists():
             return []
 
         try:
             source_stat = self._path.stat()
         except OSError:
-            log.exception("Не вдалося прочитати метадані файла дій %s", self._path)
+            log.exception("Не вдалося отримати стан файла дій %s", self._path)
             return []
 
         if self._inode is not None and self._inode != source_stat.st_ino:
@@ -158,7 +169,7 @@ class ActionTailSource:
 
                     try:
                         action = Action.from_json(stripped)
-                    except (ValueError, TypeError, KeyError, AttributeError) as error:
+                    except (json.JSONDecodeError, ValueError, TypeError, KeyError) as error:
                         log.warning("Пропущено некоректний Action: %s", error)
                         continue
 
@@ -168,12 +179,11 @@ class ActionTailSource:
 
         except OSError:
             log.exception("Не вдалося прочитати файл дій %s", self._path)
-            return []
 
         return actions
 
     def commit(self) -> None:
-        """Фіксує offset після успішної обробки пакета."""
+        """Зберігає позицію після успішного оброблення пакета."""
         save_offset_checkpoint(self._checkpoint_path, self._path, self._offset, self._inode)
 
 
@@ -193,8 +203,226 @@ class ActionAckWriter:
             stream.flush()
 
 
+@dataclass(slots=True)
+class ScheduledIsolationRelease:
+    """Персистентний запис автоматичного зняття ізоляції."""
+
+    source_action_id: str
+    target_component: str
+    target_id: str
+    correlation_id: str
+    due_at_epoch: float
+    attempt: int = 0
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ScheduledIsolationRelease":
+        """Створює розклад із JSON-словника."""
+        source_action_id = str(value.get("sourceActionId", "")).strip()
+        target_component = str(value.get("targetComponent", "")).strip()
+        target_id = str(value.get("targetId", "")).strip()
+        correlation_id = str(value.get("correlationId", "")).strip()
+        due_at_epoch = float(value.get("dueAtEpoch", 0.0))
+        attempt = max(0, int(value.get("attempt", 0)))
+
+        if not source_action_id:
+            raise ValueError("Розклад не містить sourceActionId")
+
+        if not target_component:
+            raise ValueError("Розклад не містить targetComponent")
+
+        if not target_id:
+            target_id = target_component
+
+        if due_at_epoch <= 0:
+            raise ValueError("Розклад містить некоректний dueAtEpoch")
+
+        return cls(
+            source_action_id=source_action_id,
+            target_component=target_component,
+            target_id=target_id,
+            correlation_id=correlation_id,
+            due_at_epoch=due_at_epoch,
+            attempt=attempt,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Перетворює розклад на JSON-сумісний словник."""
+        return {
+            "sourceActionId": self.source_action_id,
+            "targetComponent": self.target_component,
+            "targetId": self.target_id,
+            "correlationId": self.correlation_id,
+            "dueAtEpoch": self.due_at_epoch,
+            "attempt": self.attempt,
+        }
+
+    def release_action_id(self) -> str:
+        """Формує стабільний actionId для поточної спроби."""
+        digest = hashlib.sha256(
+            f"{self.source_action_id}:{self.attempt}".encode("utf-8")
+        ).hexdigest()[:20]
+        return f"AUTO-RELEASE-{digest}"
+
+    def to_action(self) -> Action:
+        """Створює дію зняття ізоляції для Gateway."""
+        return Action(
+            action_id=self.release_action_id(),
+            ts_utc=_utc_now(),
+            action="release_isolation",
+            target_component=self.target_component,
+            target_id=self.target_id,
+            params={
+                "scheduled_from": self.source_action_id,
+                "attempt": self.attempt,
+            },
+            reason=(
+                "Автоматичне зняття ізоляції після завершення "
+                f"TTL дії {self.source_action_id}"
+            ),
+            correlation_id=self.correlation_id,
+            status="emitted",
+        )
+
+
+class IsolationScheduleStore:
+    """Зберігає розклад автоматичного зняття ізоляції.
+
+    Gateway має один ізольований upstream, тому одночасно
+    зберігається лише один актуальний розклад. Нова успішна
+    команда ізоляції замінює попередній строк.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        """Ініціалізує сховище та завантажує розклад."""
+        self._path = Path(path)
+        self._scheduled = self._load()
+
+    @property
+    def active(self) -> ScheduledIsolationRelease | None:
+        """Повертає поточний розклад або None."""
+        return self._scheduled
+
+    def schedule(
+        self,
+        action: Action,
+        duration_sec: float,
+        *,
+        now_epoch: float | None = None,
+    ) -> ScheduledIsolationRelease:
+        """Створює або оновлює розклад для дії ізоляції."""
+        if duration_sec <= 0:
+            raise ValueError("Тривалість ізоляції має бути більше нуля")
+
+        current = self._scheduled
+
+        if current is not None and current.source_action_id == action.action_id:
+            return current
+
+        effective_now = time.time() if now_epoch is None else float(now_epoch)
+
+        scheduled = ScheduledIsolationRelease(
+            source_action_id=action.action_id,
+            target_component=action.target_component,
+            target_id=action.target_id or action.target_component,
+            correlation_id=action.correlation_id,
+            due_at_epoch=effective_now + duration_sec,
+            attempt=0,
+        )
+
+        self._scheduled = scheduled
+        self._save()
+
+        log.info(
+            "Заплановано автоматичне зняття ізоляції %s через %.1f с",
+            action.action_id,
+            duration_sec,
+        )
+
+        return scheduled
+
+    def get_due(self, *, now_epoch: float | None = None) -> ScheduledIsolationRelease | None:
+        """Повертає розклад, строк якого вже настав."""
+        scheduled = self._scheduled
+
+        if scheduled is None:
+            return None
+
+        effective_now = time.time() if now_epoch is None else float(now_epoch)
+
+        if scheduled.due_at_epoch > effective_now:
+            return None
+
+        return scheduled
+
+    def postpone(
+        self,
+        source_action_id: str,
+        delay_sec: float,
+        *,
+        now_epoch: float | None = None,
+    ) -> None:
+        """Переносить невдалу спробу зняття ізоляції."""
+        scheduled = self._scheduled
+
+        if scheduled is None or scheduled.source_action_id != source_action_id:
+            return
+
+        effective_now = time.time() if now_epoch is None else float(now_epoch)
+
+        scheduled.attempt += 1
+        scheduled.due_at_epoch = effective_now + max(1.0, delay_sec)
+        self._save()
+
+    def clear(self, source_action_id: str | None = None) -> None:
+        """Видаляє виконаний або скасований розклад."""
+        if self._scheduled is None:
+            return
+
+        if source_action_id is not None and self._scheduled.source_action_id != source_action_id:
+            return
+
+        self._scheduled = None
+        self._save()
+
+    def _load(self) -> ScheduledIsolationRelease | None:
+        """Завантажує розклад із диска."""
+        if not self._path.exists():
+            return None
+
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+
+            if not isinstance(payload, dict):
+                raise ValueError("Файл розкладу має містити JSON-об'єкт")
+
+            raw_release = payload.get("release")
+
+            if raw_release is None:
+                return None
+
+            if not isinstance(raw_release, dict):
+                raise ValueError("Поле release має містити JSON-об'єкт")
+
+            return ScheduledIsolationRelease.from_dict(raw_release)
+
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+            log.warning("Не вдалося завантажити розклад ізоляції %s: %s", self._path, error)
+            return None
+
+    def _save(self) -> None:
+        """Атомарно зберігає поточний розклад."""
+        payload = {
+            "version": 1,
+            "release": self._scheduled.to_dict() if self._scheduled is not None else None,
+        }
+        atomic_write(
+            str(self._path),
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",
+        )
+
+
 class GatewayActionWorker:
-    """Передає дозволені дії Analyzer до нашого Gateway."""
+    """Передає дозволені дії Analyzer до захисного Gateway."""
 
     def __init__(self, *, settings: WorkerSettings, dispatcher: ActionDispatcher) -> None:
         """Створює worker активного реагування."""
@@ -206,25 +434,30 @@ class GatewayActionWorker:
             settings.actions_checkpoint_path,
         )
         self._ack_writer = ActionAckWriter(settings.applied_path)
+        self._isolation_schedule = IsolationScheduleStore(settings.isolation_schedule_path)
 
     async def run(self, stop_event: asyncio.Event) -> None:
-        """Обробляє нові дії до отримання сигналу завершення."""
+        """Обробляє дії до отримання сигналу завершення."""
         log.info("Control worker читає дії з %s", self._settings.actions_path)
 
         while not stop_event.is_set():
+            await self._process_due_isolation_release()
+
             actions = self._source.read_batch()
 
             for action in actions:
                 if action.status not in {"pending", "emitted"}:
                     continue
 
-                acknowledgement = await self._process_action(action)
-                self._ack_writer.write(acknowledgement)
+                ack = await self._process_action(action)
+                self._ack_writer.write(ack)
+
+                self._update_isolation_schedule(action, ack)
 
                 log.info(
                     "Action %s завершено з результатом %s",
                     action.action_id,
-                    acknowledgement.result,
+                    ack.result,
                 )
 
             self._source.commit()
@@ -241,8 +474,46 @@ class GatewayActionWorker:
         """Закриває Dispatcher та HTTP-клієнт."""
         await self._dispatcher.close()
 
+    async def _process_due_isolation_release(self) -> None:
+        """Виконує прострочене автоматичне зняття ізоляції."""
+        scheduled = self._isolation_schedule.get_due()
+
+        if scheduled is None:
+            return
+
+        action = scheduled.to_action()
+        ack = await self._process_action(action)
+        self._ack_writer.write(ack)
+
+        if ack.result == "success":
+            self._isolation_schedule.clear(scheduled.source_action_id)
+            log.info("Ізоляцію для дії %s автоматично знято", scheduled.source_action_id)
+            return
+
+        retry_delay = min(60.0, float(2 ** min(scheduled.attempt + 1, 6)))
+        self._isolation_schedule.postpone(scheduled.source_action_id, retry_delay)
+
+        log.warning(
+            "Автоматичне зняття ізоляції не виконано; наступна спроба через %.1f с",
+            retry_delay,
+        )
+
+    def _update_isolation_schedule(self, action: Action, ack: ContractActionAck) -> None:
+        """Оновлює розклад після звичайної керувальної дії."""
+        if ack.result != "success":
+            return
+
+        if action.action == "isolate_component":
+            duration_sec = self._optional_duration(action.params or {}, default=60.0)
+
+            if duration_sec is not None:
+                self._isolation_schedule.schedule(action, duration_sec)
+
+        elif action.action == "release_isolation":
+            self._isolation_schedule.clear()
+
     async def _process_action(self, action: Action) -> ContractActionAck:
-        """Перетворює Action і виконує дозволену команду."""
+        """Перетворює Action та виконує дозволену команду."""
         try:
             security_action = self._map_action(action)
         except (ValueError, TypeError) as error:
@@ -327,7 +598,7 @@ class GatewayActionWorker:
                 service_id=self._settings.gateway_service_id,
                 reason=reason,
                 ttl_seconds=(
-                    self._optional_duration(params)
+                    self._optional_duration(params, default=60.0)
                     if action_type == ActionType.ISOLATE_SERVICE
                     else None
                 ),
@@ -392,7 +663,7 @@ class GatewayActionWorker:
 
 
 def create_worker(settings: WorkerSettings) -> GatewayActionWorker:
-    """Створює worker з GatewayControl та ідемпотентністю."""
+    """Створює worker з HTTP-клієнтом та ідемпотентністю."""
     control = HttpGatewayControl(GatewayControlSettings.from_env())
     idempotency_store = IdempotencyStore(settings.idempotency_path)
     dispatcher = ActionDispatcher(gateway_control=control, idempotency_store=idempotency_store)

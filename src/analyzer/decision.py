@@ -1,11 +1,8 @@
-"""Двигун рішень: перетворення інцидентів на конкретні дії реагування.
+"""Двигун рішень для перетворення інцидентів на дії реагування.
 
-Модуль працює за політиками: на основі threat_type, severity і ураженого
-компонента він вибирає дії зі статичного playbook. Так логіка залишається
-детермінованою й придатною для аудиту.
-
-Для production-режиму цей mapping можна замінити зовнішнім playbook-сховищем
-або SOAR API адаптером. ActionSink дозволяє підміняти backend виконання дій.
+Модуль використовує детермінований playbook: на основі типу загрози,
+критичності й ураженого компонента вибираються дозволені захисні дії.
+Такий підхід полегшує аудит, тестування та пояснення роботи системи.
 """
 
 from __future__ import annotations
@@ -23,26 +20,38 @@ from src.shared.severity import SEV_ORDER as _SEV_ORDER
 
 log = logging.getLogger(__name__)
 
-# threat_type -> список шаблонів дій реагування.
+_DDOS_RATE_PER_SECOND = 10
+_DDOS_BURST_CAPACITY = 20
+_DDOS_RATE_LIMIT_DURATION_SEC = 300
+_DDOS_ISOLATION_DURATION_SEC = 60
+
 
 _PLAYBOOK: dict[str, list[dict[str, Any]]] = {
     "credential_attack": [
         {
             "action": "block_actor",
             "target_component": "auth",
-            "params": {"duration_sec": 600},
+            "params": {
+                "duration_sec": 600,
+            },
         },
     ],
     "availability_attack": [
         {
             "action": "enable_rate_limit",
             "target_component": "gateway",
-            "params": {"rps": 50, "burst": 100, "duration_sec": 300},
+            "params": {
+                "rps": _DDOS_RATE_PER_SECOND,
+                "burst": _DDOS_BURST_CAPACITY,
+                "duration_sec": _DDOS_RATE_LIMIT_DURATION_SEC,
+            },
         },
         {
             "action": "isolate_component",
             "target_component": "api",
-            "params": {"duration_sec": 60},
+            "params": {
+                "duration_sec": _DDOS_ISOLATION_DURATION_SEC,
+            },
             "min_severity": "critical",
         },
     ],
@@ -50,7 +59,9 @@ _PLAYBOOK: dict[str, list[dict[str, Any]]] = {
         {
             "action": "isolate_component",
             "target_component": "collector",
-            "params": {"duration_sec": 120},
+            "params": {
+                "duration_sec": 120,
+            },
         },
     ],
     "outage": [
@@ -62,7 +73,9 @@ _PLAYBOOK: dict[str, list[dict[str, Any]]] = {
         {
             "action": "restore_db",
             "target_component": "db",
-            "params": {"snapshot": "latest"},
+            "params": {
+                "snapshot": "latest",
+            },
         },
     ],
     "network_degraded": [
@@ -90,127 +103,275 @@ def decide(
     incidents: list[Incident],
     already_acted: set[str],
 ) -> list[Action]:
-    """Формує дії для нових інцидентів, які ще не були оброблені."""
+    """Формує дії для нових інцидентів.
+
+    Аргументи:
+        incidents: Нові інциденти, для яких необхідно визначити реакцію.
+        already_acted: Ідентифікатори інцидентів, які вже були оброблені.
+
+    Повертає:
+        Список сформованих захисних дій.
+    """
     actions: list[Action] = []
-    now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = datetime.now(
+        tz=timezone.utc,
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    for inc in incidents:
-        if inc.incident_id in already_acted:
+    for incident in incidents:
+        if incident.incident_id in already_acted:
             continue
 
-        templates = _PLAYBOOK.get(inc.threat_type, [])
+        templates = _PLAYBOOK.get(
+            incident.threat_type,
+            [],
+        )
+
         if not templates:
-            log.debug("Немає playbook-запису для threat_type=%s", inc.threat_type)
+            log.debug(
+                "Немає playbook для threat_type=%s",
+                incident.threat_type,
+            )
+            already_acted.add(incident.incident_id)
             continue
 
-        for tmpl in templates:
-            min_sev = tmpl.get("min_severity")
-            if min_sev and _SEV_ORDER.get(inc.severity, 0) < _SEV_ORDER.get(min_sev, 0):
+        created_count = 0
+
+        for template in templates:
+            minimum_severity = template.get(
+                "min_severity"
+            )
+
+            if (
+                minimum_severity
+                and _SEV_ORDER.get(
+                    incident.severity,
+                    0,
+                )
+                < _SEV_ORDER.get(
+                    minimum_severity,
+                    0,
+                )
+            ):
                 continue
 
-            params = dict(tmpl["params"])
+            params = dict(
+                template.get(
+                    "params",
+                    {},
+                )
+            )
+            action_name = str(template["action"])
+            target_component = str(
+                template["target_component"]
+            )
 
-            if tmpl["action"] == "block_actor":
-                actor, ip = _extract_actor_ip(inc)
+            if action_name == "block_actor":
+                actor, ip_address = _extract_actor_ip(
+                    incident
+                )
+
                 if actor:
                     params["actor"] = actor
-                if ip:
-                    params["ip"] = ip
-                if not actor and not ip:
+
+                if ip_address:
+                    params["ip"] = ip_address
+
+                if not actor and not ip_address:
                     params["ip"] = "0.0.0.0"
 
-            if tmpl["action"] == "backup_db":
-                params["name"] = f"snap_{inc.incident_id}"
+            if action_name == "backup_db":
+                params["name"] = (
+                    f"snap_{incident.incident_id}"
+                )
 
             actions.append(
                 Action(
-                    ts_utc=now,
-                    action=tmpl["action"],
-                    target_component=tmpl["target_component"],
-                    target_id=_extract_target_id(inc, tmpl["target_component"]),
+                    ts_utc=timestamp,
+                    action=action_name,
+                    target_component=target_component,
+                    target_id=_extract_target_id(
+                        incident,
+                        target_component,
+                    ),
                     params=params,
-                    reason=f"{inc.incident_id}: {inc.threat_type}/{inc.severity}",
-                    correlation_id=inc.incident_id,
+                    reason=(
+                        f"{incident.incident_id}: "
+                        f"{incident.threat_type}/"
+                        f"{incident.severity}"
+                    ),
+                    correlation_id=incident.incident_id,
                     status="emitted",
                 )
             )
+            created_count += 1
 
-        already_acted.add(inc.incident_id)
+        already_acted.add(incident.incident_id)
+
         log.info(
-            "DECIDE: %s -> %d actions for %s/%s",
-            inc.incident_id,
-            len(templates),
-            inc.threat_type,
-            inc.severity,
+            "DECIDE: %s -> %d дій для %s/%s",
+            incident.incident_id,
+            created_count,
+            incident.threat_type,
+            incident.severity,
         )
 
     return actions
 
 
-def emit_actions(actions: list[Action], path: str) -> None:
-    """Дописує дії в actions.jsonl."""
+def emit_actions(
+    actions: list[Action],
+    path: str,
+) -> None:
+    """Дописує сформовані дії до JSONL-файла.
+
+    Аргументи:
+        actions: Дії, які необхідно зберегти.
+        path: Шлях до вихідного JSONL-файла.
+    """
     if not actions:
         return
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "a", encoding="utf-8") as fh:
-        for a in actions:
-            fh.write(a.to_json() + "\n")
-        fh.flush()
-    log.info("Емітовано %d дій -> %s", len(actions), path)
+
+    output_path = Path(path)
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with output_path.open(
+        "a",
+        encoding="utf-8",
+    ) as stream:
+        for action in actions:
+            stream.write(action.to_json())
+            stream.write("\n")
+
+        stream.flush()
+
+    log.info(
+        "Емітовано %d дій -> %s",
+        len(actions),
+        output_path,
+    )
 
 
-def write_actions_csv(actions: list[Action], path: str) -> None:
-    """Записує дії в CSV файл для dashboard."""
+def write_actions_csv(
+    actions: list[Action],
+    path: str,
+) -> None:
+    """Атомарно записує CSV-зведення дій.
+
+    Аргументи:
+        actions: Дії, які необхідно додати до зведення.
+        path: Шлях до вихідного CSV-файла.
+    """
     lines = [Action.csv_header()]
-    for a in actions:
-        lines.append(a.to_csv_row())
-    atomic_write(path, "\n".join(lines) + "\n")
-    log.info("Записано CSV дій -> %s (%d рядків)", path, len(actions))
+
+    for action in actions:
+        lines.append(action.to_csv_row())
+
+    atomic_write(
+        path,
+        "\n".join(lines) + "\n",
+    )
+
+    log.info(
+        "Записано CSV дій -> %s (%d рядків)",
+        path,
+        len(actions),
+    )
 
 
-def _extract_actor_ip(inc: Incident) -> tuple[str, str]:
-    """Best-effort витяг actor/IP з опису інциденту."""
-    desc = inc.description
+def _extract_actor_ip(
+    incident: Incident,
+) -> tuple[str, str]:
+    """Намагається отримати actor та IP з опису інциденту."""
+    description = incident.description
     actor = ""
-    ip = ""
+    ip_address = ""
 
-    if "from " in desc:
-        parts = desc.split("from ")
+    if "from " in description:
+        parts = description.split("from ")
+
         if len(parts) > 1:
-            ip_candidate = parts[1].split()[0].strip(" ,;")
-            if "." in ip_candidate:
-                ip = ip_candidate
-    if " з " in desc:
-        parts = desc.split(" з ")
+            candidate = (
+                parts[1]
+                .split()[0]
+                .strip(" ,;")
+            )
+
+            if "." in candidate:
+                ip_address = candidate
+
+    if " з " in description:
+        parts = description.split(" з ")
+
         if len(parts) > 1:
-            ip_candidate = parts[1].split()[0].strip(" ,;")
-            if "." in ip_candidate:
-                ip = ip_candidate
-    if "by non-allowed" in desc or "неавторизованих" in desc:
+            candidate = (
+                parts[1]
+                .split()[0]
+                .strip(" ,;")
+            )
+
+            if "." in candidate:
+                ip_address = candidate
+
+    if (
+        "by non-allowed" in description
+        or "неавторизованих" in description
+    ):
         actor = "unknown"
-    return actor, ip
+
+    return actor, ip_address
 
 
-def _extract_target_id(inc: Incident, target_component: str) -> str:
-    """Витягує ідентифікатор цільового пристрою з інциденту."""
-    components = inc.component.split(";")
-    for c in components:
-        if c.strip() == target_component:
-            return c.strip()
-    return components[0].strip() if components else target_component
+def _extract_target_id(
+    incident: Incident,
+    target_component: str,
+) -> str:
+    """Визначає коректний ідентифікатор цільового компонента.
+
+    Якщо уражений компонент інциденту збігається з цільовим
+    компонентом playbook, використовується його ідентифікатор.
+    Інакше повертається цільовий компонент playbook. Завдяки
+    цьому DDoS-інцидент Gateway може коректно ізолювати API,
+    а не помилково вказувати Gateway як ціль ізоляції.
+    """
+    components = [
+        component.strip()
+        for component in incident.component.split(";")
+        if component.strip()
+    ]
+
+    for component in components:
+        if component == target_component:
+            return component
+
+    return target_component
 
 
 def emit_actions_to_sink(
     actions: list[Action],
     action_sink: ActionSink,
 ) -> list[str]:
-    """Емітить дії через ActionSink adapter."""
+    """Передає сформовані дії через адаптер ActionSink.
+
+    Аргументи:
+        actions: Дії, які необхідно передати.
+        action_sink: Адаптер зовнішнього виконавця дій.
+
+    Повертає:
+        Ідентифікатори переданих дій.
+    """
     if not actions:
         return []
 
     tracking_ids = action_sink.emit_batch(actions)
-    log.info("Емітовано %d дій через ActionSink", len(actions))
+
+    log.info(
+        "Емітовано %d дій через ActionSink",
+        len(actions),
+    )
+
     return tracking_ids
 
 
@@ -219,8 +380,25 @@ def decide_and_emit(
     already_acted: set[str],
     action_sink: ActionSink,
 ) -> list[Action]:
-    """Формує дії за інцидентами та емітить їх через sink."""
-    actions = decide(incidents, already_acted)
+    """Формує дії за інцидентами та передає їх у ActionSink.
+
+    Аргументи:
+        incidents: Нові інциденти безпеки.
+        already_acted: Ідентифікатори вже оброблених інцидентів.
+        action_sink: Адаптер зовнішнього виконавця.
+
+    Повертає:
+        Список сформованих і переданих дій.
+    """
+    actions = decide(
+        incidents,
+        already_acted,
+    )
+
     if actions:
-        emit_actions_to_sink(actions, action_sink)
+        emit_actions_to_sink(
+            actions,
+            action_sink,
+        )
+
     return actions
