@@ -58,16 +58,12 @@ def _build_backend_info(
     api_snapshot: dict[str, Any],
     external_adapters: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """Описує доступність API та окремо стан його інтеграцій."""
     component_status = str(api_snapshot.get("component", {}).get("status", "disconnected"))
-    if component_status == "healthy":
-        backend_status = "available"
-    elif component_status == "degraded":
-        backend_status = "degraded"
-    else:
-        backend_status = "unavailable"
 
     return {
-        "status": backend_status,
+        "status": "available",
+        "integrationHealth": component_status,
         "integrationMode": _integration_mode(),
         "publicPort": _backend_public_port(),
         "apiBasePath": "/api",
@@ -84,9 +80,58 @@ def _state_index(states: list[ComponentState]) -> dict[str, ComponentState]:
 
 
 def _state_status(state: ComponentState | None) -> str:
+    """Повертає підтверджений стан, не маскуючи відсутність даних як healthy."""
     if state is None:
         return "unknown"
-    return str(state.status or "unknown")
+
+    status = str(state.status or "unknown").strip().lower()
+    details = state.details if isinstance(state.details, dict) else {}
+
+    if status == "healthy" and not details:
+        return "unknown"
+
+    return status
+
+
+def _external_component_status(
+    component_id: str,
+    external_adapters: list[dict[str, Any]],
+) -> str | None:
+    """Агрегує фактичні HTTP/TCP перевірки для одного компонента."""
+    statuses = [
+        str(adapter.get("status", "unavailable")).lower()
+        for adapter in external_adapters
+        if str(adapter.get("source", {}).get("component", "")) == component_id
+    ]
+
+    if not statuses:
+        return None
+    if all(status == "ready" for status in statuses):
+        return "healthy"
+    if all(status == "unavailable" for status in statuses):
+        return "down"
+    return "degraded"
+
+
+def _effective_component_status(
+    component_id: str,
+    state: ComponentState | None,
+    external_adapters: list[dict[str, Any]],
+) -> str:
+    """Поєднує активний стан захисту з актуальними read-only probes."""
+    state_status = _state_status(state)
+
+    if state_status not in {"healthy", "unknown"}:
+        return state_status
+
+    external_status = _external_component_status(
+        component_id,
+        external_adapters,
+    )
+    if external_status is not None:
+        return external_status
+
+    return state_status
 
 
 def _health_status(status: str) -> str:
@@ -151,8 +196,18 @@ def _details_text(details: dict[str, Any]) -> str:
     return ", ".join(f"{key}: {value}" for key, value in details.items())
 
 
-def _service_result(component_id: str, state: ComponentState | None, generated_at: str) -> dict[str, Any]:
-    status = _state_status(state)
+def _service_result(
+    component_id: str,
+    state: ComponentState | None,
+    generated_at: str,
+    external_adapters: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Формує результат компонента з урахуванням реальних probes."""
+    status = _effective_component_status(
+        component_id,
+        state,
+        external_adapters,
+    )
     health = _health_status(status)
     name = COMPONENT_NAMES.get(component_id, component_id)
     details = state.details if state and isinstance(state.details, dict) else {}
@@ -179,16 +234,33 @@ def _service_result(component_id: str, state: ComponentState | None, generated_a
     }
 
 
-def _build_api_snapshot(states: list[ComponentState], generated_at: str) -> dict[str, Any]:
+def _build_api_snapshot(
+    states: list[ComponentState],
+    generated_at: str,
+    external_adapters: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Будує зведення інтеграцій API лише з підтверджених станів."""
     indexed = _state_index(states)
-    results = [_service_result(component_id, indexed.get(component_id), generated_at) for component_id in CANONICAL_COMPONENTS]
+    results = [
+        _service_result(
+            component_id,
+            indexed.get(component_id),
+            generated_at,
+            external_adapters,
+        )
+        for component_id in CANONICAL_COMPONENTS
+    ]
     summary = {
         "total": len(results),
         "online": sum(1 for item in results if item["status"] == "online"),
         "degraded": sum(1 for item in results if item["status"] == "degraded"),
         "offline": sum(1 for item in results if item["status"] == "offline"),
         "unchecked": sum(1 for item in results if item["status"] == "unchecked"),
-        "criticalOffline": sum(1 for item in results if item["status"] == "offline" and item["service"]["critical"]),
+        "criticalOffline": sum(
+            1
+            for item in results
+            if item["status"] == "offline" and item["service"]["critical"]
+        ),
     }
 
     if summary["criticalOffline"] > 0:
@@ -211,7 +283,9 @@ def _build_api_snapshot(states: list[ComponentState], generated_at: str) -> dict
     }
 
 
-def _metrics_from_state(state: ComponentState | None) -> list[dict[str, Any]]:
+def _metrics_from_state(
+    state: ComponentState | None,
+) -> list[dict[str, Any]]:
     status = _state_status(state)
     details = state.details if state and isinstance(state.details, dict) else {}
     metrics = [
@@ -234,7 +308,10 @@ def _metrics_from_state(state: ComponentState | None) -> list[dict[str, Any]]:
     return metrics
 
 
-def _signals_from_state(component_id: str, state: ComponentState | None) -> list[dict[str, str]]:
+def _signals_from_state(
+    component_id: str,
+    state: ComponentState | None,
+) -> list[dict[str, str]]:
     status = _state_status(state)
     level = _signal_level(status)
     name = COMPONENT_NAMES.get(component_id, component_id)
@@ -244,7 +321,10 @@ def _signals_from_state(component_id: str, state: ComponentState | None) -> list
             {
                 "level": "normal",
                 "title": f"{name}: штатний стан",
-                "description": "Backend не бачить активної деградації для цього компонента.",
+                "description": (
+                    "Backend не бачить активної деградації "
+                    "для цього компонента."
+                ),
             }
         ]
 
@@ -252,14 +332,21 @@ def _signals_from_state(component_id: str, state: ComponentState | None) -> list
         {
             "level": level,
             "title": f"{name}: {_status_label(status)}",
-            "description": "Стан отримано з backend-шару кіберзахисту; UI не звертається до чужого сервісу напряму.",
+            "description": (
+                "Стан отримано з backend-шару кіберзахисту; "
+                "UI не звертається до чужого сервісу напряму."
+            ),
         }
     ]
 
 
-def _raw_state_preview(component_id: str, state: ComponentState | None) -> dict[str, Any] | None:
+def _raw_state_preview(
+    component_id: str,
+    state: ComponentState | None,
+) -> dict[str, Any] | None:
     if state is None:
         return None
+
     return {
         "component_id": component_id,
         "component_type": state.component_type,
@@ -289,10 +376,17 @@ def _build_read_only_snapshot(
                     "port": _backend_public_port(),
                     "endpoint": f"/api/state/components/{component_id}",
                     "timeoutMs": 10000,
-                    "description": COMPONENT_DESCRIPTIONS.get(component_id, ""),
+                    "description": COMPONENT_DESCRIPTIONS.get(
+                        component_id,
+                        "",
+                    ),
                 },
                 "status": _adapter_status(status),
-                "checkedAt": state.last_updated if state and state.last_updated else generated_at,
+                "checkedAt": (
+                    state.last_updated
+                    if state and state.last_updated
+                    else generated_at
+                ),
                 "latencyMs": None,
                 "statusCode": 200 if state else None,
                 "metrics": _metrics_from_state(state),
@@ -301,10 +395,21 @@ def _build_read_only_snapshot(
             }
         )
 
-    adapters.extend(sorted(external_adapters, key=lambda item: str(item.get("source", {}).get("id", ""))))
+    adapters.extend(
+        sorted(
+            external_adapters,
+            key=lambda item: str(
+                item.get("source", {}).get("id", "")
+            ),
+        )
+    )
 
     statuses = [item["status"] for item in adapters]
-    signals = [signal for item in adapters for signal in item["signals"]]
+    signals = [
+        signal
+        for item in adapters
+        for signal in item["signals"]
+    ]
 
     return {
         "generatedAt": generated_at,
@@ -314,8 +419,14 @@ def _build_read_only_snapshot(
             "partial": statuses.count("partial"),
             "stale": statuses.count("stale"),
             "unavailable": statuses.count("unavailable"),
-            "warningSignals": sum(1 for signal in signals if signal["level"] == "warning"),
-            "criticalSignals": sum(1 for signal in signals if signal["level"] == "critical"),
+            "warningSignals": sum(
+                1 for signal in signals
+                if signal["level"] == "warning"
+            ),
+            "criticalSignals": sum(
+                1 for signal in signals
+                if signal["level"] == "critical"
+            ),
         },
         "adapters": adapters,
     }
@@ -331,26 +442,42 @@ def _network_status_from_adapter(status: str) -> str:
     return "unavailable"
 
 
-def _network_source_from_adapter(adapter: dict[str, Any]) -> dict[str, Any]:
+def _network_source_from_adapter(
+    adapter: dict[str, Any],
+) -> dict[str, Any]:
     source = adapter.get("source", {})
+
     return {
         "source": {
             "id": str(source.get("id", "external-network")),
-            "name": str(source.get("name", "External network source")),
-            "owner": str(source.get("owner", "Зовнішній сервіс SmartEnergy")),
+            "name": str(
+                source.get("name", "External network source")
+            ),
+            "owner": str(
+                source.get(
+                    "owner",
+                    "Зовнішній сервіс SmartEnergy",
+                )
+            ),
             "protocol": str(source.get("protocol", "http")),
             "endpoint": str(source.get("endpoint", "")),
             "port": int(source.get("port", 0) or 0),
             "timeoutMs": int(source.get("timeoutMs", 0) or 0),
             "description": str(source.get("description", "")),
         },
-        "status": _network_status_from_adapter(str(adapter.get("status", "unavailable"))),
+        "status": _network_status_from_adapter(
+            str(adapter.get("status", "unavailable"))
+        ),
         "checkedAt": adapter.get("checkedAt"),
         "latencyMs": adapter.get("latencyMs"),
         "metrics": adapter.get("metrics", []),
         "signals": adapter.get("signals", []),
         "rawPreview": adapter.get("rawPreview"),
-        **({"error": adapter["error"]} if adapter.get("error") else {}),
+        **(
+            {"error": adapter["error"]}
+            if adapter.get("error")
+            else {}
+        ),
     }
 
 
@@ -374,7 +501,11 @@ def _build_network_snapshot(
             "description": COMPONENT_DESCRIPTIONS["network"],
         },
         "status": _network_status(status),
-        "checkedAt": network_state.last_updated if network_state and network_state.last_updated else generated_at,
+        "checkedAt": (
+            network_state.last_updated
+            if network_state and network_state.last_updated
+            else generated_at
+        ),
         "latencyMs": None,
         "metrics": _metrics_from_state(network_state),
         "signals": _signals_from_state("network", network_state),
@@ -387,7 +518,11 @@ def _build_network_snapshot(
         if adapter.get("source", {}).get("component") == "network"
     ]
     sources = [source, *external_network_sources]
-    signals = [signal for item in sources for signal in item["signals"]]
+    signals = [
+        signal
+        for item in sources
+        for signal in item["signals"]
+    ]
     statuses = [item["status"] for item in sources]
 
     return {
@@ -398,8 +533,14 @@ def _build_network_snapshot(
             "partial": statuses.count("partial"),
             "silent": statuses.count("silent"),
             "unavailable": statuses.count("unavailable"),
-            "warningSignals": sum(1 for signal in signals if signal["level"] == "warning"),
-            "criticalSignals": sum(1 for signal in signals if signal["level"] == "critical"),
+            "warningSignals": sum(
+                1 for signal in signals
+                if signal["level"] == "warning"
+            ),
+            "criticalSignals": sum(
+                1 for signal in signals
+                if signal["level"] == "critical"
+            ),
         },
         "sources": sources,
     }
@@ -417,24 +558,50 @@ def _build_metrics_snapshot(
     raw_overall: dict[str, Any],
     generated_at: str,
 ) -> dict[str, Any]:
-    availability_values = [_number(item.get("availability_pct")) for item in raw_metrics if item.get("availability_pct") is not None]
-    avg_availability = _number(raw_overall.get("avg_availability_pct"))
-    if avg_availability == 0 and availability_values:
-        avg_availability = round(sum(availability_values) / len(availability_values), 2)
+    availability_values = [
+        _number(item.get("availability_pct"))
+        for item in raw_metrics
+        if item.get("availability_pct") is not None
+    ]
+    avg_availability = _number(
+        raw_overall.get("avg_availability_pct")
+    )
 
-    total_incidents = int(_number(raw_overall.get("total_incidents")))
+    if avg_availability == 0 and availability_values:
+        avg_availability = round(
+            sum(availability_values) / len(availability_values),
+            2,
+        )
+
+    total_incidents = int(
+        _number(raw_overall.get("total_incidents"))
+    )
     if total_incidents == 0:
-        total_incidents = int(sum(_number(item.get("incident_count") or item.get("incidents_total")) for item in raw_metrics))
+        total_incidents = int(
+            sum(
+                _number(
+                    item.get("incident_count")
+                    or item.get("incidents_total")
+                )
+                for item in raw_metrics
+            )
+        )
 
     return {
         "generatedAt": generated_at,
         "summary": {
             "policies": len(raw_metrics),
             "avgAvailabilityPct": avg_availability,
-            "avgMttdMin": _number(raw_overall.get("avg_mttd_min")),
-            "avgMttrMin": _number(raw_overall.get("avg_mttr_min")),
+            "avgMttdMin": _number(
+                raw_overall.get("avg_mttd_min")
+            ),
+            "avgMttrMin": _number(
+                raw_overall.get("avg_mttr_min")
+            ),
             "totalIncidents": total_incidents,
-            "totalActions": int(_number(raw_overall.get("total_actions"))),
+            "totalActions": int(
+                _number(raw_overall.get("total_actions"))
+            ),
         },
         "byPolicy": raw_metrics,
     }
@@ -447,16 +614,39 @@ def _incident_severity(value: Any) -> str:
     return "warning"
 
 
-def _incident_timestamp(incident: dict[str, Any], generated_at: str) -> str:
-    return str(incident.get("detect_ts") or incident.get("start_ts") or generated_at)
+def _incident_timestamp(
+    incident: dict[str, Any],
+    generated_at: str,
+) -> str:
+    return str(
+        incident.get("detect_ts")
+        or incident.get("start_ts")
+        or generated_at
+    )
 
 
-def _build_incident_item(incident: dict[str, Any], generated_at: str) -> dict[str, Any]:
-    incident_id = str(incident.get("incident_id") or incident.get("id") or "incident")
-    component = str(incident.get("component") or "unknown")
-    category = str(incident.get("category") or incident.get("threat_type") or "security")
+def _build_incident_item(
+    incident: dict[str, Any],
+    generated_at: str,
+) -> dict[str, Any]:
+    incident_id = str(
+        incident.get("incident_id")
+        or incident.get("id")
+        or "incident"
+    )
+    component = str(
+        incident.get("component") or "unknown"
+    )
+    category = str(
+        incident.get("category")
+        or incident.get("threat_type")
+        or "security"
+    )
     policy = str(incident.get("policy") or "unknown")
-    description = str(incident.get("description") or f"{category} на компоненті {component}")
+    description = str(
+        incident.get("description")
+        or f"{category} на компоненті {component}"
+    )
 
     evidence = [
         f"Політика: {policy}",
@@ -465,26 +655,45 @@ def _build_incident_item(incident: dict[str, Any], generated_at: str) -> dict[st
     ]
 
     if incident.get("event_count") is not None:
-        evidence.append(f"Подій: {incident.get('event_count')}")
+        evidence.append(
+            f"Подій: {incident.get('event_count')}"
+        )
     if incident.get("mttd_sec") is not None:
-        evidence.append(f"MTTD: {incident.get('mttd_sec')} с")
+        evidence.append(
+            f"MTTD: {incident.get('mttd_sec')} с"
+        )
     if incident.get("mttr_sec") is not None:
-        evidence.append(f"MTTR: {incident.get('mttr_sec')} с")
+        evidence.append(
+            f"MTTR: {incident.get('mttr_sec')} с"
+        )
 
     return {
         "id": incident_id,
         "ruleId": f"{policy}:{category}",
-        "severity": _incident_severity(incident.get("severity")),
+        "severity": _incident_severity(
+            incident.get("severity")
+        ),
         "title": f"{component.upper()}: {category}",
         "description": description,
         "affectedComponents": [component],
         "evidence": evidence,
-        "createdAt": _incident_timestamp(incident, generated_at),
+        "createdAt": _incident_timestamp(
+            incident,
+            generated_at,
+        ),
     }
 
 
-def _latest_by_timestamp(items: list[dict[str, Any]], key: str, limit: int) -> list[dict[str, Any]]:
-    return sorted(items, key=lambda item: str(item.get(key) or ""), reverse=True)[:limit]
+def _latest_by_timestamp(
+    items: list[dict[str, Any]],
+    key: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    return sorted(
+        items,
+        key=lambda item: str(item.get(key) or ""),
+        reverse=True,
+    )[:limit]
 
 
 def _decision(
@@ -510,8 +719,15 @@ def _decision(
     }
 
 
-def _adapter_component(adapter: dict[str, Any]) -> str:
-    return str(adapter.get("source", {}).get("component", "unknown"))
+def _adapter_component(
+    adapter: dict[str, Any],
+) -> str:
+    return str(
+        adapter.get("source", {}).get(
+            "component",
+            "unknown",
+        )
+    )
 
 
 def _build_decisions(
@@ -520,21 +736,45 @@ def _build_decisions(
     adapters: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     indexed = _state_index(states)
-    incident_ids = [str(item.get("id")) for item in incidents]
+    incident_ids = [
+        str(item.get("id"))
+        for item in incidents
+    ]
     decisions: list[dict[str, Any]] = []
     integration_mode = _integration_mode()
-    unavailable_adapters = [item for item in adapters if item.get("status") == "unavailable"]
-    ready_adapters = [item for item in adapters if item.get("status") in {"ready", "partial"}]
 
-    if any(item["severity"] == "critical" for item in incidents):
+    unavailable_adapters = [
+        item
+        for item in adapters
+        if item.get("status") == "unavailable"
+    ]
+    ready_adapters = [
+        item
+        for item in adapters
+        if item.get("status") in {"ready", "partial"}
+    ]
+
+    if any(
+        item["severity"] == "critical"
+        for item in incidents
+    ):
         decisions.append(
             _decision(
                 decision_id="backend-protected-degradation",
                 priority="high",
                 title="Підтримати контрольовану деградацію",
-                description="Backend зафіксував критичні інциденти; автоматичні зовнішні команди мають проходити через dispatcher.",
-                reason="Є критичні інциденти у snapshot backend-а.",
-                target_components=CANONICAL_COMPONENTS,
+                description=(
+                    "Backend зафіксував критичні інциденти; "
+                    "автоматичні зовнішні команди мають "
+                    "проходити через dispatcher."
+                ),
+                reason=(
+                    "Є критичні інциденти "
+                    "у snapshot backend-а."
+                ),
+                target_components=list(
+                    CANONICAL_COMPONENTS
+                ),
                 related_incident_ids=incident_ids,
                 execution_mode="manual",
             )
@@ -546,23 +786,54 @@ def _build_decisions(
                 decision_id="backend-restore-readonly-sources",
                 priority="high",
                 title="Відновити read-only джерела",
-                description="Частина зовнішніх джерел SmartEnergy недоступна для backend-а кіберзахисту.",
-                reason=f"Недоступно джерел: {len(unavailable_adapters)}.",
-                target_components=sorted({_adapter_component(item) for item in unavailable_adapters}),
+                description=(
+                    "Частина зовнішніх джерел SmartEnergy "
+                    "недоступна для backend-а кіберзахисту."
+                ),
+                reason=(
+                    f"Недоступно джерел: "
+                    f"{len(unavailable_adapters)}."
+                ),
+                target_components=sorted(
+                    {
+                        _adapter_component(item)
+                        for item in unavailable_adapters
+                    }
+                ),
                 related_incident_ids=incident_ids,
                 execution_mode="manual",
             )
         )
 
-    if external_reads_enabled() and adapters and len(ready_adapters) < max(1, len(adapters) // 2):
+    if (
+        external_reads_enabled()
+        and adapters
+        and len(ready_adapters)
+        < max(1, len(adapters) // 2)
+    ):
         decisions.append(
             _decision(
                 decision_id="backend-data-quorum-lost",
                 priority="high",
-                title="Заблокувати автодії через недостатній кворум даних",
-                description="Backend не має достатньо незалежних джерел, щоб безпечно формувати автоматичні команди.",
-                reason=f"Доступно {len(ready_adapters)} із {len(adapters)} зовнішніх джерел.",
-                target_components=sorted({_adapter_component(item) for item in adapters}),
+                title=(
+                    "Заблокувати автодії через "
+                    "недостатній кворум даних"
+                ),
+                description=(
+                    "Backend не має достатньо незалежних "
+                    "джерел, щоб безпечно формувати "
+                    "автоматичні команди."
+                ),
+                reason=(
+                    f"Доступно {len(ready_adapters)} "
+                    f"із {len(adapters)} зовнішніх джерел."
+                ),
+                target_components=sorted(
+                    {
+                        _adapter_component(item)
+                        for item in adapters
+                    }
+                ),
                 related_incident_ids=incident_ids,
                 execution_mode="blocked",
             )
@@ -575,7 +846,11 @@ def _build_decisions(
                 decision_id="backend-review-api-isolation",
                 priority="high",
                 title="Перевірити ізоляцію API",
-                description="API уже перебуває в ізоляції; потрібне ручне підтвердження перед зняттям обмеження.",
+                description=(
+                    "API уже перебуває в ізоляції; потрібне "
+                    "ручне підтвердження перед зняттям "
+                    "обмеження."
+                ),
                 reason="Стан компонента api: isolated.",
                 target_components=["api"],
                 related_incident_ids=incident_ids,
@@ -590,7 +865,11 @@ def _build_decisions(
                 decision_id="backend-watch-auth-blocking",
                 priority="medium",
                 title="Контролювати блокування акторів",
-                description="Auth-шар уже блокує підозрілих акторів; UI показує цей стан без прямих команд у чужий сервіс.",
+                description=(
+                    "Auth-шар уже блокує підозрілих акторів; "
+                    "UI показує цей стан без прямих команд "
+                    "у чужий сервіс."
+                ),
                 reason="Стан компонента auth: blocking.",
                 target_components=["auth"],
                 related_incident_ids=incident_ids,
@@ -599,14 +878,23 @@ def _build_decisions(
         )
 
     db_state = indexed.get("db")
-    db_details = db_state.details if db_state and isinstance(db_state.details, dict) else {}
+    db_details = (
+        db_state.details
+        if db_state
+        and isinstance(db_state.details, dict)
+        else {}
+    )
     if db_details:
         decisions.append(
             _decision(
                 decision_id="backend-confirm-db-snapshot",
                 priority="low",
                 title="Підтвердити стан резервування БД",
-                description="Backend має дані про стан БД; наступний крок — замінити файлове джерело на MongoDB або InfluxDB адаптер.",
+                description=(
+                    "Backend має дані про стан БД; наступний "
+                    "крок — замінити файлове джерело на "
+                    "MongoDB або InfluxDB адаптер."
+                ),
                 reason=_details_text(db_details),
                 target_components=["db"],
                 related_incident_ids=[],
@@ -619,10 +907,22 @@ def _build_decisions(
             _decision(
                 decision_id="backend-active-actions-disabled",
                 priority="medium",
-                title="Не виконувати зовнішні команди автоматично",
-                description="Backend працює не в active режимі, тому зовнішні керувальні дії лишаються рекомендаціями або unsupported.",
-                reason=f"Поточний режим інтеграції: {integration_mode}.",
-                target_components=list(CANONICAL_COMPONENTS),
+                title=(
+                    "Не виконувати зовнішні команди "
+                    "автоматично"
+                ),
+                description=(
+                    "Backend працює не в active режимі, "
+                    "тому зовнішні керувальні дії лишаються "
+                    "рекомендаціями або unsupported."
+                ),
+                reason=(
+                    f"Поточний режим інтеграції: "
+                    f"{integration_mode}."
+                ),
+                target_components=list(
+                    CANONICAL_COMPONENTS
+                ),
                 related_incident_ids=incident_ids,
                 execution_mode="blocked",
             )
@@ -634,9 +934,17 @@ def _build_decisions(
                 decision_id="backend-continue-monitoring",
                 priority="low",
                 title="Продовжити моніторинг",
-                description="Критичних умов для ручної реакції не виявлено.",
-                reason="Snapshot backend-а доступний і не містить критичних сигналів.",
-                target_components=list(CANONICAL_COMPONENTS),
+                description=(
+                    "Критичних умов для ручної реакції "
+                    "не виявлено."
+                ),
+                reason=(
+                    "Snapshot backend-а доступний і не "
+                    "містить критичних сигналів."
+                ),
+                target_components=list(
+                    CANONICAL_COMPONENTS
+                ),
                 related_incident_ids=[],
                 execution_mode="read_only",
             )
@@ -652,27 +960,57 @@ def _build_incidents_snapshot(
     generated_at: str,
     limit: int,
 ) -> dict[str, Any]:
-    latest = _latest_by_timestamp(raw_incidents, "detect_ts", limit)
-    incidents = [_build_incident_item(item, generated_at) for item in latest]
-    decisions = _build_decisions(incidents, states, adapters)
+    latest = _latest_by_timestamp(
+        raw_incidents,
+        "detect_ts",
+        limit,
+    )
+    incidents = [
+        _build_incident_item(item, generated_at)
+        for item in latest
+    ]
+    decisions = _build_decisions(
+        incidents,
+        states,
+        adapters,
+    )
 
     return {
         "generatedAt": generated_at,
         "summary": {
             "totalIncidents": len(incidents),
-            "criticalIncidents": sum(1 for item in incidents if item["severity"] == "critical"),
-            "warningIncidents": sum(1 for item in incidents if item["severity"] == "warning"),
+            "criticalIncidents": sum(
+                1
+                for item in incidents
+                if item["severity"] == "critical"
+            ),
+            "warningIncidents": sum(
+                1
+                for item in incidents
+                if item["severity"] == "warning"
+            ),
             "totalDecisions": len(decisions),
-            "highPriorityDecisions": sum(1 for item in decisions if item["priority"] == "high"),
-            "blockedDecisions": sum(1 for item in decisions if item["executionMode"] == "blocked"),
+            "highPriorityDecisions": sum(
+                1
+                for item in decisions
+                if item["priority"] == "high"
+            ),
+            "blockedDecisions": sum(
+                1
+                for item in decisions
+                if item["executionMode"] == "blocked"
+            ),
         },
         "incidents": incidents,
         "decisions": decisions,
     }
 
 
-def _dispatch_mode(action: dict[str, Any]) -> str:
+def _dispatch_mode(
+    action: dict[str, Any],
+) -> str:
     status = str(action.get("status") or "").lower()
+
     if status == "applied":
         return "applied"
     if status in {"failed", "unsupported"}:
@@ -680,8 +1018,13 @@ def _dispatch_mode(action: dict[str, Any]) -> str:
     return "recommended"
 
 
-def _dispatch_mode_from_decision(decision: dict[str, Any]) -> str:
-    execution_mode = str(decision.get("executionMode", "manual"))
+def _dispatch_mode_from_decision(
+    decision: dict[str, Any],
+) -> str:
+    execution_mode = str(
+        decision.get("executionMode", "manual")
+    )
+
     if execution_mode == "read_only":
         return "applied"
     if execution_mode == "blocked":
@@ -705,8 +1048,13 @@ def _dispatch_title_from_decision(mode: str) -> str:
     return "recommended: потрібне ручне підтвердження"
 
 
-def _build_decision_dispatch_record(decision: dict[str, Any], generated_at: str) -> dict[str, Any]:
-    decision_id = str(decision.get("id") or "decision")
+def _build_decision_dispatch_record(
+    decision: dict[str, Any],
+    generated_at: str,
+) -> dict[str, Any]:
+    decision_id = str(
+        decision.get("id") or "decision"
+    )
     mode = _dispatch_mode_from_decision(decision)
 
     return {
@@ -714,29 +1062,68 @@ def _build_decision_dispatch_record(decision: dict[str, Any], generated_at: str)
         "decisionId": decision_id,
         "mode": mode,
         "title": _dispatch_title_from_decision(mode),
-        "description": str(decision.get("description") or decision.get("title") or ""),
-        "targetComponents": decision.get("targetComponents", []),
-        "reason": str(decision.get("reason") or "Причину не вказано."),
+        "description": str(
+            decision.get("description")
+            or decision.get("title")
+            or ""
+        ),
+        "targetComponents": decision.get(
+            "targetComponents",
+            [],
+        ),
+        "reason": str(
+            decision.get("reason")
+            or "Причину не вказано."
+        ),
         "createdAt": generated_at,
     }
 
 
-def _build_dispatch_record(action: dict[str, Any], generated_at: str) -> dict[str, Any]:
-    action_id = str(action.get("action_id") or "action")
-    action_type = str(action.get("action") or "unknown")
-    target_component = str(action.get("target_component") or "unknown")
-    target_id = str(action.get("target_id") or "")
+def _build_dispatch_record(
+    action: dict[str, Any],
+    generated_at: str,
+) -> dict[str, Any]:
+    action_id = str(
+        action.get("action_id") or "action"
+    )
+    action_type = str(
+        action.get("action") or "unknown"
+    )
+    target_component = str(
+        action.get("target_component") or "unknown"
+    )
+    target_id = str(
+        action.get("target_id") or ""
+    )
     mode = _dispatch_mode(action)
+
+    target_suffix = (
+        f"/{target_id}"
+        if target_id
+        else ""
+    )
 
     return {
         "id": f"dispatch-{action_id}",
-        "decisionId": str(action.get("correlation_id") or action_id),
+        "decisionId": str(
+            action.get("correlation_id")
+            or action_id
+        ),
         "mode": mode,
         "title": _dispatch_title(mode),
-        "description": f"{action_type} -> {target_component}{f'/{target_id}' if target_id else ''}",
+        "description": (
+            f"{action_type} -> "
+            f"{target_component}{target_suffix}"
+        ),
         "targetComponents": [target_component],
-        "reason": str(action.get("reason") or "Причину не вказано."),
-        "createdAt": str(action.get("ts_utc") or generated_at),
+        "reason": str(
+            action.get("reason")
+            or "Причину не вказано."
+        ),
+        "createdAt": str(
+            action.get("ts_utc")
+            or generated_at
+        ),
     }
 
 
@@ -746,47 +1133,129 @@ def _build_actions_snapshot(
     generated_at: str,
     limit: int,
 ) -> dict[str, Any]:
-    latest = _latest_by_timestamp(raw_actions, "ts_utc", limit)
-    decision_actions = [_build_decision_dispatch_record(decision, generated_at) for decision in decisions]
-    history_actions = [_build_dispatch_record(action, generated_at) for action in latest]
-    actions = [*decision_actions, *history_actions][:limit]
+    latest = _latest_by_timestamp(
+        raw_actions,
+        "ts_utc",
+        limit,
+    )
+    decision_actions = [
+        _build_decision_dispatch_record(
+            decision,
+            generated_at,
+        )
+        for decision in decisions
+    ]
+    history_actions = [
+        _build_dispatch_record(
+            action,
+            generated_at,
+        )
+        for action in latest
+    ]
+    actions = [
+        *decision_actions,
+        *history_actions,
+    ][:limit]
 
     return {
         "generatedAt": generated_at,
         "summary": {
             "total": len(actions),
-            "applied": sum(1 for item in actions if item["mode"] == "applied"),
-            "recommended": sum(1 for item in actions if item["mode"] == "recommended"),
-            "unsupported": sum(1 for item in actions if item["mode"] == "unsupported"),
+            "applied": sum(
+                1
+                for item in actions
+                if item["mode"] == "applied"
+            ),
+            "recommended": sum(
+                1
+                for item in actions
+                if item["mode"] == "recommended"
+            ),
+            "unsupported": sum(
+                1
+                for item in actions
+                if item["mode"] == "unsupported"
+            ),
         },
         "actions": actions,
     }
 
 
-@router.get("/snapshot", response_model=CybersecuritySnapshotResponse)
+@router.get(
+    "/snapshot",
+    response_model=CybersecuritySnapshotResponse,
+)
 def get_cybersecurity_snapshot(
-    incident_limit: int = Query(20, ge=1, le=200, description="Кількість інцидентів у snapshot"),
-    action_limit: int = Query(20, ge=1, le=200, description="Кількість dispatcher-записів у snapshot"),
+    incident_limit: int = Query(
+        20,
+        ge=1,
+        le=200,
+        description="Кількість інцидентів у snapshot",
+    ),
+    action_limit: int = Query(
+        20,
+        ge=1,
+        le=200,
+        description="Кількість dispatcher-записів у snapshot",
+    ),
 ) -> CybersecuritySnapshotResponse:
     """Повертає агрегований стан кіберзахисту для інтегрованого React UI."""
     provider = get_provider()
     generated_at = _utc_now()
     states = provider.get_state()
-    incidents = provider.get_incidents(max(incident_limit, 1000))
-    actions = provider.get_actions(max(action_limit, 1000))
+    incidents = provider.get_incidents(
+        max(incident_limit, 1000)
+    )
+    actions = provider.get_actions(
+        max(action_limit, 1000)
+    )
     raw_metrics = provider.get_metrics()
     raw_overall = provider.get_overall_metrics()
-    external_adapters = read_external_adapter_states(generated_at)
-    api_snapshot = _build_api_snapshot(states, generated_at)
-    incidents_snapshot = _build_incidents_snapshot(incidents, states, external_adapters, generated_at, incident_limit)
+    external_adapters = read_external_adapter_states(
+        generated_at
+    )
+
+    api_snapshot = _build_api_snapshot(
+        states,
+        generated_at,
+        external_adapters,
+    )
+    incidents_snapshot = _build_incidents_snapshot(
+        incidents,
+        states,
+        external_adapters,
+        generated_at,
+        incident_limit,
+    )
 
     return CybersecuritySnapshotResponse(
         generated_at=generated_at,
-        backend=_build_backend_info(generated_at, api_snapshot, external_adapters),
+        backend=_build_backend_info(
+            generated_at,
+            api_snapshot,
+            external_adapters,
+        ),
         api=api_snapshot,
-        read_only=_build_read_only_snapshot(states, generated_at, external_adapters),
-        network=_build_network_snapshot(states, generated_at, external_adapters),
-        metrics=_build_metrics_snapshot(raw_metrics, raw_overall, generated_at),
+        read_only=_build_read_only_snapshot(
+            states,
+            generated_at,
+            external_adapters,
+        ),
+        network=_build_network_snapshot(
+            states,
+            generated_at,
+            external_adapters,
+        ),
+        metrics=_build_metrics_snapshot(
+            raw_metrics,
+            raw_overall,
+            generated_at,
+        ),
         incidents=incidents_snapshot,
-        actions=_build_actions_snapshot(actions, incidents_snapshot["decisions"], generated_at, action_limit),
+        actions=_build_actions_snapshot(
+            actions,
+            incidents_snapshot["decisions"],
+            generated_at,
+            action_limit,
+        ),
     )
