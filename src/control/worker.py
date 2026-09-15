@@ -15,6 +15,7 @@ from src.control.dispatcher import ActionDispatcher
 from src.control.gateway_control import GatewayControlSettings, HttpGatewayControl
 from src.control.idempotency import IdempotencyStore
 from src.control.models import ActionStatus, ActionType, SecurityAction
+from src.shared.file_utils import load_offset_checkpoint, save_offset_checkpoint
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ _GATEWAY_ACTION_TO_STATE_EVENT: dict[str, str] = {
     "isolate_component": "isolation_enabled",
     "release_isolation": "isolation_released",
 }
+
 
 def _utc_now() -> str:
     """Повертає поточний час у форматі ISO-8601 UTC."""
@@ -39,6 +41,7 @@ class WorkerSettings:
     actions_path: Path
     applied_path: Path
     idempotency_path: Path
+    actions_checkpoint_path: Path
     poll_interval_sec: float
     gateway_service_id: str
     default_rate_per_second: float
@@ -67,12 +70,32 @@ class WorkerSettings:
         if poll_interval_sec <= 0:
             raise ValueError("CONTROL_POLL_INTERVAL_SEC має бути більше нуля")
 
+        gateway_service_id = os.getenv("CONTROL_GATEWAY_SERVICE_ID", "iot-gateway").strip()
+
+        if not gateway_service_id:
+            raise ValueError("CONTROL_GATEWAY_SERVICE_ID не може бути порожнім")
+
         return cls(
-            actions_path=Path(os.getenv("CONTROL_ACTIONS_PATH", "/work/data/integration/actions.jsonl")),
-            applied_path=Path(os.getenv("CONTROL_APPLIED_PATH", "/work/data/integration/actions_applied.jsonl")),
-            idempotency_path=Path(os.getenv("CONTROL_IDEMPOTENCY_PATH", "/work/data/integration/control/idempotency.sqlite3")),
+            actions_path=Path(
+                os.getenv("CONTROL_ACTIONS_PATH", "/work/data/integration/actions.jsonl")
+            ),
+            applied_path=Path(
+                os.getenv("CONTROL_APPLIED_PATH", "/work/data/integration/actions_applied.jsonl")
+            ),
+            idempotency_path=Path(
+                os.getenv(
+                    "CONTROL_IDEMPOTENCY_PATH",
+                    "/work/data/integration/control/idempotency.sqlite3",
+                )
+            ),
+            actions_checkpoint_path=Path(
+                os.getenv(
+                    "CONTROL_ACTIONS_CHECKPOINT_PATH",
+                    "/work/data/integration/checkpoints/control-actions.json",
+                )
+            ),
             poll_interval_sec=poll_interval_sec,
-            gateway_service_id=os.getenv("CONTROL_GATEWAY_SERVICE_ID", "iot-gateway").strip(),
+            gateway_service_id=gateway_service_id,
             default_rate_per_second=default_rate_per_second,
             default_burst_capacity=default_burst_capacity,
             allowed_isolation_components=allowed_components,
@@ -80,31 +103,38 @@ class WorkerSettings:
 
 
 class ActionTailSource:
-    """Читає нові Action із JSONL-файла Analyzer."""
+    """Читає нові Action із JSONL-файла Analyzer.
 
-    def __init__(self, path: str | Path) -> None:
-        """Ініціалізує tail-читання файла дій."""
+    Позиція читання зберігається лише після успішного
+    опрацювання всього пакета дій.
+    """
+
+    def __init__(self, path: str | Path, checkpoint_path: str | Path) -> None:
+        """Ініціалізує читання дій зі збереженого offset."""
         self._path = Path(path)
-        self._offset = 0
-        self._inode: int | None = None
+        self._checkpoint_path = Path(checkpoint_path)
+        self._offset, self._inode = load_offset_checkpoint(self._checkpoint_path, self._path)
 
     def read_batch(self, limit: int = 1000) -> list[Action]:
-        """Зчитує пакет нових дій після поточного offset."""
-        if not self._path.exists() or limit < 1:
+        """Зчитує пакет дій після збереженого offset."""
+        if limit < 1 or not self._path.exists():
             return []
 
         try:
-            stat = self._path.stat()
+            source_stat = self._path.stat()
         except OSError:
+            log.exception("Не вдалося прочитати метадані файла дій %s", self._path)
             return []
 
-        if self._inode is not None and self._inode != stat.st_ino:
+        if self._inode is not None and self._inode != source_stat.st_ino:
+            log.info("Файл дій %s було замінено — offset скинуто", self._path)
             self._offset = 0
 
-        if stat.st_size < self._offset:
+        if source_stat.st_size < self._offset:
+            log.info("Файл дій %s було скорочено — offset скинуто", self._path)
             self._offset = 0
 
-        self._inode = stat.st_ino
+        self._inode = source_stat.st_ino
         actions: list[Action] = []
 
         try:
@@ -128,8 +158,8 @@ class ActionTailSource:
 
                     try:
                         action = Action.from_json(stripped)
-                    except (ValueError, TypeError, KeyError):
-                        log.exception("Пропущено некоректний Action")
+                    except (ValueError, TypeError, KeyError, AttributeError) as error:
+                        log.warning("Пропущено некоректний Action: %s", error)
                         continue
 
                     actions.append(action)
@@ -138,8 +168,13 @@ class ActionTailSource:
 
         except OSError:
             log.exception("Не вдалося прочитати файл дій %s", self._path)
+            return []
 
         return actions
+
+    def commit(self) -> None:
+        """Фіксує offset після успішної обробки пакета."""
+        save_offset_checkpoint(self._checkpoint_path, self._path, self._offset, self._inode)
 
 
 class ActionAckWriter:
@@ -161,16 +196,15 @@ class ActionAckWriter:
 class GatewayActionWorker:
     """Передає дозволені дії Analyzer до нашого Gateway."""
 
-    def __init__(
-        self,
-        *,
-        settings: WorkerSettings,
-        dispatcher: ActionDispatcher,
-    ) -> None:
+    def __init__(self, *, settings: WorkerSettings, dispatcher: ActionDispatcher) -> None:
         """Створює worker активного реагування."""
         self._settings = settings
         self._dispatcher = dispatcher
-        self._source = ActionTailSource(settings.actions_path)
+
+        self._source = ActionTailSource(
+            settings.actions_path,
+            settings.actions_checkpoint_path,
+        )
         self._ack_writer = ActionAckWriter(settings.applied_path)
 
     async def run(self, stop_event: asyncio.Event) -> None:
@@ -184,14 +218,16 @@ class GatewayActionWorker:
                 if action.status not in {"pending", "emitted"}:
                     continue
 
-                ack = await self._process_action(action)
-                self._ack_writer.write(ack)
+                acknowledgement = await self._process_action(action)
+                self._ack_writer.write(acknowledgement)
 
                 log.info(
                     "Action %s завершено з результатом %s",
                     action.action_id,
-                    ack.result,
+                    acknowledgement.result,
                 )
+
+            self._source.commit()
 
             try:
                 await asyncio.wait_for(
@@ -227,11 +263,7 @@ class GatewayActionWorker:
             else ""
         )
 
-        state_event = (
-            _GATEWAY_ACTION_TO_STATE_EVENT.get(gateway_action, "")
-            if success
-            else ""
-        )
+        state_event = _GATEWAY_ACTION_TO_STATE_EVENT.get(gateway_action, "") if success else ""
 
         return ContractActionAck(
             action_id=action.action_id,
@@ -360,16 +392,9 @@ class GatewayActionWorker:
 
 
 def create_worker(settings: WorkerSettings) -> GatewayActionWorker:
-    """Створює worker з HTTP GatewayControl та ідемпотентністю."""
+    """Створює worker з GatewayControl та ідемпотентністю."""
     control = HttpGatewayControl(GatewayControlSettings.from_env())
     idempotency_store = IdempotencyStore(settings.idempotency_path)
-    
-    dispatcher = ActionDispatcher(
-        gateway_control=control,
-        idempotency_store=idempotency_store,
-    )
+    dispatcher = ActionDispatcher(gateway_control=control, idempotency_store=idempotency_store)
 
-    return GatewayActionWorker(
-        settings=settings,
-        dispatcher=dispatcher,
-    )
+    return GatewayActionWorker(settings=settings, dispatcher=dispatcher)

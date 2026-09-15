@@ -125,30 +125,31 @@ services:
       cybersecurity-collector:
         condition: service_started
 
-  cybersecurity-control:
-    <<: *cybersecurity-service
-    container_name: cybersecurity-control
-    command:
-      - python
-      - -m
-      - src.control
-    environment:
-      GATEWAY_CONTROL_URL: http://cybersecurity-gateway:8080
-      GATEWAY_CONTROL_TOKEN: ${GATEWAY_CONTROL_TOKEN:?GATEWAY_CONTROL_TOKEN is required}
-      GATEWAY_CONTROL_TIMEOUT_SECONDS: ${GATEWAY_CONTROL_TIMEOUT_SECONDS:-5}
-      CONTROL_ACTIONS_PATH: /work/data/integration/actions.jsonl
-      CONTROL_APPLIED_PATH: /work/data/integration/actions_applied.jsonl
-      CONTROL_IDEMPOTENCY_PATH: /work/data/integration/control/idempotency.sqlite3
-      CONTROL_GATEWAY_SERVICE_ID: iot-gateway
-      CONTROL_POLL_INTERVAL_SEC: ${CONTROL_POLL_INTERVAL_SEC:-0.5}
-      CONTROL_DEFAULT_RATE_PER_SECOND: ${GATEWAY_RATE_PER_SECOND:-25}
-      CONTROL_DEFAULT_BURST_CAPACITY: ${GATEWAY_BURST_CAPACITY:-50}
-      CONTROL_ALLOWED_ISOLATION_COMPONENTS: gateway,api,edge,iot-gateway
-    depends_on:
-      cybersecurity-gateway:
-        condition: service_healthy
-      cybersecurity-analyzer:
-        condition: service_started
+    cybersecurity-control:
+      <<: *cybersecurity-service
+      container_name: cybersecurity-control
+      command:
+        - python
+        - -m
+        - src.control
+      environment:
+        GATEWAY_CONTROL_URL: http://cybersecurity-gateway:8080
+        GATEWAY_CONTROL_TOKEN: ${GATEWAY_CONTROL_TOKEN:?GATEWAY_CONTROL_TOKEN is required}
+        GATEWAY_CONTROL_TIMEOUT_SECONDS: ${GATEWAY_CONTROL_TIMEOUT_SECONDS:-5}
+        CONTROL_ACTIONS_PATH: /work/data/integration/actions.jsonl
+        CONTROL_APPLIED_PATH: /work/data/integration/actions_applied.jsonl
+        CONTROL_IDEMPOTENCY_PATH: /work/data/integration/control/idempotency.sqlite3
+        CONTROL_ACTIONS_CHECKPOINT_PATH: /work/data/integration/checkpoints/control-actions.json
+        CONTROL_GATEWAY_SERVICE_ID: iot-gateway
+        CONTROL_POLL_INTERVAL_SEC: ${CONTROL_POLL_INTERVAL_SEC:-0.5}
+        CONTROL_DEFAULT_RATE_PER_SECOND: ${GATEWAY_RATE_PER_SECOND:-25}
+        CONTROL_DEFAULT_BURST_CAPACITY: ${GATEWAY_BURST_CAPACITY:-50}
+        CONTROL_ALLOWED_ISOLATION_COMPONENTS: gateway,api,edge,iot-gateway
+      depends_on:
+        cybersecurity-gateway:
+          condition: service_healthy
+        cybersecurity-analyzer:
+          condition: service_started
 
   cybersecurity-api:
     <<: *cybersecurity-service
