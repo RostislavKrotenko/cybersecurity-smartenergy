@@ -1,15 +1,24 @@
 # SmartEnergy Cyber-Resilience Analyzer
 
-Прототип closed-loop системи кіберреагування для SmartEnergy: генерація подій, детекція інцидентів, автоматичні дії та live-візуалізація стану інфраструктури.
+Контейнеризований модуль кіберзахисту та функціональної стійкості SmartEnergy:
+захисний reverse proxy, near-real-time аналіз MQTT-телеметрії,
+автоматичне реагування й read-only моніторинг доступності компонентів.
 
 ## Призначення
 
-Проєкт моделює кібератаки і реакції на них для таких зон:
-- Gateway
-- API
-- Auth
-- Database (Postgres)
-- Network
+Активна інтеграція забезпечує:
+
+- захист одного backend, трафік якого проходить через Gateway;
+- виявлення та пом'якшення API flood/DDoS;
+- rate limiting і автоматичне блокування джерел;
+- circuit breaker, контрольовану ізоляцію та stale-cache;
+- аналіз реальної MQTT-телеметрії за ключами `voltage` і `power_kw`;
+- read-only перевірки доступності HTTP/TCP компонентів;
+- відновлення стану дій за допомогою ACK, idempotency і checkpoints.
+
+Сценарії автентифікації, пошкодження БД, несанкціонованих команд і складних
+мережевих атак можуть залишатися в емуляторі як дослідницькі дані, але не є
+активними можливостями інтеграції `rozumnaEnergia`.
 
 Система оцінює ефективність політик безпеки `minimal`, `baseline`, `standard` через метрики Availability / MTTD / MTTR.
 
@@ -17,10 +26,12 @@
 
 | Модуль | Роль |
 |---|---|
-| Emulator | Генерує фонові й атакуючі події, підтримує live-потік і closed-loop |
-| Analyzer | Детекція -> кореляція -> інциденти -> рішення (actions) -> ACK/state update |
-| API | REST API бекенд (FastAPI) |
-| Frontend | React дашборд з Tailwind CSS |
+| Gateway | Reverse proxy, rate limiting, блокування, circuit breaker і stale-cache |
+| Collector | Збирає події Gateway, MQTT і перевірки доступності |
+| Analyzer | Виявляє DDoS, аномалії телеметрії та недоступність upstream |
+| Control | Ідемпотентно застосовує підтримувані дії через Gateway |
+| API | Формує агрегований snapshot для UI |
+| Emulator | Окремий дослідницький генератор сценаріїв, не джерело production-даних |
 
 ## Docker профілі
 
@@ -48,6 +59,36 @@ docker compose --profile live down -v && docker compose --profile live up -d --b
 ```bash
 make docker-live
 ```
+
+### Публікація production-образу в Docker Hub
+
+Загальний проєкт використовує один versioned image для Gateway, Collector,
+Analyzer, Control та API. На ARM-комп'ютері образ для production AMD-сервера
+потрібно збирати явно для `linux/amd64`:
+
+```bash
+docker login
+docker buildx create --name smartenergy-builder --use
+docker buildx inspect --bootstrap
+docker buildx build \
+  --platform linux/amd64 \
+  --tag rostyslavkrotenko/cybersecurity-smartenergy:latest \
+  --push \
+  .
+docker buildx imagetools inspect \
+  rostyslavkrotenko/cybersecurity-smartenergy:latest
+```
+
+Якщо builder `smartenergy-builder` уже існує, замість його повторного створення
+використовуйте:
+
+```bash
+docker buildx use smartenergy-builder
+```
+
+Тег у `docker-compose.yaml` загального проєкту потрібно оновлювати лише після
+успішної публікації нового versioned image. Реальні токени й файли `.env` у
+Docker image та Git додавати не можна.
 
 ### Локально (без Docker)
 
@@ -102,20 +143,13 @@ GET /api/health              - health check
 
 ## Frontend (React)
 
-Фронтенд побудовано на:
-- React 18 + TypeScript
-- Vite (збірка)
-- Tailwind CSS (стилі)
-- Recharts (графіки)
-- TanStack Query (data fetching)
+Активний UI інтегровано як React Router маршрут `/cybersecurity` у репозиторії
+`rozumnaEnergia`. Він показує стани Gateway/API, останню MQTT-телеметрію,
+read-only доступність зовнішніх компонентів, інциденти, фактичні дії та
+порівняльні метрики політик.
 
-### Компоненти UI
-
-- **Policy KPI Cards** — доступність, простій, MTTD/MTTR для кожної політики
-- **Component Status Cards** — стан Gateway, API, Auth, DB, Network
-- **Action Summary Card** — статус виконаних/невдалих дій
-- **Charts** — Availability, Downtime, Incidents/min, Actions/min
-- **Tables** — інциденти та дії з пагінацією
+MTTD, MTTR і availability у таблиці політик є модельними порівняльними
+показниками. Вони не подаються як фактичний час стендової реакції.
 
 ### Команди
 
@@ -127,16 +161,15 @@ make frontend-build     # Production build
 
 ## Closed-loop реагування
 
-### Gateway / API / Auth
+### Gateway / API
 
 - `availability_attack` -> `enable_rate_limit` (Gateway)
 - `availability_attack` + critical -> `isolate_component` (API)
-- `credential_attack` -> `block_actor` (Auth)
-
-### Database / Network
-
-- `outage` -> `backup_db`, `restore_db`
-- `network_failure` -> `degrade_network`
+- повторні порушення rate limit -> автоматичне блокування джерела (Gateway)
+- `integrity_attack` для MQTT -> інцидент для `voltage` або `power_kw`, без
+  непідтримуваної команди в чужий сервіс
+- `outage` -> фіксація інциденту; circuit breaker і stale-cache виконуються
+  безпосередньо Gateway
 
 ## Дані та часові мітки
 
