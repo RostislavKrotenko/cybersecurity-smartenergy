@@ -126,7 +126,7 @@ class GatewayEventSource(EventSource):
         try:
             payload = json.loads(self._checkpoint_path.read_text(encoding="utf-8"))
             self._offset = max(0, int(payload.get("offset", 0)))
-
+            
             inode = payload.get("inode")
             self._inode = int(inode) if inode is not None else None
         except (OSError, ValueError, json.JSONDecodeError):
@@ -358,9 +358,7 @@ class MqttEventSource(EventSource):
         try:
             import paho.mqtt.client as mqtt
         except ImportError as error:
-            raise RuntimeError(
-                "Для MQTT Collector потрібно встановити paho-mqtt"
-            ) from error
+            raise RuntimeError("Для MQTT Collector потрібно встановити paho-mqtt") from error
 
         self._mqtt = mqtt
         self._host = host
@@ -375,10 +373,7 @@ class MqttEventSource(EventSource):
         callback_version = getattr(mqtt, "CallbackAPIVersion", None)
 
         if callback_version is not None:
-            self._client = mqtt.Client(
-                callback_version.VERSION2,
-                client_id=client_id,
-            )
+            self._client = mqtt.Client(callback_version.VERSION2, client_id=client_id)
         else:
             self._client = mqtt.Client(client_id=client_id)
 
@@ -460,17 +455,9 @@ class MqttEventSource(EventSource):
         for topic in self._topics:
             client.subscribe(topic, qos=self._qos)
 
-        log.info(
-            "Collector підписався на MQTT topics: %s",
-            ", ".join(self._topics),
-        )
+        log.info("Collector підписався на MQTT topics: %s", ", ".join(self._topics))
 
-    def _on_message(
-        self,
-        client: Any,
-        userdata: Any,
-        message: Any,
-    ) -> None:
+    def _on_message(self, client: Any, userdata: Any, message: Any) -> None:
         """Перетворює MQTT-повідомлення на канонічну подію."""
         try:
             events = self._message_to_events(
@@ -549,11 +536,7 @@ class MqttEventSource(EventSource):
             return _utc_now()
 
     @staticmethod
-    def _event_from_decoded(
-        *,
-        topic: str,
-        decoded: dict[str, Any],
-    ) -> Event:
+    def _event_from_decoded(*, topic: str, decoded: dict[str, Any]) -> Event:
         """Створює одну канонічну подію із довільного MQTT-словника."""
         raw_tags = decoded.get("tags", "collector,mqtt")
         if isinstance(raw_tags, list):
@@ -563,15 +546,10 @@ class MqttEventSource(EventSource):
 
         value = decoded.get("value", decoded)
         if isinstance(value, (dict, list)):
-            value = json.dumps(
-                value,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
+            value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
         component = str(
-            decoded.get("component")
-            or MqttEventSource._component_from_topic(topic)
+            decoded.get("component") or MqttEventSource._component_from_topic(topic)
         )
 
         return Event(
@@ -601,11 +579,7 @@ class MqttEventSource(EventSource):
         )
 
     @staticmethod
-    def _message_to_event(
-        *,
-        topic: str,
-        payload: bytes,
-    ) -> Event:
+    def _message_to_event(*, topic: str, payload: bytes) -> Event:
         """Перетворює довільний MQTT payload на одну канонічну подію."""
         return MqttEventSource._event_from_decoded(
             topic=topic,
@@ -613,21 +587,12 @@ class MqttEventSource(EventSource):
         )
 
     @staticmethod
-    def _message_to_events(
-        *,
-        topic: str,
-        payload: bytes,
-    ) -> list[Event]:
+    def _message_to_events(*, topic: str, payload: bytes) -> list[Event]:
         """Розгортає SmartEnergy payload у набір окремих вимірювань."""
         decoded = MqttEventSource._decode_payload(payload)
 
-        if MqttEventSource._is_smartenergy_telemetry(
-            topic,
-            decoded,
-        ):
-            events = MqttEventSource._smartenergy_telemetry_events(
-                decoded
-            )
+        if MqttEventSource._is_smartenergy_telemetry(topic, decoded):
+            events = MqttEventSource._smartenergy_telemetry_events(decoded)
             if events:
                 return events
 
@@ -649,20 +614,11 @@ class MqttEventSource(EventSource):
 
         return any(
             key in decoded
-            for key in (
-                "solar",
-                "charge",
-                "discharge",
-                "battery",
-                "devices",
-            )
+            for key in ("solar", "charge", "discharge", "battery", "devices")
         )
 
     @staticmethod
-    def _numeric_value(
-        container: Any,
-        key: str,
-    ) -> float | None:
+    def _numeric_value(container: Any, key: str) -> float | None:
         """Повертає скінченне числове поле вкладеного об'єкта."""
         if not isinstance(container, dict):
             return None
@@ -751,27 +707,13 @@ class MqttEventSource(EventSource):
                 unit="",
                 suffix="status",
                 event="service_status",
-                severity=(
-                    "low"
-                    if normalized_status == "healthy"
-                    else "high"
-                ),
+                severity=("low" if normalized_status == "healthy" else "high"),
             )
 
-        for channel_name in (
-            "solar",
-            "charge",
-            "discharge",
-        ):
+        for channel_name in ("solar", "charge", "discharge"):
             channel = decoded.get(channel_name)
-            voltage = MqttEventSource._numeric_value(
-                channel,
-                "v",
-            )
-            current = MqttEventSource._numeric_value(
-                channel,
-                "i",
-            )
+            voltage = MqttEventSource._numeric_value(channel, "v")
+            current = MqttEventSource._numeric_value(channel, "i")
 
             if voltage is not None:
                 append_event(
@@ -781,7 +723,6 @@ class MqttEventSource(EventSource):
                     unit="V",
                     suffix=f"{channel_name}-voltage",
                 )
-
             if current is not None:
                 append_event(
                     source_suffix=channel_name,
@@ -790,7 +731,6 @@ class MqttEventSource(EventSource):
                     unit="A",
                     suffix=f"{channel_name}-current",
                 )
-
             if voltage is not None and current is not None:
                 append_event(
                     source_suffix=channel_name,
@@ -815,17 +755,9 @@ class MqttEventSource(EventSource):
 
         devices = decoded.get("devices")
         if isinstance(devices, dict):
-            for device_name, device in sorted(
-                devices.items()
-            ):
-                voltage = MqttEventSource._numeric_value(
-                    device,
-                    "v",
-                )
-                current = MqttEventSource._numeric_value(
-                    device,
-                    "i",
-                )
+            for device_name, device in sorted(devices.items()):
+                voltage = MqttEventSource._numeric_value(device, "v")
+                current = MqttEventSource._numeric_value(device, "i")
                 source_suffix = str(device_name)
 
                 if voltage is not None:
@@ -841,7 +773,6 @@ class MqttEventSource(EventSource):
                         unit="V",
                         suffix=f"{source_suffix}-voltage",
                     )
-
                 if current is not None:
                     append_event(
                         source_suffix=source_suffix,
@@ -850,7 +781,6 @@ class MqttEventSource(EventSource):
                         unit="A",
                         suffix=f"{source_suffix}-current",
                     )
-
                 if voltage is not None and current is not None:
                     append_event(
                         source_suffix=source_suffix,
