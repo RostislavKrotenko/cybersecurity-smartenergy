@@ -216,14 +216,21 @@ def _extract_target_id(
     incident: Incident,
     target_component: str,
 ) -> str:
-    """Визначає коректний ідентифікатор цільового компонента.
+    """Визначає serviceId Gateway, який породив інцидент.
 
-    Якщо уражений компонент інциденту збігається з цільовим
-    компонентом playbook, використовується його ідентифікатор.
-    Інакше повертається цільовий компонент playbook. Завдяки
-    цьому DDoS-інцидент Gateway може коректно ізолювати API,
-    а не помилково вказувати Gateway як ціль ізоляції.
+    Gateway записує джерело як ``cybersecurity-gateway:<serviceId>``.
+    Значення після двокрапки переноситься в Action.target_id, щоб
+    Control worker направив реакцію саме до ураженого upstream.
     """
+    for source in incident.source.split(";"):
+        normalized_source = source.strip()
+        prefix = "cybersecurity-gateway:"
+
+        if normalized_source.startswith(prefix):
+            service_id = normalized_source.removeprefix(prefix).strip()
+            if service_id:
+                return service_id
+
     components = [
         component.strip()
         for component in incident.component.split(";")
