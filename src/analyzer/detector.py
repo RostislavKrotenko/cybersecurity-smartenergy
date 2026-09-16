@@ -208,9 +208,11 @@ def _detect_telemetry_spoof(
             try:
                 val = float(e.value)
             except (ValueError, TypeError):
+                if e.event == "telemetry_quarantined":
+                    anomalies.append(e)
                 continue
 
-            is_anomaly = False
+            is_anomaly = e.event == "telemetry_quarantined"
 
             b = bounds.get(key)
             if b and (val < b.get("min", float("-inf")) or val > b.get("max", float("inf"))):
@@ -245,8 +247,8 @@ def _detect_telemetry_spoof(
                             component=anomalies[0].component,
                             source=source,
                             description=(
-                                f"Аномалія телеметрії: {len(buf)} значень поза межами "
-                                f"для {key} на {source} за {window:.0f}s"
+                                f"Карантин MQTT: {len(buf)} аномальних значень "
+                                f"поза межами для {key} на {source} за {window:.0f}s"
                             ),
                             event_count=len(buf),
                             event_ids=";".join(e.correlation_id or e.timestamp for e in buf),
