@@ -8,8 +8,9 @@ import socket
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 
@@ -26,6 +27,18 @@ class ExternalReadTarget:
     description: str
     url: str = ""
     host: str = ""
+    connect_port: int | None = None
+
+
+@dataclass(frozen=True)
+class ActiveGatewayTarget:
+    """Опис одного активного захисного Gateway для UI snapshot."""
+
+    service_id: str
+    name: str
+    state_url: str
+    public_port: int
+    upstream_name: str
 
 
 def external_reads_enabled() -> bool:
@@ -46,97 +59,301 @@ def _env(name: str, default: str) -> str:
     return os.getenv(name, default).strip()
 
 
+def _active_gateway_targets() -> list[ActiveGatewayTarget]:
+    """Читає список Gateway з формату serviceId|name|url|port|upstream."""
+
+    raw_value = _env(
+        "CYBERSECURITY_ACTIVE_GATEWAYS",
+        (
+            "iot-gateway|Smart Energy API Gateway|"
+            "http://cybersecurity-gateway:8080/_cybersecurity/state|"
+            "6006|Smart Energy API"
+        ),
+    )
+    targets: list[ActiveGatewayTarget] = []
+
+    for raw_target in raw_value.split(";"):
+        raw_target = raw_target.strip()
+        if not raw_target:
+            continue
+
+        parts = [part.strip() for part in raw_target.split("|", maxsplit=4)]
+        if len(parts) != 5 or not all(parts):
+            continue
+
+        service_id, name, state_url, raw_port, upstream_name = parts
+
+        try:
+            public_port = int(raw_port)
+        except ValueError:
+            continue
+
+        if not state_url.startswith(("http://", "https://")):
+            continue
+
+        targets.append(
+            ActiveGatewayTarget(
+                service_id=service_id,
+                name=name,
+                state_url=state_url,
+                public_port=public_port,
+                upstream_name=upstream_name,
+            )
+        )
+
+    return targets
+
+
+def read_active_gateway_states(generated_at: str) -> list[dict[str, Any]]:
+    """Повертає окремий фактичний стан кожного захисного Gateway."""
+
+    targets = _active_gateway_targets()
+    if not targets:
+        return []
+
+    timeout = adapter_timeout_sec()
+    with ThreadPoolExecutor(max_workers=min(4, len(targets))) as executor:
+        reader = partial(
+            _read_active_gateway,
+            generated_at=generated_at,
+            timeout=timeout,
+        )
+        return list(executor.map(reader, targets))
+
+
+def _read_active_gateway(
+    target: ActiveGatewayTarget,
+    generated_at: str,
+    timeout: float,
+) -> dict[str, Any]:
+    """Читає публічний state endpoint одного Gateway."""
+
+    started = time.perf_counter()
+    request = urllib.request.Request(
+        target.state_url,
+        headers={"Accept": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read(128_000)
+            payload = json.loads(body.decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Gateway повернув не JSON-об'єкт")
+
+            latency_ms = round((time.perf_counter() - started) * 1000)
+            status = _gateway_status(payload)
+
+            return _gateway_result(
+                target=target,
+                generated_at=generated_at,
+                status=status,
+                latency_ms=latency_ms,
+                status_code=int(response.status),
+                payload=payload,
+            )
+    except Exception as error:
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        return _gateway_result(
+            target=target,
+            generated_at=generated_at,
+            status="offline",
+            latency_ms=latency_ms,
+            status_code=None,
+            payload=None,
+            error=str(error),
+        )
+
+
+def _gateway_status(payload: dict[str, Any]) -> str:
+    """Визначає UI-статус Gateway за його фактичним станом."""
+
+    isolation = payload.get("isolation") or {}
+    circuit = payload.get("circuit") or {}
+    rate_limit = payload.get("rateLimit") or {}
+
+    if bool(isolation.get("enabled")) or str(circuit.get("mode")) == "open":
+        return "degraded"
+
+    if int(payload.get("blockedCount", 0) or 0) > 0:
+        return "degraded"
+
+    if str(rate_limit.get("actionId") or "").strip():
+        return "degraded"
+
+    return "online"
+
+
+def _gateway_result(
+    *,
+    target: ActiveGatewayTarget,
+    generated_at: str,
+    status: str,
+    latency_ms: int,
+    status_code: int | None,
+    payload: dict[str, Any] | None,
+    error: str = "",
+) -> dict[str, Any]:
+    """Формує сумісну з UI картку одного Gateway."""
+
+    state = payload or {}
+    rate_limit = state.get("rateLimit") or {}
+    circuit = state.get("circuit") or {}
+    isolation = state.get("isolation") or {}
+
+    if error:
+        detail = f"Gateway недоступний: {error}"
+    else:
+        detail = (
+            f"upstream: {target.upstream_name}; "
+            f"rate: {rate_limit.get('ratePerSecond', '—')}/с; "
+            f"burst: {rate_limit.get('burstCapacity', '—')}; "
+            f"blocked: {state.get('blockedCount', 0)}; "
+            f"circuit: {circuit.get('mode', 'unknown')}; "
+            f"isolation: {'on' if isolation.get('enabled') else 'off'}"
+        )
+
+    return {
+        "service": {
+            "id": target.service_id,
+            "name": target.name,
+            "owner": "Cybersecurity Gateway",
+            "port": target.public_port,
+            "protocol": "http",
+            "url": target.state_url,
+            "method": "GET",
+            "timeoutMs": int(adapter_timeout_sec() * 1000),
+            "critical": True,
+            "description": (
+                f"Активний захист HTTP-контуру {target.upstream_name}."
+            ),
+        },
+        "status": status,
+        "checkedAt": generated_at,
+        "latencyMs": latency_ms,
+        "statusCode": status_code,
+        "detail": detail,
+        "corsLimited": False,
+        "gatewayState": payload,
+    }
+
+
 def _target_list() -> list[ExternalReadTarget]:
+    gateway_url = _env(
+        "CYBERSECURITY_GATEWAY_URL",
+        "http://backend-kravchenko:8000/api/v1/telemetry/latest?limit=50",
+    )
+    bms_url = _env("CYBERSECURITY_BMS_URL", "http://backend-service:8000/api/data")
+    inverter_url = _env(
+        "CYBERSECURITY_INVERTER_URL",
+        "http://backend_dosmukhamedov:6050/api/settings",
+    )
+    stability_url = _env(
+        "CYBERSECURITY_TROIAN_URL",
+        "http://backend_troian:8085/api/equipment",
+    )
+    history_url = _env("CYBERSECURITY_HISTORY_URL", "http://history-api:6032/api/status")
+    influx_url = _env("CYBERSECURITY_INFLUX_URL", "http://influxdb:8086/health")
+    mongo_host = _env("CYBERSECURITY_MONGO_HOST", "mongodb")
+    mongo_port = int(_env("CYBERSECURITY_MONGO_PORT", "27017"))
+    mqtt_host = _env("CYBERSECURITY_MQTT_HOST", "mosquitto")
+    mqtt_port = int(_env("CYBERSECURITY_MQTT_WS_PORT", "9001"))
+    websocket_host = _env("CYBERSECURITY_STABILITY_HOST", "functional-stability-shevchenko")
+    websocket_port = int(_env("CYBERSECURITY_STABILITY_PORT", "8000"))
+
     return [
         ExternalReadTarget(
             id="gateway-telemetry",
             name="Телеметрія Gateway",
             component="gateway",
             protocol="http",
-            endpoint=_env("CYBERSECURITY_GATEWAY_URL", "http://backend-kravchenko:8000/api/v1/telemetry/latest?limit=50"),
+            endpoint=gateway_url,
             port=int(_env("CYBERSECURITY_GATEWAY_PORT", "6006")),
-            description="Read-only перегляд телеметрії захищеного backend.",
-            url=_env("CYBERSECURITY_GATEWAY_URL", "http://backend-kravchenko:8000/api/v1/telemetry/latest?limit=50"),
+            description="Надає актуальні енергетичні показники із захищеного backend.",
+            url=gateway_url,
         ),
         ExternalReadTarget(
             id="bms-state",
             name="BMS батареї",
             component="api",
             protocol="http",
-            endpoint=_env("CYBERSECURITY_BMS_URL", "http://backend-service:8000/api/data"),
+            endpoint=bms_url,
             port=int(_env("CYBERSECURITY_BMS_PORT", "6005")),
-            description="Read-only стан батарейного BMS.",
-            url=_env("CYBERSECURITY_BMS_URL", "http://backend-service:8000/api/data"),
+            description="Показує заряд, напругу, струм і температуру батареї.",
+            url=bms_url,
         ),
         ExternalReadTarget(
             id="inverter-settings",
             name="Гібридний інвертор",
             component="api",
             protocol="http",
-            endpoint=_env("CYBERSECURITY_INVERTER_URL", "http://backend_dosmukhamedov:6050/api/settings"),
+            endpoint=inverter_url,
             port=int(_env("CYBERSECURITY_INVERTER_PORT", "6050")),
-            description="Read-only доступність і налаштування інвертора.",
-            url=_env("CYBERSECURITY_INVERTER_URL", "http://backend_dosmukhamedov:6050/api/settings"),
+            description="Надає поточний режим роботи й налаштування інвертора.",
+            url=inverter_url,
         ),
         ExternalReadTarget(
             id="troian-advisor",
             name="Сервіс функціональної стійкості",
             component="api",
             protocol="http",
-            endpoint=_env("CYBERSECURITY_TROIAN_URL", "http://backend_troian:8085/api/equipment"),
+            endpoint=stability_url,
             port=int(_env("CYBERSECURITY_TROIAN_PORT", "6028")),
-            description="Read-only доступність API рекомендацій.",
-            url=_env("CYBERSECURITY_TROIAN_URL", "http://backend_troian:8085/api/equipment"),
+            description="Надає дані про обладнання для оцінювання функціональної стійкості.",
+            url=stability_url,
         ),
         ExternalReadTarget(
             id="history-api",
             name="API історичних даних",
             component="db",
             protocol="http",
-            endpoint=_env("CYBERSECURITY_HISTORY_URL", "http://history-api:6032/api/status"),
+            endpoint=history_url,
             port=int(_env("CYBERSECURITY_HISTORY_PORT", "6032")),
-            description="Read-only доступність API історичних даних.",
-            url=_env("CYBERSECURITY_HISTORY_URL", "http://history-api:6032/api/status"),
+            description="Надає збережені раніше вимірювання енергетичної системи.",
+            url=history_url,
         ),
         ExternalReadTarget(
             id="influxdb-health",
             name="InfluxDB",
             component="db",
             protocol="http",
-            endpoint=_env("CYBERSECURITY_INFLUX_URL", "http://influxdb:8086/health"),
+            endpoint=influx_url,
             port=int(_env("CYBERSECURITY_INFLUX_PORT", "6029")),
-            description="Health endpoint без читання часових рядів.",
-            url=_env("CYBERSECURITY_INFLUX_URL", "http://influxdb:8086/health"),
+            description="Зберігає часові ряди енергетичних вимірювань.",
+            url=influx_url,
         ),
         ExternalReadTarget(
             id="mongodb-socket",
             name="MongoDB",
             component="db",
             protocol="tcp",
-            endpoint=f"{_env('CYBERSECURITY_MONGO_HOST', 'mongodb')}:{_env('CYBERSECURITY_MONGO_PORT', '27017')}",
-            port=int(_env("CYBERSECURITY_MONGO_PORT", "27017")),
-            description="TCP-перевірка доступності без читання даних.",
-            host=_env("CYBERSECURITY_MONGO_HOST", "mongodb"),
+            endpoint=f"{mongo_host}:{mongo_port}",
+            port=mongo_port,
+            description="Зберігає дані сервісів Smart Energy у документному форматі.",
+            host=mongo_host,
+            connect_port=mongo_port,
         ),
         ExternalReadTarget(
             id="mqtt-broker",
             name="MQTT broker",
             component="network",
             protocol="tcp",
-            endpoint=f"{_env('CYBERSECURITY_MQTT_HOST', 'mosquitto')}:{_env('CYBERSECURITY_MQTT_WS_PORT', '9001')}",
+            endpoint=f"{mqtt_host}:{mqtt_port}",
             port=int(_env("CYBERSECURITY_MQTT_PUBLIC_PORT", "6031")),
-            description="TCP-перевірка доступності MQTT WebSocket.",
-            host=_env("CYBERSECURITY_MQTT_HOST", "mosquitto"),
+            description="Передає телеметрію між пристроями та сервісами через MQTT.",
+            host=mqtt_host,
+            connect_port=mqtt_port,
         ),
         ExternalReadTarget(
             id="functional-stability-ws",
             name="WebSocket функціональної стійкості",
             component="network",
             protocol="tcp",
-            endpoint=f"{_env('CYBERSECURITY_STABILITY_HOST', 'functional-stability-shevchenko')}:{_env('CYBERSECURITY_STABILITY_PORT', '8000')}/ws",
+            endpoint=f"{websocket_host}:{websocket_port}/ws",
             port=int(_env("CYBERSECURITY_STABILITY_PUBLIC_PORT", "6040")),
-            description="TCP-перевірка доступності WebSocket endpoint.",
-            host=_env("CYBERSECURITY_STABILITY_HOST", "functional-stability-shevchenko"),
+            description="Передає в реальному часі оновлення функціональної стійкості.",
+            host=websocket_host,
+            connect_port=websocket_port,
         ),
     ]
 
@@ -149,8 +366,8 @@ def read_external_adapter_states(generated_at: str) -> list[dict[str, Any]]:
     targets = _target_list()
     timeout = adapter_timeout_sec()
     with ThreadPoolExecutor(max_workers=min(8, len(targets))) as executor:
-        futures = [executor.submit(_read_target, target, generated_at, timeout) for target in targets]
-        return [future.result() for future in as_completed(futures)]
+        reader = partial(_read_target, generated_at=generated_at, timeout=timeout)
+        return list(executor.map(reader, targets))
 
 
 def _read_target(target: ExternalReadTarget, generated_at: str, timeout: float) -> dict[str, Any]:
@@ -256,11 +473,7 @@ def _read_tcp_target(target: ExternalReadTarget, generated_at: str, timeout: flo
 
 
 def _target_internal_port(target: ExternalReadTarget) -> int:
-    if target.id == "mqtt-broker":
-        return int(_env("CYBERSECURITY_MQTT_WS_PORT", "9001"))
-    if target.id == "functional-stability-ws":
-        return int(_env("CYBERSECURITY_STABILITY_PORT", "8000"))
-    return target.port
+    return target.connect_port or target.port
 
 
 def _adapter_state(
