@@ -60,9 +60,9 @@ def correlate(
     time_groups: dict[str, list[Alert]] = {}
     for a in no_cor:
         placed = False
-        group_key_prefix = f"{a.component}|{a.threat_type}"
+        group_key_prefix = f"{a.component}|{a.threat_type}|{a.source}"
         for gk, grp in time_groups.items():
-            if gk.startswith(group_key_prefix):
+            if gk.startswith(f"{group_key_prefix}|"):
                 last_ts = max(_ts(x.timestamp) for x in grp)
                 if abs((_ts(a.timestamp) - last_ts).total_seconds()) <= merge_window_sec:
                     grp.append(a)
@@ -141,6 +141,7 @@ def _build_incident(
     impact_score = min(impact_score, 1.0)
 
     components = sorted({a.component for a in group})
+    sources = sorted({a.source for a in group if a.source})
     total_events = sum(a.event_count for a in group)
 
     desc_parts = sorted({a.description for a in group})
@@ -161,4 +162,5 @@ def _build_incident(
         impact_score=impact_score,
         description=" | ".join(desc_parts),
         response_action="; ".join(response_parts) if response_parts else "notify",
+        source=";".join(sources),
     )
