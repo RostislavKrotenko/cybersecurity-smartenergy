@@ -1,283 +1,125 @@
-# rules.yaml — правила детекції (Analyzer → Detector)
-# Кожне правило:
-#   id             — унікальний ідентифікатор
-#   name           — людська назва
-#   threat_type    — credential_attack | availability_attack | integrity_attack | outage | network_failure
-#   description    — що детектується
-#   match          — умови спрацьовування (тип події, поля, порогові значення)
-#   window_sec     — вікно часу для агрегації подій
-#   threshold      — мінімальна кількість подій у вікні для спрацьовування
-#   severity       — критичність алерту при спрацьовуванні
-#   confidence     — базова впевненість правила (0.0 — 1.0)
-#   response_hint  — рекомендована дія (використовує Responder)
+# Активні правила інтегрованого контуру Smart Energy.
 #
-# Policy Engine може модифікувати window/threshold/severity залежно від
-# політики (baseline/minimal/standard).
+# У production-профілі залишаються лише правила, для яких загальний
+# Docker Compose надає реальні події: захисні події Gateway, MQTT-
+# телеметрію та повідомлення про недоступність захищеного контуру.
+# Емулятор може підтримувати додаткові дослідницькі сценарії, але вони
+# не оголошуються активними можливостями інтегрованої системи.
 
 rules:
-
-  # RULE 1: детекція brute-force
-  - id: RULE-BF-001
-    name: "Brute-Force Authentication"
-    threat_type: credential_attack
-    description: >
-      Детекція серії невдалих автентифікацій від одного IP до одного source
-      за обмежений час. Порогові значення параметризовані.
-    enabled: true
-
-    match:
-      event: auth_failure
-      group_by: [ip, source]            # групування: один IP → один target
-
-    window_sec: 60                       # вікно: 60 секунд
-    threshold: 5                         # ≥ 5 невдач за вікно → алерт
-
-    severity: high
-    confidence: 0.85
-
-    # Додаткові підправила
-    sub_rules:
-      - id: RULE-BF-002
-        name: "Brute-Force Success After Failures"
-        description: "Успішний логін після серії невдач — можливий компроміс"
-        match:
-          event: auth_success
-          precondition: "RULE-BF-001 спрацювало протягом 300 секунд для того самого ip"
-        severity: critical
-        confidence: 0.95
-        response_hint: block_ip_and_revoke_session
-
-    response_hint: block_ip
-
-  # RULE 2: DDoS / API flood
   - id: RULE-DDOS-001
-    name: "DDoS / API Rate Flood"
+    name: "Перевищення інтенсивності API-запитів"
     threat_type: availability_attack
     description: >
-      Масивне перевищення rate limit від кількох IP-адрес.
-      Агрегація по цільовому source.
+      Виявляє серію подій rate_exceeded, сформованих захисним Gateway
+      під час перевищення дозволеної інтенсивності запитів.
     enabled: true
 
     match:
       event: rate_exceeded
-      group_by: [source]                 # агрегація по цільовому сервісу
+      group_by: [source]
 
     window_sec: 30
-    threshold: 10                        # ≥ 10 rate_exceeded подій за 30с
-
+    threshold: 10
     severity: critical
     confidence: 0.90
 
-    # Ескалація: якщо сервіс деградував
     sub_rules:
       - id: RULE-DDOS-002
-        name: "DDoS with Service Impact"
-        description: "Флуд запитів + деградація/відмова сервісу — підтверджений DDoS"
+        name: "API flood із впливом на сервіс"
+        description: >
+          Підвищує впевненість, якщо разом із API flood Gateway
+          фіксує деградацію або відмову захищеного сервісу.
         match:
           event: service_status
           key: status
           values: [degraded, down]
-          precondition: "RULE-DDOS-001 спрацювало протягом 120 секунд для того самого source"
+          precondition: >
+            RULE-DDOS-001 спрацювало протягом 120 секунд
+            для того самого source
         severity: critical
         confidence: 0.98
         response_hint: activate_ddos_mitigation
 
-    response_hint: rate_limit_ip_range
+    response_hint: rate_limit_and_block_source
 
-  # RULE 3: підміна телеметрії / аномалія
   - id: RULE-SPOOF-001
-    name: "Telemetry Value Anomaly"
+    name: "Аномалія MQTT-телеметрії"
     threat_type: integrity_attack
     description: >
-      Значення телеметрії виходять за фізично допустимі межі або
-      демонструють різкий стрибок (delta) порівняно з попереднім зчитуванням.
+      Виявляє фізично недопустимі значення або різкі зміни напруги
+      та потужності у нормалізованій MQTT-телеметрії Smart Energy.
     enabled: true
 
     match:
       event: telemetry_read
       group_by: [source, key]
 
-    # Статичні межі (фізичні обмеження)
     bounds:
       voltage:
         min: 180.0
         max: 280.0
         unit: V
       power_kw:
-        min: -10.0                       # мінімальне (невелика зворотна подача)
+        min: -10.0
         max: 100.0
         unit: kW
-      frequency_hz:
-        min: 47.0
-        max: 53.0
-        unit: Hz
-      temperature_c:
-        min: -20.0
-        max: 120.0
-        unit: "°C"
 
-    # Динамічні межі (delta від попереднього значення)
     delta:
-      voltage: 50.0                      # стрибок > 50V — аномалія
-      power_kw: 30.0                     # стрибок > 30kW
-      frequency_hz: 1.0                  # стрибок > 1Hz
-      temperature_c: 15.0               # стрибок > 15°C
+      voltage: 50.0
+      power_kw: 30.0
 
     window_sec: 60
-    threshold: 3                         # ≥ 3 аномальних зчитувань за 60с
-
+    threshold: 3
     severity: medium
     confidence: 0.75
 
     sub_rules:
       - id: RULE-SPOOF-002
-        name: "Sustained Telemetry Spoofing"
-        description: "Тривала аномалія (> 5 подій) — підтверджений спуфінг"
+        name: "Тривала аномалія MQTT-телеметрії"
+        description: >
+          Підвищує критичність після щонайменше п'яти аномальних
+          значень одного показника.
         match:
-          precondition: "RULE-SPOOF-001 count >= 5 протягом 120 секунд"
+          precondition: >
+            RULE-SPOOF-001 count >= 5 протягом 120 секунд
         severity: high
         confidence: 0.90
-        response_hint: isolate_device
+        response_hint: operator_review
 
     response_hint: flag_for_review
 
-  # RULE 4: несанкціоноване виконання команд
-  - id: RULE-UCMD-001
-    name: "Unauthorized Command Execution"
-    threat_type: integrity_attack
-    description: >
-      Команда управління (cmd_exec) виконана актором, який не має прав:
-      роль ∉ allowed_roles або actor = unknown/guest.
-    enabled: true
-
-    match:
-      event: cmd_exec
-      actor_not_in: [operator, admin]    # тільки operator і admin мають права
-      group_by: [source, ip]
-
-    window_sec: 120
-    threshold: 1                         # навіть 1 несанкціонована команда = алерт
-
-    severity: critical
-    confidence: 0.95
-
-    # Критичні команди мають підвищений пріоритет
-    critical_commands:
-      - breaker_open
-      - breaker_close
-      - emergency_shutdown
-      - firmware_update
-      - set_voltage
-
-    sub_rules:
-      - id: RULE-UCMD-002
-        name: "Multiple Unauthorized Commands"
-        description: "Кілька несанкціонованих команд — ймовірна APT"
-        match:
-          precondition: "RULE-UCMD-001 count >= 3 within 300 sec"
-        severity: critical
-        confidence: 0.99
-        response_hint: isolate_network_segment
-
-    response_hint: block_actor_and_alert
-
-  # RULE 5: відмова сервісу / пошкодження БД
   - id: RULE-OUT-001
-    name: "Service Outage Detection"
+    name: "Недоступність захищеного контуру"
     threat_type: outage
     description: >
-      Сервіс перейшов у стан degraded або down (heartbeat / service_status).
+      Виявляє фактичну недоступність Gateway або upstream за подіями
+      Collector і захисного reverse proxy. Перевірки зовнішніх БД та
+      endpoint відображаються окремо як read-only availability.
     enabled: true
 
     match:
       event: service_status
-      key: status
-      values: [degraded, down]
+      values:
+        - degraded
+        - down
+        - unavailable
+        - upstream_timeout
+        - upstream_unavailable
+        - upstream_isolated
+        - gateway_not_ready
       group_by: [source]
 
     window_sec: 60
-    threshold: 1                         # будь-який down = алерт
-
-    severity: high                       # ескалюється до critical при status=down
-    severity_override:
-      - { value: down, severity: critical }
-
-    confidence: 0.90
-
-    response_hint: notify_oncall
-
-  - id: RULE-OUT-002
-    name: "Database Corruption Detection"
-    threat_type: outage
-    description: >
-      Помилки цілісності БД (integrity_violation, checksum_mismatch, wal_corruption).
-    enabled: true
-
-    match:
-      event: db_error
-      key: error_type
-      values: [integrity_violation, checksum_mismatch, wal_corruption]
-      group_by: [source]
-
-    window_sec: 120
-    threshold: 2                         # ≥ 2 db_error за 2 хв
-
-    severity: critical
-    confidence: 0.92
-
-    sub_rules:
-      - id: RULE-OUT-003
-        name: "Cascading Outage (DB → Services)"
-        description: "Пошкодження БД із подальшою відмовою сервісу — каскадна відмова"
-        match:
-          precondition: "RULE-OUT-002 і RULE-OUT-001 спрацювали протягом 120 секунд"
-        severity: critical
-        confidence: 0.98
-        response_hint: initiate_rollback_and_failover
-
-    response_hint: initiate_backup_rollback
-
-  # RULE 6: детекція відмови мережі (A6)
-  - id: RULE-NET-001
-    name: "Network Failure Detection"
-    threat_type: network_failure
-    description: >
-      Деградація мережі, відмова портів, втрата зв'язку з мережевим
-      обладнанням (комутатори, файрволи, шлюзи).
-    enabled: true
-
-    match:
-      event: service_status
-      key: status
-      values: [degraded, down, packet_loss, timeout, unreachable]
-      component: network
-      group_by: [source]
-
-    window_sec: 60
-    threshold: 2                         # ≥ 2 події за 60с
-
+    threshold: 1
     severity: high
     severity_override:
-      - { value: down, severity: critical }
-      - { value: unreachable, severity: critical }
+      - {value: down, severity: critical}
+      - {value: upstream_unavailable, severity: critical}
+    confidence: 0.90
+    response_hint: monitor_controlled_recovery
 
-    confidence: 0.88
-
-    sub_rules:
-      - id: RULE-NET-002
-        name: "Port Failure Cascade"
-        description: "Відмова портів після деградації мережі — каскадна проблема"
-        match:
-          event: port_status
-          precondition: "RULE-NET-001 спрацювало протягом 120 секунд"
-        severity: critical
-        confidence: 0.95
-        response_hint: reset_network_and_isolate
-
-    response_hint: reset_network
-
-# Глобальні параметри детектора
 detector_defaults:
-  max_alerts_per_minute: 100             # обмеження частоти
-  dedup_window_sec: 10                   # дедуплікація однакових алертів
-  min_confidence: 0.5                    # ігнорувати алерти з confidence < 0.5
+  max_alerts_per_minute: 100
+  dedup_window_sec: 10
+  min_confidence: 0.5
