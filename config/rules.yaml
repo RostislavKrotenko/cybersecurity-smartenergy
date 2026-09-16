@@ -52,7 +52,7 @@ rules:
     enabled: true
 
     match:
-      event: telemetry_read
+      event: telemetry_quarantined
       group_by: [source, key]
 
     bounds:
