@@ -8,11 +8,13 @@
 
 Активна інтеграція забезпечує:
 
-- захист одного backend, трафік якого проходить через Gateway;
+- незалежний захист кількох backend-контурів окремими Gateway-екземплярами;
 - виявлення та пом'якшення API flood/DDoS;
 - rate limiting і автоматичне блокування джерел;
 - circuit breaker, контрольовану ізоляцію та stale-cache;
 - аналіз реальної MQTT-телеметрії за ключами `voltage` і `power_kw`;
+- карантин усього MQTT-повідомлення, якщо його контрольований показник
+  виходить за фізичні межі або містить небезпечний стрибок;
 - read-only перевірки доступності HTTP/TCP компонентів;
 - відновлення стану дій за допомогою ACK, idempotency і checkpoints.
 
@@ -26,8 +28,8 @@
 
 | Модуль | Роль |
 |---|---|
-| Gateway | Reverse proxy, rate limiting, блокування, circuit breaker і stale-cache |
-| Collector | Збирає події Gateway, MQTT і перевірки доступності |
+| Gateway | Окремий reverse proxy для кожного `serviceId`: rate limiting, блокування, circuit breaker і stale-cache |
+| Collector | Збирає розділені журнали кількох Gateway, MQTT і перевірки доступності |
 | Analyzer | Виявляє DDoS, аномалії телеметрії та недоступність upstream |
 | Control | Ідемпотентно застосовує підтримувані дії через Gateway |
 | API | Формує агрегований snapshot для UI |
@@ -144,7 +146,8 @@ GET /api/health              - health check
 ## Frontend (React)
 
 Активний UI інтегровано як React Router маршрут `/cybersecurity` у репозиторії
-`rozumnaEnergia`. Він показує стани Gateway/API, останню MQTT-телеметрію,
+`rozumnaEnergia`. Він показує окремі стани кожного Gateway, стан API, останню
+MQTT-телеметрію та карантинні записи,
 read-only доступність зовнішніх компонентів, інциденти, фактичні дії та
 порівняльні метрики політик.
 
@@ -166,8 +169,8 @@ make frontend-build     # Production build
 - `availability_attack` -> `enable_rate_limit` (Gateway)
 - `availability_attack` + critical -> `isolate_component` (API)
 - повторні порушення rate limit -> автоматичне блокування джерела (Gateway)
-- `integrity_attack` для MQTT -> інцидент для `voltage` або `power_kw`, без
-  непідтримуваної команди в чужий сервіс
+- `integrity_attack` для MQTT -> повний payload вилучається з робочої
+  телеметрії, а Analyzer отримує лише службову подію карантину
 - `outage` -> фіксація інциденту; circuit breaker і stale-cache виконуються
   безпосередньо Gateway
 
