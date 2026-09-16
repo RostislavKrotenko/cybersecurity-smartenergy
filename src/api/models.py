@@ -16,6 +16,7 @@ class Incident(BaseModel):
     category: str = Field(..., description="Категорія інциденту")
     severity: str = Field(..., description="Рівень критичності (low/medium/high/critical)")
     component: str = Field(..., description="Уражений компонент")
+    source: str | None = Field(None, description="Джерело або serviceId інциденту")
     start_ts: str | None = Field(None, description="Час початку інциденту (UTC)")
     detect_ts: str | None = Field(None, description="Час виявлення інциденту (UTC)")
     recover_ts: str | None = Field(None, description="Час відновлення після інциденту (UTC)")
