@@ -27,15 +27,6 @@ _DDOS_ISOLATION_DURATION_SEC = 60
 
 
 _PLAYBOOK: dict[str, list[dict[str, Any]]] = {
-    "credential_attack": [
-        {
-            "action": "block_actor",
-            "target_component": "auth",
-            "params": {
-                "duration_sec": 600,
-            },
-        },
-    ],
     "availability_attack": [
         {
             "action": "enable_rate_limit",
@@ -53,47 +44,6 @@ _PLAYBOOK: dict[str, list[dict[str, Any]]] = {
                 "duration_sec": _DDOS_ISOLATION_DURATION_SEC,
             },
             "min_severity": "critical",
-        },
-    ],
-    "integrity_attack": [
-        {
-            "action": "isolate_component",
-            "target_component": "collector",
-            "params": {
-                "duration_sec": 120,
-            },
-        },
-    ],
-    "outage": [
-        {
-            "action": "backup_db",
-            "target_component": "db",
-            "params": {},
-        },
-        {
-            "action": "restore_db",
-            "target_component": "db",
-            "params": {
-                "snapshot": "latest",
-            },
-        },
-    ],
-    "network_degraded": [
-        {
-            "action": "reset_network",
-            "target_component": "network",
-            "params": {},
-        },
-    ],
-    "network_failure": [
-        {
-            "action": "degrade_network",
-            "target_component": "network",
-            "params": {
-                "latency_ms": 280,
-                "drop_rate": 0.25,
-                "ttl_sec": 180,
-            },
         },
     ],
 }
@@ -164,25 +114,6 @@ def decide(
             target_component = str(
                 template["target_component"]
             )
-
-            if action_name == "block_actor":
-                actor, ip_address = _extract_actor_ip(
-                    incident
-                )
-
-                if actor:
-                    params["actor"] = actor
-
-                if ip_address:
-                    params["ip"] = ip_address
-
-                if not actor and not ip_address:
-                    params["ip"] = "0.0.0.0"
-
-            if action_name == "backup_db":
-                params["name"] = (
-                    f"snap_{incident.incident_id}"
-                )
 
             actions.append(
                 Action(
@@ -279,49 +210,6 @@ def write_actions_csv(
         path,
         len(actions),
     )
-
-
-def _extract_actor_ip(
-    incident: Incident,
-) -> tuple[str, str]:
-    """Намагається отримати actor та IP з опису інциденту."""
-    description = incident.description
-    actor = ""
-    ip_address = ""
-
-    if "from " in description:
-        parts = description.split("from ")
-
-        if len(parts) > 1:
-            candidate = (
-                parts[1]
-                .split()[0]
-                .strip(" ,;")
-            )
-
-            if "." in candidate:
-                ip_address = candidate
-
-    if " з " in description:
-        parts = description.split(" з ")
-
-        if len(parts) > 1:
-            candidate = (
-                parts[1]
-                .split()[0]
-                .strip(" ,;")
-            )
-
-            if "." in candidate:
-                ip_address = candidate
-
-    if (
-        "by non-allowed" in description
-        or "неавторизованих" in description
-    ):
-        actor = "unknown"
-
-    return actor, ip_address
 
 
 def _extract_target_id(
