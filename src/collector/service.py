@@ -9,6 +9,10 @@ import time
 
 from src.adapters.file_adapter import FileEventSink
 from src.collector.config import CollectorSettings
+from src.collector.quarantine import (
+    MqttTelemetryQuarantine,
+    TelemetryLimit,
+)
 from src.collector.sources import (
     GatewayEventSource,
     HttpEventSource,
@@ -30,6 +34,7 @@ class CollectorService:
         output_path: str,
         poll_interval_sec: float,
         dedup_window_sec: float,
+        mqtt_quarantine: MqttTelemetryQuarantine | None = None,
     ) -> None:
         """Створює Collector із заданими джерелами."""
 
@@ -43,6 +48,7 @@ class CollectorService:
         self._poll_interval_sec = poll_interval_sec
         self._dedup_window_sec = dedup_window_sec
         self._seen: dict[str, float] = {}
+        self._mqtt_quarantine = mqtt_quarantine
 
     def collect_once(self) -> int:
         """Зчитує один пакет із кожного джерела."""
@@ -59,9 +65,15 @@ class CollectorService:
                 )
                 continue
 
-            for event in events:
-                if not self._is_duplicate(event):
-                    collected.append(event)
+            processed_events = (
+                self._mqtt_quarantine.process_batch(events)
+                if self._mqtt_quarantine is not None
+                else events
+            )
+
+            for processed_event in processed_events:
+                if not self._is_duplicate(processed_event):
+                    collected.append(processed_event)
 
         if collected:
             self._sink.emit_batch(collected)
@@ -101,6 +113,9 @@ class CollectorService:
                 )
 
         self._sink.close()
+
+        if self._mqtt_quarantine is not None:
+            self._mqtt_quarantine.close()
 
     def _is_duplicate(self, event: Event) -> bool:
         """Перевіряє короткочасне дублювання події."""
@@ -163,14 +178,13 @@ def create_collector(
     sources: list[EventSource] = []
 
     if settings.gateway_enabled:
-        sources.append(
-            GatewayEventSource(
-                path=settings.gateway_events_path,
-                checkpoint_path=(
-                    settings.gateway_checkpoint_path
-                ),
+        for gateway_log in settings.gateway_event_logs:
+            sources.append(
+                GatewayEventSource(
+                    path=gateway_log.events_path,
+                    checkpoint_path=gateway_log.checkpoint_path,
+                )
             )
-        )
 
     if settings.http_enabled and settings.http_targets:
         sources.append(
@@ -198,9 +212,31 @@ def create_collector(
             )
         )
 
+    mqtt_quarantine = (
+        MqttTelemetryQuarantine(
+            path=settings.mqtt_quarantine_path,
+            enabled=settings.mqtt_quarantine_enabled,
+            limits={
+                "voltage": TelemetryLimit(
+                    minimum=settings.mqtt_voltage_min,
+                    maximum=settings.mqtt_voltage_max,
+                    maximum_delta=settings.mqtt_voltage_delta,
+                ),
+                "power_kw": TelemetryLimit(
+                    minimum=settings.mqtt_power_kw_min,
+                    maximum=settings.mqtt_power_kw_max,
+                    maximum_delta=settings.mqtt_power_kw_delta,
+                ),
+            },
+        )
+        if settings.mqtt_enabled
+        else None
+    )
+
     return CollectorService(
         sources=sources,
         output_path=str(settings.output_path),
         poll_interval_sec=settings.poll_interval_sec,
         dedup_window_sec=settings.dedup_window_sec,
+        mqtt_quarantine=mqtt_quarantine,
     )
