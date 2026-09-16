@@ -42,6 +42,7 @@ def get_incidents(
                 category=inc.get("category", ""),
                 severity=inc.get("severity", ""),
                 component=inc.get("component", ""),
+                source=inc.get("source") or None,
                 start_ts=str(inc.get("start_ts", "")) if inc.get("start_ts") else None,
                 detect_ts=str(inc.get("detect_ts", "")) if inc.get("detect_ts") else None,
                 recover_ts=str(inc.get("recover_ts", "")) if inc.get("recover_ts") else None,
