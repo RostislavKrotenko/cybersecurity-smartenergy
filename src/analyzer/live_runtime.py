@@ -149,6 +149,7 @@ def _load_incidents(path: Path, rolling_window_sec: float) -> list[Incident]:
                     impact_score=_parse_float(row.get("impact_score")),
                     description=str(row.get("description", "")),
                     response_action=str(row.get("response_action", "")),
+                    source=str(row.get("source", "")),
                 )
                 incidents_by_id[incident_id] = incident
 
