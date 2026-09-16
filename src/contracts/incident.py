@@ -21,6 +21,7 @@ INCIDENT_CSV_COLUMNS = [
     "impact_score",
     "description",
     "response_action",
+    "source",
 ]
 
 
@@ -42,6 +43,7 @@ class Incident:
     impact_score: float
     description: str
     response_action: str
+    source: str = ""
 
     def to_csv_row(self) -> str:
         """Повертає один рядок CSV без символу нового рядка."""
