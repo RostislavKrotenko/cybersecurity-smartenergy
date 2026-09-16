@@ -63,6 +63,15 @@ class HttpTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class GatewayEventLog:
+    """Опис окремого журналу подій захисного Gateway."""
+
+    service_id: str
+    events_path: Path
+    checkpoint_path: Path
+
+
+@dataclass(frozen=True, slots=True)
 class CollectorSettings:
     """Налаштування збирача подій кіберзахисту."""
 
@@ -71,8 +80,7 @@ class CollectorSettings:
     dedup_window_sec: float
 
     gateway_enabled: bool
-    gateway_events_path: Path
-    gateway_checkpoint_path: Path
+    gateway_event_logs: tuple[GatewayEventLog, ...]
 
     http_enabled: bool
     http_timeout_sec: float
@@ -89,6 +97,14 @@ class CollectorSettings:
     mqtt_password: str
     mqtt_tls: bool
     mqtt_queue_size: int
+    mqtt_quarantine_enabled: bool
+    mqtt_quarantine_path: Path
+    mqtt_voltage_min: float
+    mqtt_voltage_max: float
+    mqtt_voltage_delta: float
+    mqtt_power_kw_min: float
+    mqtt_power_kw_max: float
+    mqtt_power_kw_delta: float
 
     @classmethod
     def from_env(cls) -> "CollectorSettings":
@@ -113,17 +129,16 @@ class CollectorSettings:
                 "COLLECTOR_GATEWAY_ENABLED",
                 True,
             ),
-            gateway_events_path=Path(
-                os.getenv(
+            gateway_event_logs=_parse_gateway_event_logs(
+                os.getenv("COLLECTOR_GATEWAY_EVENT_LOGS", ""),
+                fallback_events_path=os.getenv(
                     "COLLECTOR_GATEWAY_EVENTS_PATH",
                     "/work/data/integration/events.jsonl",
-                )
-            ),
-            gateway_checkpoint_path=Path(
-                os.getenv(
+                ),
+                fallback_checkpoint_path=os.getenv(
                     "COLLECTOR_GATEWAY_CHECKPOINT_PATH",
                     "/work/data/integration/gateway-offset.json",
-                )
+                ),
             ),
             http_enabled=_env_bool(
                 "COLLECTOR_HTTP_ENABLED",
@@ -191,6 +206,40 @@ class CollectorSettings:
                 "COLLECTOR_MQTT_QUEUE_SIZE",
                 10_000,
             ),
+            mqtt_quarantine_enabled=_env_bool(
+                "COLLECTOR_MQTT_QUARANTINE_ENABLED",
+                True,
+            ),
+            mqtt_quarantine_path=Path(
+                os.getenv(
+                    "COLLECTOR_MQTT_QUARANTINE_PATH",
+                    "/work/data/integration/quarantine/mqtt-events.jsonl",
+                )
+            ),
+            mqtt_voltage_min=_env_float(
+                "COLLECTOR_MQTT_VOLTAGE_MIN",
+                180.0,
+            ),
+            mqtt_voltage_max=_env_float(
+                "COLLECTOR_MQTT_VOLTAGE_MAX",
+                280.0,
+            ),
+            mqtt_voltage_delta=_env_float(
+                "COLLECTOR_MQTT_VOLTAGE_DELTA",
+                50.0,
+            ),
+            mqtt_power_kw_min=_env_float(
+                "COLLECTOR_MQTT_POWER_KW_MIN",
+                -10.0,
+            ),
+            mqtt_power_kw_max=_env_float(
+                "COLLECTOR_MQTT_POWER_KW_MAX",
+                100.0,
+            ),
+            mqtt_power_kw_delta=_env_float(
+                "COLLECTOR_MQTT_POWER_KW_DELTA",
+                30.0,
+            ),
         )
 
         settings.validate()
@@ -234,15 +283,91 @@ class CollectorSettings:
                 "COLLECTOR_MQTT_QUEUE_SIZE має бути не менше 1"
             )
 
-        if (
-            self.gateway_enabled
-            and self.gateway_events_path.resolve()
-            == self.output_path.resolve()
-        ):
+        if self.gateway_enabled and not self.gateway_event_logs:
             raise ValueError(
-                "Вхідний журнал Gateway і вихід Collector "
-                "не можуть бути одним файлом"
+                "Для увімкненого Gateway потрібно налаштувати хоча б один журнал"
             )
+
+        service_ids: set[str] = set()
+        checkpoint_paths: set[Path] = set()
+
+        for gateway_log in self.gateway_event_logs:
+            if gateway_log.service_id in service_ids:
+                raise ValueError(
+                    "COLLECTOR_GATEWAY_EVENT_LOGS містить повторний serviceId: "
+                    f"{gateway_log.service_id}"
+                )
+            service_ids.add(gateway_log.service_id)
+
+            if gateway_log.events_path.resolve() == self.output_path.resolve():
+                raise ValueError(
+                    "Вхідний журнал Gateway і вихід Collector "
+                    "не можуть бути одним файлом"
+                )
+
+            normalized_checkpoint = gateway_log.checkpoint_path.resolve()
+            if normalized_checkpoint in checkpoint_paths:
+                raise ValueError(
+                    "Кожен Gateway повинен мати окремий checkpoint"
+                )
+            checkpoint_paths.add(normalized_checkpoint)
+
+        if self.mqtt_quarantine_path.resolve() == self.output_path.resolve():
+            raise ValueError(
+                "Карантин MQTT і вихід Collector не можуть бути одним файлом"
+            )
+
+        if self.mqtt_voltage_min >= self.mqtt_voltage_max:
+            raise ValueError("Межі напруги MQTT задано некоректно")
+
+        if self.mqtt_power_kw_min >= self.mqtt_power_kw_max:
+            raise ValueError("Межі потужності MQTT задано некоректно")
+
+        if self.mqtt_voltage_delta <= 0 or self.mqtt_power_kw_delta <= 0:
+            raise ValueError("Допустимі стрибки MQTT мають бути більше нуля")
+
+
+def _parse_gateway_event_logs(
+    raw_value: str,
+    *,
+    fallback_events_path: str,
+    fallback_checkpoint_path: str,
+) -> tuple[GatewayEventLog, ...]:
+    """Розбирає журнали Gateway з формату serviceId|events|checkpoint."""
+
+    if not raw_value.strip():
+        return (
+            GatewayEventLog(
+                service_id="iot-gateway",
+                events_path=Path(fallback_events_path),
+                checkpoint_path=Path(fallback_checkpoint_path),
+            ),
+        )
+
+    logs: list[GatewayEventLog] = []
+
+    for raw_log in raw_value.split(";"):
+        raw_log = raw_log.strip()
+        if not raw_log:
+            continue
+
+        parts = [part.strip() for part in raw_log.split("|", maxsplit=2)]
+        if len(parts) != 3 or not all(parts):
+            raise ValueError(
+                "COLLECTOR_GATEWAY_EVENT_LOGS має формат "
+                "serviceId|eventsPath|checkpointPath"
+            )
+
+        service_id, events_path, checkpoint_path = parts
+        logs.append(
+            GatewayEventLog(
+                service_id=service_id,
+                events_path=Path(events_path),
+                checkpoint_path=Path(checkpoint_path),
+            )
+        )
+
+    return tuple(logs)
 
 
 def _parse_http_targets(
