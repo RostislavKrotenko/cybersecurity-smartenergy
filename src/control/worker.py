@@ -51,6 +51,7 @@ class WorkerSettings:
     default_rate_per_second: float
     default_burst_capacity: int
     allowed_isolation_components: frozenset[str]
+    accept_generic_actions: bool
 
     @classmethod
     def from_env(cls) -> "WorkerSettings":
@@ -79,6 +80,11 @@ class WorkerSettings:
             ).split(",")
             if item.strip()
         )
+
+        accept_generic_actions = os.getenv(
+            "CONTROL_ACCEPT_GENERIC_ACTIONS",
+            "true",
+        ).strip().lower() in {"1", "true", "yes", "on"}
 
         return cls(
             actions_path=Path(
@@ -110,6 +116,7 @@ class WorkerSettings:
             default_rate_per_second=default_rate_per_second,
             default_burst_capacity=default_burst_capacity,
             allowed_isolation_components=allowed_components,
+            accept_generic_actions=accept_generic_actions,
         )
 
 
@@ -449,6 +456,9 @@ class GatewayActionWorker:
                 if action.status not in {"pending", "emitted"}:
                     continue
 
+                if not self._targets_this_gateway(action):
+                    continue
+
                 ack = await self._process_action(action)
                 self._ack_writer.write(ack)
 
@@ -632,6 +642,33 @@ class GatewayActionWorker:
             )
 
         return None
+
+    def _targets_this_gateway(self, action: Action) -> bool:
+        """Перевіряє, чи адресовано дію поточному Gateway."""
+
+        params = action.params or {}
+        explicit_service_id = str(
+            params.get("gateway_service_id")
+            or params.get("service_id")
+            or ""
+        ).strip()
+
+        if explicit_service_id:
+            return explicit_service_id == self._settings.gateway_service_id
+
+        if action.action in {
+            "enable_rate_limit",
+            "disable_rate_limit",
+            "isolate_component",
+            "release_isolation",
+        }:
+            target_id = action.target_id.strip()
+            if target_id == self._settings.gateway_service_id:
+                return True
+            if target_id and target_id not in {"gateway", "api"}:
+                return False
+
+        return self._settings.accept_generic_actions
 
     @staticmethod
     def _optional_duration(params: dict[str, Any], default: float | None = None) -> float | None:
