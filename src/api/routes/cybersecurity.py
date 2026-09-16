@@ -6,18 +6,24 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 from typing import Any
 
 from fastapi import APIRouter, Query
 
-from src.api.cybersecurity_adapters import external_reads_enabled, read_external_adapter_states
+from src.api.cybersecurity_adapters import (
+    external_reads_enabled,
+    read_active_gateway_states,
+    read_external_adapter_states,
+)
 from src.api.data_provider import get_provider
 from src.api.models import CybersecuritySnapshotResponse
 from src.contracts.interfaces import ComponentState
 
 router = APIRouter(prefix="/cybersecurity", tags=["cybersecurity"])
 
-CANONICAL_COMPONENTS = ("gateway", "api")
+CANONICAL_COMPONENTS = ("api",)
 INTEGRATION_MODES = {"dry-run", "shadow", "active"}
 ANALYZED_TELEMETRY_KEYS = frozenset({"voltage", "power_kw"})
 THREAT_PRESENTATION = {
@@ -60,6 +66,13 @@ COMPONENT_DESCRIPTIONS = {
     "gateway": "Стан gateway-шару та обмежень трафіку.",
     "api": "Стан API-компонента й ізоляції сервісів.",
 }
+
+SNAPSHOT_CACHE_TTL_SECONDS = 2.0
+_snapshot_cache: dict[
+    tuple[int, int],
+    tuple[float, CybersecuritySnapshotResponse],
+] = {}
+_snapshot_cache_lock = Lock()
 
 
 def _utc_now() -> str:
@@ -257,10 +270,11 @@ def _build_api_snapshot(
     states: list[ComponentState],
     generated_at: str,
     external_adapters: list[dict[str, Any]],
+    active_gateways: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Будує зведення інтеграцій API лише з підтверджених станів."""
+    """Будує зведення API та окремих активних Gateway."""
     indexed = _state_index(states)
-    results = [
+    component_results = [
         _service_result(
             component_id,
             indexed.get(component_id),
@@ -269,6 +283,7 @@ def _build_api_snapshot(
         )
         for component_id in CANONICAL_COMPONENTS
     ]
+    results = [*active_gateways, *component_results]
     summary = {
         "total": len(results),
         "online": sum(1 for item in results if item["status"] == "online"),
@@ -523,6 +538,17 @@ def _telemetry_path() -> Path:
     )
 
 
+def _quarantine_path() -> Path:
+    """Повертає шлях до журналу MQTT-карантину."""
+
+    return Path(
+        os.getenv(
+            "CYBERSECURITY_MQTT_QUARANTINE_PATH",
+            "/work/data/integration/quarantine/mqtt-events.jsonl",
+        )
+    )
+
+
 def _tail_json_objects(
     path: Path,
     *,
@@ -590,6 +616,41 @@ def _build_telemetry_snapshot(
 
     analyzed_count = sum(1 for event in mqtt_events if event["analyzed"])
 
+    quarantine_events: list[dict[str, Any]] = []
+
+    for record in reversed(
+        _tail_json_objects(
+            _quarantine_path(),
+            line_limit=1000,
+        )
+    ):
+        raw_event = record.get("event")
+        if not isinstance(raw_event, dict):
+            continue
+
+        quarantine_events.append(
+            {
+                "quarantinedAt": str(
+                    record.get("quarantinedAt", generated_at)
+                ),
+                "reasons": [
+                    str(reason)
+                    for reason in record.get("reasons", [])
+                ],
+                "timestamp": str(
+                    raw_event.get("timestamp", generated_at)
+                ),
+                "source": str(raw_event.get("source", "mqtt")),
+                "component": str(raw_event.get("component", "edge")),
+                "key": str(raw_event.get("key", "")),
+                "value": str(raw_event.get("value", "")),
+                "unit": str(raw_event.get("unit", "")),
+            }
+        )
+
+        if len(quarantine_events) >= 8:
+            break
+
     return {
         "generatedAt": generated_at,
         "status": "streaming" if mqtt_events else "waiting",
@@ -600,8 +661,14 @@ def _build_telemetry_snapshot(
             "visible": len(mqtt_events),
             "analyzed": analyzed_count,
             "collectedOnly": len(mqtt_events) - analyzed_count,
+            "quarantined": len(quarantine_events),
         },
         "events": mqtt_events,
+        "quarantine": {
+            "status": "active" if quarantine_events else "empty",
+            "visible": len(quarantine_events),
+            "events": quarantine_events,
+        },
     }
 
 
@@ -614,6 +681,17 @@ def _incident_severity(value: Any) -> str:
 
 def _incident_timestamp(incident: dict[str, Any], generated_at: str) -> str:
     return str(incident.get("detect_ts") or incident.get("start_ts") or generated_at)
+
+
+def _service_id_from_source(value: Any) -> str:
+    """Витягує serviceId із канонічного джерела Gateway."""
+
+    prefix = "cybersecurity-gateway:"
+    for raw_source in str(value or "").split(";"):
+        source = raw_source.strip()
+        if source.startswith(prefix):
+            return source.removeprefix(prefix).strip()
+    return ""
 
 
 def _build_incident_item(incident: dict[str, Any], generated_at: str) -> dict[str, Any]:
@@ -645,6 +723,10 @@ def _build_incident_item(incident: dict[str, Any], generated_at: str) -> dict[st
     if incident.get("mttr_sec") is not None:
         evidence.append(f"MTTR: {incident.get('mttr_sec')} с")
 
+    service_id = _service_id_from_source(incident.get("source"))
+    if service_id:
+        evidence.append(f"Захищений сервіс: {service_id}")
+
     return {
         "id": incident_id,
         "ruleId": rule_id,
@@ -652,6 +734,7 @@ def _build_incident_item(incident: dict[str, Any], generated_at: str) -> dict[st
         "title": title,
         "description": description,
         "affectedComponents": affected_components,
+        "serviceId": service_id or None,
         "evidence": evidence,
         "createdAt": _incident_timestamp(incident, generated_at),
     }
@@ -734,6 +817,7 @@ def _build_dispatch_record(action: dict[str, Any], generated_at: str) -> dict[st
     target_component = str(action.get("target_component") or "unknown")
     target_id = str(action.get("target_id") or "")
     mode = _dispatch_mode(action)
+    service_id = _action_service_id(action)
 
     return {
         "id": f"dispatch-{action_id}",
@@ -742,6 +826,7 @@ def _build_dispatch_record(action: dict[str, Any], generated_at: str) -> dict[st
         "title": _dispatch_title(mode),
         "description": f"{action_type} -> {target_component}{f'/{target_id}' if target_id else ''}",
         "targetComponents": [target_component],
+        "serviceId": service_id,
         "reason": str(action.get("reason") or "Причину не вказано."),
         "createdAt": str(action.get("ts_utc") or generated_at),
     }
@@ -752,11 +837,7 @@ def _build_actions_snapshot(
     generated_at: str,
     limit: int,
 ) -> dict[str, Any]:
-    active_actions = [
-        action
-        for action in raw_actions
-        if str(action.get("action") or "").lower() in ACTIVE_ACTION_TYPES
-    ]
+    active_actions = [action for action in raw_actions if _is_active_action(action)]
     latest = _latest_by_timestamp(active_actions, "ts_utc", limit)
     actions = [_build_dispatch_record(action, generated_at) for action in latest]
 
@@ -773,12 +854,63 @@ def _build_actions_snapshot(
     }
 
 
-@router.get("/snapshot", response_model=CybersecuritySnapshotResponse)
-def get_cybersecurity_snapshot(
-    incident_limit: int = Query(20, ge=1, le=200, description="Кількість інцидентів у snapshot"),
-    action_limit: int = Query(20, ge=1, le=200, description="Кількість dispatcher-записів у snapshot"),
+def _is_active_action(action: dict[str, Any]) -> bool:
+    """Відсіює дії за межами активного Gateway-контуру."""
+
+    action_type = str(action.get("action") or "").lower()
+    if action_type not in ACTIVE_ACTION_TYPES:
+        return False
+
+    target_component = str(
+        action.get("target_component") or ""
+    ).lower()
+    reason = str(action.get("reason") or "").lower()
+
+    if target_component == "auth" or "credential_attack" in reason:
+        return False
+
+    if action_type in {"block_actor", "unblock_actor"}:
+        return (
+            target_component == "gateway"
+            and _action_service_id(action) is not None
+        )
+
+    return (
+        target_component in {"gateway", "api"}
+        and _action_service_id(action) is not None
+    )
+
+
+def _action_service_id(action: dict[str, Any]) -> str | None:
+    """Повертає явний serviceId цільового Gateway для дії."""
+
+    params = action.get("params")
+    if isinstance(params, dict):
+        explicit_service_id = str(
+            params.get("gateway_service_id")
+            or params.get("service_id")
+            or ""
+        ).strip()
+        if explicit_service_id:
+            return explicit_service_id
+
+    action_type = str(action.get("action") or "").lower()
+    if action_type in {"block_actor", "unblock_actor"}:
+        return None
+
+    target_id = str(action.get("target_id") or "").strip()
+    if target_id in {"", "gateway", "api"}:
+        return None
+
+    return target_id
+
+
+def _create_cybersecurity_snapshot(
+    incident_limit: int,
+    action_limit: int,
 ) -> CybersecuritySnapshotResponse:
-    """Повертає агрегований стан кіберзахисту для інтегрованого React UI."""
+    """Збирає один актуальний snapshot кіберзахисту з усіх джерел."""
+
     provider = get_provider()
     generated_at = _utc_now()
     states = provider.get_state()
@@ -787,10 +919,12 @@ def get_cybersecurity_snapshot(
     raw_metrics = provider.get_metrics()
     raw_overall = provider.get_overall_metrics()
     external_adapters = read_external_adapter_states(generated_at)
+    active_gateways = read_active_gateway_states(generated_at)
     api_snapshot = _build_api_snapshot(
         states,
         generated_at,
         external_adapters,
+        active_gateways,
     )
     incidents_snapshot = _build_incidents_snapshot(
         incidents,
@@ -809,3 +943,24 @@ def get_cybersecurity_snapshot(
         incidents=incidents_snapshot,
         actions=_build_actions_snapshot(actions, generated_at, action_limit),
     )
+
+
+@router.get("/snapshot", response_model=CybersecuritySnapshotResponse)
+def get_cybersecurity_snapshot(
+    incident_limit: int = Query(20, ge=1, le=200, description="Кількість інцидентів у snapshot"),
+    action_limit: int = Query(20, ge=1, le=200, description="Кількість dispatcher-записів у snapshot"),
+) -> CybersecuritySnapshotResponse:
+    """Повертає агрегований стан і не дублює одночасні зовнішні перевірки."""
+
+    cache_key = (incident_limit, action_limit)
+    with _snapshot_cache_lock:
+        cached = _snapshot_cache.get(cache_key)
+        now = monotonic()
+        if cached and now - cached[0] < SNAPSHOT_CACHE_TTL_SECONDS:
+            return cached[1]
+
+        snapshot = _create_cybersecurity_snapshot(incident_limit, action_limit)
+        if len(_snapshot_cache) >= 8 and cache_key not in _snapshot_cache:
+            _snapshot_cache.clear()
+        _snapshot_cache[cache_key] = (monotonic(), snapshot)
+        return snapshot
