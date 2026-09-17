@@ -1,105 +1,95 @@
-# Інтеграція кіберзахисту в rozumnaEnergia
+# Інтеграція кіберзахисту в `rozumnaEnergia`
 
 ## Призначення
 
-Модуль кіберзахисту надає окремий backend, який читає стан SmartEnergy, формує інциденти, рішення та записи диспетчера дій, а React UI показує один агрегований snapshot. UI не звертається напряму до сервісів інших учасників.
+Модуль підвищує функціональну стійкість захищеного HTTP-контуру й контуру
+MQTT-телеметрії. Він не змінює код інших підсистем Smart Energy.
 
-## Потік даних
+Один Docker image запускається сімома окремими сервісами:
 
-1. React маршрут `cybersecurity-krotenko` звертається до `http://77.47.192.6:6049/api/cybersecurity/snapshot`.
-2. FastAPI backend кіберзахисту читає власні джерела стану, інцидентів, дій і метрик.
-3. Якщо увімкнено `CYBERSECURITY_EXTERNAL_READS=true`, backend виконує read-only перевірки зовнішніх сервісів SmartEnergy.
-4. Backend повертає один snapshot із блоками `backend`, `api`, `readOnly`, `network`, `metrics`, `incidents`, `actions`.
+- `cybersecurity-gateway-iot` — reverse proxy для Smart Energy API;
+- `cybersecurity-gateway-bms` — reverse proxy для BMS;
+- `cybersecurity-collector` — окремі журнали обох Gateway, MQTT і health checks;
+- `cybersecurity-analyzer` — правила виявлення інцидентів;
+- `cybersecurity-control-iot` — дії лише для `iot-gateway`;
+- `cybersecurity-control-bms` — дії лише для `bms-gateway`;
+- `cybersecurity-api` — агрегований snapshot для React UI.
 
-## Docker service
+## Реальний потік аналізу
 
-У `rozumnaEnergia/docker-compose.yaml` додається сервіс `cybersecurity-krotenko`.
+1. Кожен Gateway пише власний state та журнал подій зі своїм `serviceId`.
+2. Collector незалежно читає обидва журнали та підписується на MQTT topic
+   `sensor/data` із QoS 1.
+3. MQTT payload нормалізується в канонічні вимірювання. Якщо `voltage` або
+   `power_kw` аномальні, весь пакет зберігається в окремому quarantine JSONL,
+   а до Analyzer надходить лише подія `telemetry_quarantined`.
+4. Analyzer перевіряє API flood, `voltage`, `power_kw` і недоступність upstream.
+5. Для DDoS-інцидентів `source` визначає конкретний `serviceId`; відповідний
+   Control застосовує rate limiting та контрольовану ізоляцію лише до свого
+   Gateway.
+6. ACK, idempotency і checkpoints запобігають повторному виконанню після restart.
+7. Cybersecurity API передає результати на React Router маршрут `/cybersecurity`.
 
-- Порт назовні: `6049`.
-- Внутрішній порт контейнера: `8000`.
-- Образ: `smartenergy-cybersecurity:0.1.0` або значення змінної `CYBERSECURITY_IMAGE`.
-- Команда запуску: `python -m src.api --host 0.0.0.0 --port 8000`.
-- Для сервера потрібно опублікувати цей самий versioned образ у Docker Registry й передати його назву через `CYBERSECURITY_IMAGE`.
-- Локальні шляхи до `data`, `out`, `config` і `logs` не використовуються; runtime-стан зберігається в named volumes.
+Типова затримка появи MQTT-події на UI становить кілька секунд: Collector та
+Analyzer працюють із секундним poll interval, а UI оновлюється кожні 5 секунд.
 
-## Режими інтеграції
+## Активні правила
 
-- `dry-run` — backend тільки моделює рішення.
-- `shadow` — backend читає реальні джерела, але не виконує зовнішні керувальні команди.
-- `active` — режим для майбутнього контрольованого виконання команд через dispatcher.
+- `RULE-DDOS-001` — серія `rate_exceeded` від захисного Gateway;
+- `RULE-SPOOF-001` — аномалії MQTT-показників `voltage` і `power_kw`;
+- `RULE-OUT-001` — недоступність Gateway або захищеного upstream.
 
-Поточне значення задається через `CYBERSECURITY_INTEGRATION_MODE`.
+Brute force, несанкціоновані команди, пошкодження БД та складні мережеві
+інциденти не є активними правилами інтеграції. Відповідні сценарії можуть
+залишатися в емуляторі лише як дослідницькі матеріали.
 
-## Read-only адаптери
+## Read-only availability
 
-Backend підтримує такі джерела:
+Cybersecurity API паралельно перевіряє:
 
-- `gateway-telemetry` — HTTP telemetry gateway.
-- `bms-state` — HTTP стан Battery BMS.
-- `inverter-settings` — HTTP налаштування hybrid inverter.
-- `troian-advisor` — HTTP advisor функціональної стійкості.
-- `history-api` — HTTP history API.
-- `influxdb-health` — HTTP health InfluxDB.
-- `mongodb-socket` — TCP перевірка MongoDB.
-- `mqtt-broker` — TCP перевірка MQTT broker.
-- `functional-stability-ws` — TCP перевірка WebSocket сервісу функціональної стійкості.
+- телеметричний endpoint Gateway;
+- BMS батареї;
+- налаштування гібридного інвертора;
+- API функціональної стійкості;
+- History API;
+- health endpoint InfluxDB;
+- TCP-доступність MongoDB, MQTT і WebSocket endpoint.
 
-Якщо чужий сервіс не запущений або має іншу адресу, адаптер переходить у `unavailable`. Це очікуваний стан, а не помилка UI.
+Ці адаптери показують `ready`, `partial` або `unavailable` і затримку відповіді.
+Вони не аналізують вміст БД, не доводять мережеву атаку й не надсилають команд
+іншим сервісам.
 
-## Канонічні шари
+## UI
 
-Snapshot нормалізує стан у пʼять шарів:
+Маршрут `http://localhost:5173/cybersecurity` показує:
 
-- `gateway`
-- `api`
-- `auth`
-- `db`
-- `network`
+- окремі стани `iot-gateway`, `bms-gateway` і Cybersecurity API;
+- останні MQTT-показники з позначкою `аналізується` або `лише збір`;
+- MQTT-повідомлення, вилучені до карантину;
+- доступність зовнішніх HTTP/TCP компонентів;
+- активні інциденти та фактичний журнал дій;
+- модельні порівняльні MTTD, MTTR і availability для політик.
 
-Ці шари використовуються в UI, правилах інцидентів і рішеннях dispatcher-а.
+Порівняльні метрики політик не потрібно називати фактичним часом стендової
+реакції. Фактичні значення можна окремо розраховувати з timestamp події,
+інциденту, ACK і відновлення.
 
-## Dispatcher
+## Запуск у загальному Compose
 
-Диспетчер дій повертає три режими:
-
-- `applied` — локальний read-only стан або вже застосована дія.
-- `recommended` — дія можлива тільки після ручного підтвердження.
-- `unsupported` — автодія заблокована або не підтримується поточним режимом.
-
-У режимі `shadow` зовнішні керувальні команди не виконуються автоматично.
-
-## Перевірка
-
-Backend:
-
-```bash
-.venv/bin/python -m pytest tests/test_api_endpoints.py -q
-```
-
-Локальне створення production-образу:
-
-```bash
-docker build -t smartenergy-cybersecurity:0.1.0 .
-```
-
-Frontend:
+Створіть локальний `.env` на основі `.env.example`, задайте випадковий
+`GATEWAY_CONTROL_TOKEN`, а потім запустіть:
 
 ```bash
-npm run build
+docker compose pull --ignore-buildable
+docker compose up -d --build
+docker compose ps
 ```
 
-Docker:
+Основні перевірки:
 
 ```bash
-CYBERSECURITY_IMAGE=smartenergy-cybersecurity:0.1.0 docker compose up -d cybersecurity-krotenko
-curl http://127.0.0.1:6049/api/health
-curl "http://127.0.0.1:6049/api/cybersecurity/snapshot?incident_limit=3&action_limit=8"
+curl -sS http://localhost:6066/_cybersecurity/healthz
+curl -sS http://localhost:6065/_cybersecurity/healthz
+curl -sS http://localhost:6049/healthz
+curl -sS http://localhost:6049/api/cybersecurity/snapshot
 ```
-
-UI:
-
-```bash
-VITE_CYBERSECURITY_API_URL=http://127.0.0.1:6049 npm run dev -- --host 127.0.0.1 --port 5174
-```
-
-Після запуску маршрут доступний за адресою `http://127.0.0.1:5174/cybersecurity-krotenko`.
