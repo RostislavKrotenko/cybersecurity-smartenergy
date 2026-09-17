@@ -45,7 +45,7 @@ class WorkerSettings:
     applied_path: Path
     idempotency_path: Path
     actions_checkpoint_path: Path
-    isolation_schedule_path: Path
+    recovery_schedule_path: Path
     poll_interval_sec: float
     gateway_service_id: str
     default_rate_per_second: float
@@ -105,10 +105,13 @@ class WorkerSettings:
                     "/work/data/integration/checkpoints/control-actions.json",
                 )
             ),
-            isolation_schedule_path=Path(
+            recovery_schedule_path=Path(
                 os.getenv(
-                    "CONTROL_ISOLATION_SCHEDULE_PATH",
-                    "/work/data/integration/control/isolation-schedule.json",
+                    "CONTROL_RECOVERY_SCHEDULE_PATH",
+                    os.getenv(
+                        "CONTROL_ISOLATION_SCHEDULE_PATH",
+                        "/work/data/integration/control/recovery-schedule.json",
+                    ),
                 )
             ),
             poll_interval_sec=poll_interval_sec,
@@ -211,216 +214,241 @@ class ActionAckWriter:
 
 
 @dataclass(slots=True)
-class ScheduledIsolationRelease:
-    """Персистентний запис автоматичного зняття ізоляції."""
+class ScheduledRecovery:
+    """Персистентна автоматична дія відновлення Gateway."""
 
+    recovery_type: str
     source_action_id: str
     target_component: str
     target_id: str
     correlation_id: str
     due_at_epoch: float
+    params: dict[str, Any]
     attempt: int = 0
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "ScheduledIsolationRelease":
-        """Створює розклад із JSON-словника."""
+    def from_dict(cls, value: dict[str, Any]) -> "ScheduledRecovery":
+        """Створює автоматичне відновлення з JSON-словника."""
+        recovery_type = str(value.get("recoveryType", "")).strip()
         source_action_id = str(value.get("sourceActionId", "")).strip()
         target_component = str(value.get("targetComponent", "")).strip()
         target_id = str(value.get("targetId", "")).strip()
         correlation_id = str(value.get("correlationId", "")).strip()
         due_at_epoch = float(value.get("dueAtEpoch", 0.0))
         attempt = max(0, int(value.get("attempt", 0)))
+        params = value.get("params") or {}
 
+        if recovery_type not in {"release_isolation", "restore_rate_limit"}:
+            raise ValueError("Невідомий тип автоматичного відновлення")
         if not source_action_id:
             raise ValueError("Розклад не містить sourceActionId")
-
         if not target_component:
             raise ValueError("Розклад не містить targetComponent")
-
-        if not target_id:
-            target_id = target_component
-
         if due_at_epoch <= 0:
             raise ValueError("Розклад містить некоректний dueAtEpoch")
+        if not isinstance(params, dict):
+            raise ValueError("Параметри розкладу мають бути JSON-об'єктом")
 
         return cls(
+            recovery_type=recovery_type,
             source_action_id=source_action_id,
             target_component=target_component,
-            target_id=target_id,
+            target_id=target_id or target_component,
             correlation_id=correlation_id,
             due_at_epoch=due_at_epoch,
+            params=dict(params),
             attempt=attempt,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Перетворює розклад на JSON-сумісний словник."""
+        """Перетворює автоматичне відновлення на JSON-словник."""
         return {
+            "recoveryType": self.recovery_type,
             "sourceActionId": self.source_action_id,
             "targetComponent": self.target_component,
             "targetId": self.target_id,
             "correlationId": self.correlation_id,
             "dueAtEpoch": self.due_at_epoch,
+            "params": self.params,
             "attempt": self.attempt,
         }
 
-    def release_action_id(self) -> str:
+    def action_id(self) -> str:
         """Формує стабільний actionId для поточної спроби."""
         digest = hashlib.sha256(
-            f"{self.source_action_id}:{self.attempt}".encode("utf-8")
+            (
+                f"{self.recovery_type}:{self.source_action_id}:"
+                f"{self.attempt}"
+            ).encode("utf-8")
         ).hexdigest()[:20]
-        return f"AUTO-RELEASE-{digest}"
+        return f"AUTO-RECOVERY-{digest}"
 
-    def to_action(self) -> Action:
-        """Створює дію зняття ізоляції для Gateway."""
-        return Action(
-            action_id=self.release_action_id(),
-            ts_utc=_utc_now(),
-            action="release_isolation",
-            target_component=self.target_component,
-            target_id=self.target_id,
-            params={
-                "scheduled_from": self.source_action_id,
-                "attempt": self.attempt,
-            },
-            reason=(
+    def to_action(self, gateway_service_id: str) -> Action:
+        """Створює керувальну дію для відповідного відновлення."""
+        common_params = {
+            "scheduled_from": self.source_action_id,
+            "scheduled_recovery": self.recovery_type,
+            "gateway_service_id": gateway_service_id,
+            "attempt": self.attempt,
+        }
+
+        if self.recovery_type == "release_isolation":
+            action_name = "release_isolation"
+            params = common_params
+            reason = (
                 "Автоматичне зняття ізоляції після завершення "
                 f"TTL дії {self.source_action_id}"
-            ),
+            )
+        else:
+            action_name = "enable_rate_limit"
+            params = {**common_params, **self.params}
+            reason = (
+                "Автоматичне повернення базового rate limit після "
+                f"дії {self.source_action_id}"
+            )
+
+        return Action(
+            action_id=self.action_id(),
+            ts_utc=_utc_now(),
+            action=action_name,
+            target_component=self.target_component,
+            target_id=self.target_id,
+            params=params,
+            reason=reason,
             correlation_id=self.correlation_id,
             status="emitted",
         )
 
 
-class IsolationScheduleStore:
-    """Зберігає розклад автоматичного зняття ізоляції.
-
-    Gateway має один ізольований upstream, тому одночасно
-    зберігається лише один актуальний розклад. Нова успішна
-    команда ізоляції замінює попередній строк.
-    """
+class RecoveryScheduleStore:
+    """Зберігає персистентні відкладені відновлення одного Gateway."""
 
     def __init__(self, path: str | Path) -> None:
-        """Ініціалізує сховище та завантажує розклад."""
+        """Ініціалізує сховище та завантажує розклад із диска."""
         self._path = Path(path)
         self._scheduled = self._load()
 
-    @property
-    def active(self) -> ScheduledIsolationRelease | None:
-        """Повертає поточний розклад або None."""
-        return self._scheduled
-
     def schedule(
         self,
+        *,
+        recovery_type: str,
         action: Action,
         duration_sec: float,
-        *,
+        params: dict[str, Any] | None = None,
         now_epoch: float | None = None,
-    ) -> ScheduledIsolationRelease:
-        """Створює або оновлює розклад для дії ізоляції."""
+    ) -> ScheduledRecovery:
+        """Створює або оновлює одну відкладену дію відновлення."""
         if duration_sec <= 0:
-            raise ValueError("Тривалість ізоляції має бути більше нуля")
+            raise ValueError("Тривалість відновлення має бути більше нуля")
 
-        current = self._scheduled
-
+        current = self._scheduled.get(recovery_type)
         if current is not None and current.source_action_id == action.action_id:
             return current
 
         effective_now = time.time() if now_epoch is None else float(now_epoch)
-
-        scheduled = ScheduledIsolationRelease(
+        scheduled = ScheduledRecovery(
+            recovery_type=recovery_type,
             source_action_id=action.action_id,
             target_component=action.target_component,
             target_id=action.target_id or action.target_component,
             correlation_id=action.correlation_id,
             due_at_epoch=effective_now + duration_sec,
-            attempt=0,
+            params=dict(params or {}),
         )
-
-        self._scheduled = scheduled
+        self._scheduled[recovery_type] = scheduled
         self._save()
-
-        log.info(
-            "Заплановано автоматичне зняття ізоляції %s через %.1f с",
-            action.action_id,
-            duration_sec,
-        )
-
         return scheduled
 
-    def get_due(self, *, now_epoch: float | None = None) -> ScheduledIsolationRelease | None:
-        """Повертає розклад, строк якого вже настав."""
-        scheduled = self._scheduled
-
-        if scheduled is None:
-            return None
-
+    def get_due(
+        self,
+        *,
+        now_epoch: float | None = None,
+    ) -> list[ScheduledRecovery]:
+        """Повертає всі відновлення, строк яких уже настав."""
         effective_now = time.time() if now_epoch is None else float(now_epoch)
-
-        if scheduled.due_at_epoch > effective_now:
-            return None
-
-        return scheduled
+        return [
+            scheduled
+            for scheduled in self._scheduled.values()
+            if scheduled.due_at_epoch <= effective_now
+        ]
 
     def postpone(
         self,
+        recovery_type: str,
         source_action_id: str,
         delay_sec: float,
         *,
         now_epoch: float | None = None,
     ) -> None:
-        """Переносить невдалу спробу зняття ізоляції."""
-        scheduled = self._scheduled
-
+        """Переносить невдалу спробу автоматичного відновлення."""
+        scheduled = self._scheduled.get(recovery_type)
         if scheduled is None or scheduled.source_action_id != source_action_id:
             return
 
         effective_now = time.time() if now_epoch is None else float(now_epoch)
-
         scheduled.attempt += 1
         scheduled.due_at_epoch = effective_now + max(1.0, delay_sec)
         self._save()
 
-    def clear(self, source_action_id: str | None = None) -> None:
-        """Видаляє виконаний або скасований розклад."""
-        if self._scheduled is None:
+    def clear(
+        self,
+        recovery_type: str,
+        source_action_id: str | None = None,
+    ) -> None:
+        """Видаляє виконане або скасоване відновлення."""
+        scheduled = self._scheduled.get(recovery_type)
+        if scheduled is None:
+            return
+        if source_action_id is not None and scheduled.source_action_id != source_action_id:
             return
 
-        if source_action_id is not None and self._scheduled.source_action_id != source_action_id:
-            return
-
-        self._scheduled = None
+        self._scheduled.pop(recovery_type, None)
         self._save()
 
-    def _load(self) -> ScheduledIsolationRelease | None:
-        """Завантажує розклад із диска."""
+    def _load(self) -> dict[str, ScheduledRecovery]:
+        """Завантажує розклад і підтримує попередній формат ізоляції."""
         if not self._path.exists():
-            return None
+            return {}
 
         try:
             payload = json.loads(self._path.read_text(encoding="utf-8"))
-
             if not isinstance(payload, dict):
                 raise ValueError("Файл розкладу має містити JSON-об'єкт")
 
-            raw_release = payload.get("release")
+            raw_schedules = payload.get("schedules")
+            if isinstance(raw_schedules, dict):
+                result: dict[str, ScheduledRecovery] = {}
+                for recovery_type, raw_schedule in raw_schedules.items():
+                    if not isinstance(raw_schedule, dict):
+                        continue
+                    enriched = {**raw_schedule, "recoveryType": recovery_type}
+                    scheduled = ScheduledRecovery.from_dict(enriched)
+                    result[scheduled.recovery_type] = scheduled
+                return result
 
-            if raw_release is None:
-                return None
-
-            if not isinstance(raw_release, dict):
-                raise ValueError("Поле release має містити JSON-об'єкт")
-
-            return ScheduledIsolationRelease.from_dict(raw_release)
-
+            legacy_release = payload.get("release")
+            if isinstance(legacy_release, dict):
+                scheduled = ScheduledRecovery.from_dict(
+                    {
+                        **legacy_release,
+                        "recoveryType": "release_isolation",
+                        "params": {},
+                    }
+                )
+                return {scheduled.recovery_type: scheduled}
+            return {}
         except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
-            log.warning("Не вдалося завантажити розклад ізоляції %s: %s", self._path, error)
-            return None
+            log.warning("Не вдалося завантажити розклад відновлення %s: %s", self._path, error)
+            return {}
 
     def _save(self) -> None:
-        """Атомарно зберігає поточний розклад."""
+        """Атомарно зберігає всі заплановані відновлення."""
         payload = {
-            "version": 1,
-            "release": self._scheduled.to_dict() if self._scheduled is not None else None,
+            "version": 2,
+            "schedules": {
+                recovery_type: scheduled.to_dict()
+                for recovery_type, scheduled in self._scheduled.items()
+            },
         }
         atomic_write(
             str(self._path),
@@ -441,14 +469,16 @@ class GatewayActionWorker:
             settings.actions_checkpoint_path,
         )
         self._ack_writer = ActionAckWriter(settings.applied_path)
-        self._isolation_schedule = IsolationScheduleStore(settings.isolation_schedule_path)
+        self._recovery_schedule = RecoveryScheduleStore(
+            settings.recovery_schedule_path
+        )
 
     async def run(self, stop_event: asyncio.Event) -> None:
         """Обробляє дії до отримання сигналу завершення."""
         log.info("Control worker читає дії з %s", self._settings.actions_path)
 
         while not stop_event.is_set():
-            await self._process_due_isolation_release()
+            await self._process_due_recoveries()
 
             actions = self._source.read_batch()
 
@@ -462,7 +492,7 @@ class GatewayActionWorker:
                 ack = await self._process_action(action)
                 self._ack_writer.write(ack)
 
-                self._update_isolation_schedule(action, ack)
+                self._update_recovery_schedule(action, ack)
 
                 log.info(
                     "Action %s завершено з результатом %s",
@@ -484,32 +514,47 @@ class GatewayActionWorker:
         """Закриває Dispatcher та HTTP-клієнт."""
         await self._dispatcher.close()
 
-    async def _process_due_isolation_release(self) -> None:
-        """Виконує прострочене автоматичне зняття ізоляції."""
-        scheduled = self._isolation_schedule.get_due()
+    async def _process_due_recoveries(self) -> None:
+        """Виконує всі прострочені автоматичні відновлення Gateway."""
+        for scheduled in self._recovery_schedule.get_due():
+            action = scheduled.to_action(self._settings.gateway_service_id)
+            ack = await self._process_action(action)
+            self._ack_writer.write(ack)
 
-        if scheduled is None:
-            return
+            if ack.result == "success":
+                self._recovery_schedule.clear(
+                    scheduled.recovery_type,
+                    scheduled.source_action_id,
+                )
+                log.info(
+                    "Автоматичне відновлення %s для дії %s виконано",
+                    scheduled.recovery_type,
+                    scheduled.source_action_id,
+                )
+                continue
 
-        action = scheduled.to_action()
-        ack = await self._process_action(action)
-        self._ack_writer.write(ack)
+            retry_delay = min(
+                60.0,
+                float(2 ** min(scheduled.attempt + 1, 6)),
+            )
+            self._recovery_schedule.postpone(
+                scheduled.recovery_type,
+                scheduled.source_action_id,
+                retry_delay,
+            )
+            log.warning(
+                "Автоматичне відновлення %s не виконано; "
+                "наступна спроба через %.1f с",
+                scheduled.recovery_type,
+                retry_delay,
+            )
 
-        if ack.result == "success":
-            self._isolation_schedule.clear(scheduled.source_action_id)
-            log.info("Ізоляцію для дії %s автоматично знято", scheduled.source_action_id)
-            return
-
-        retry_delay = min(60.0, float(2 ** min(scheduled.attempt + 1, 6)))
-        self._isolation_schedule.postpone(scheduled.source_action_id, retry_delay)
-
-        log.warning(
-            "Автоматичне зняття ізоляції не виконано; наступна спроба через %.1f с",
-            retry_delay,
-        )
-
-    def _update_isolation_schedule(self, action: Action, ack: ContractActionAck) -> None:
-        """Оновлює розклад після звичайної керувальної дії."""
+    def _update_recovery_schedule(
+        self,
+        action: Action,
+        ack: ContractActionAck,
+    ) -> None:
+        """Оновлює розклад після успішної керувальної дії."""
         if ack.result != "success":
             return
 
@@ -517,10 +562,48 @@ class GatewayActionWorker:
             duration_sec = self._optional_duration(action.params or {}, default=60.0)
 
             if duration_sec is not None:
-                self._isolation_schedule.schedule(action, duration_sec)
+                self._recovery_schedule.schedule(
+                    recovery_type="release_isolation",
+                    action=action,
+                    duration_sec=duration_sec,
+                )
+                log.info(
+                    "Заплановано автоматичне зняття ізоляції %s через %.1f с",
+                    action.action_id,
+                    duration_sec,
+                )
 
         elif action.action == "release_isolation":
-            self._isolation_schedule.clear()
+            self._recovery_schedule.clear("release_isolation")
+
+        elif action.action == "enable_rate_limit":
+            params = action.params or {}
+            if params.get("scheduled_recovery") == "restore_rate_limit":
+                self._recovery_schedule.clear("restore_rate_limit")
+                return
+
+            duration_sec = self._optional_duration(params)
+            if duration_sec is None:
+                return
+
+            self._recovery_schedule.schedule(
+                recovery_type="restore_rate_limit",
+                action=action,
+                duration_sec=duration_sec,
+                params={
+                    "rps": self._settings.default_rate_per_second,
+                    "burst": self._settings.default_burst_capacity,
+                },
+            )
+            log.info(
+                "Заплановано повернення базового rate limit після %s "
+                "через %.1f с",
+                action.action_id,
+                duration_sec,
+            )
+
+        elif action.action == "disable_rate_limit":
+            self._recovery_schedule.clear("restore_rate_limit")
 
     async def _process_action(self, action: Action) -> ContractActionAck:
         """Перетворює Action та виконує дозволену команду."""
@@ -555,6 +638,8 @@ class GatewayActionWorker:
             result="success" if success else "failed",
             error="" if success else gateway_ack.message,
             state_event=state_event,
+            service_id=self._settings.gateway_service_id,
+            details=dict(action.params or {}),
         )
 
     def _map_action(self, action: Action) -> SecurityAction | None:
@@ -696,6 +781,8 @@ class GatewayActionWorker:
             applied_ts_utc=_utc_now(),
             result="failed",
             error=message,
+            service_id=self._settings.gateway_service_id,
+            details=dict(action.params or {}),
         )
 
 
