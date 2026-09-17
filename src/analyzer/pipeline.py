@@ -583,13 +583,45 @@ def _apply_acks(
     if not acks:
         return changed
 
-    if actions_by_id:
-        by_id = actions_by_id
-    else:
-        by_id = {a.action_id: a for a in all_actions}
+    if not actions_by_id:
+        actions_by_id.update({a.action_id: a for a in all_actions})
+    by_id = actions_by_id
 
     for ack in acks:
         act = by_id.get(ack.action_id)
+        if act is None:
+            service_id = ack.service_id.strip()
+            act = Action(
+                action_id=ack.action_id,
+                ts_utc=ack.applied_ts_utc,
+                action=ack.action,
+                target_component=ack.target_component,
+                target_id=service_id or ack.target_component,
+                params={
+                    **dict(ack.details or {}),
+                    **(
+                        {"gateway_service_id": service_id}
+                        if service_id
+                        else {}
+                    ),
+                },
+                reason="Автоматична дія відновлення Gateway",
+                correlation_id=ack.correlation_id,
+                status=(
+                    "applied"
+                    if ack.result == "success"
+                    else "failed"
+                ),
+            )
+            all_actions.append(act)
+            by_id[act.action_id] = act
+            changed = True
+            log.info(
+                "ACK: додано автоматичну дію %s для %s",
+                ack.action_id,
+                service_id or ack.target_component,
+            )
+
         if act:
             new_status = "applied" if ack.result == "success" else "failed"
             if act.status != new_status:
@@ -723,21 +755,37 @@ def _incremental_detect(
     policies_cfg: dict[str, Any],
     selected: list[str],
     inc_counter: int,
+    known_incidents: set[tuple[str, str, str, str, str]] | None = None,
 ) -> tuple[int, list[Any]]:
     """Виконує `detect -> correlate` для подій у межах кожної політики.
+
+    `known_incidents` дає потоковому runtime змогу повторно аналізувати
+    рухоме вікно подій, не створюючи копій уже відкритих інцидентів.
 
     Повертає:
         Оновлений лічильник інцидентів і список нових інцидентів.
     """
+    known = known_incidents if known_incidents is not None else set()
     new_incidents: list[Any] = []
     for pname in selected:
         modifiers = get_modifiers(policies_cfg, pname)
         alerts = detect(events, rules_cfg, policy_modifiers=modifiers)
         incidents = correlate(alerts, pname, policy_modifiers=modifiers)
         for inc in incidents:
+            identity = (
+                inc.policy,
+                inc.threat_type,
+                inc.component,
+                inc.source,
+                inc.start_ts,
+            )
+            if identity in known:
+                continue
+
             inc_counter += 1
             inc.incident_id = f"INC-{inc_counter:04d}"
-        new_incidents.extend(incidents)
+            known.add(identity)
+            new_incidents.append(inc)
     return inc_counter, new_incidents
 
 
@@ -749,7 +797,22 @@ def _write_live_output(
     out_p: Path,
     actions_count: int = 0,
 ) -> None:
-    """Обчислює метрики за інцидентами та оновлює live-виходи у `out/`."""
+    """Оновлює live-інциденти та останній непорожній експеримент.
+
+    ``incidents.csv`` відображає поточне рухоме вікно й тому може стати
+    порожнім. Порівняльні метрики, навпаки, мають залишатися результатом
+    останнього завершеного експерименту до появи нового. Через це порожнє
+    вікно не перезаписує ``results.csv`` штучними значеннями 100%.
+    """
+    write_incidents_csv(incidents, str(out_p / "incidents.csv"))
+
+    if not incidents:
+        log.info(
+            "Активних інцидентів немає; останнє порівняння політик "
+            "залишено без змін"
+        )
+        return
+
     all_metrics = []
     for pname in selected:
         policy_incs = [i for i in incidents if i.policy == pname]
@@ -758,7 +821,6 @@ def _write_live_output(
 
     control_ranking = rank_controls(policies_cfg, selected)
     write_results_csv(all_metrics, str(out_p / "results.csv"))
-    write_incidents_csv(incidents, str(out_p / "incidents.csv"))
     write_report_txt(
         all_metrics,
         incidents,
