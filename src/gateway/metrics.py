@@ -7,6 +7,7 @@ import threading
 import time
 from collections import Counter, deque
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any
 
 VALID_OUTCOMES = {
@@ -30,14 +31,26 @@ class GatewayMetrics:
         *,
         latency_window_size: int = 5000,
         monotonic_clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
+        timeline_window_sec: int = 300,
+        timeline_bucket_sec: int = 5,
     ):
-        """Створює накопичувач із обмеженим вікном latency."""
+        """Створює накопичувач із latency та часовим рядом трафіку."""
 
         if latency_window_size < 1:
             raise ValueError("Розмір вікна latency має бути не менше 1")
+        if timeline_window_sec < 1 or timeline_bucket_sec < 1:
+            raise ValueError("Часове вікно та bucket мають бути додатними")
+        if timeline_bucket_sec > timeline_window_sec:
+            raise ValueError("Bucket не може бути більшим за часове вікно")
 
         self._clock = monotonic_clock
+        self._wall_clock = wall_clock
         self._started_at = self._clock()
+        self._started_wall_at = self._wall_clock()
+        self._timeline_window_sec = int(timeline_window_sec)
+        self._timeline_bucket_sec = int(timeline_bucket_sec)
+        self._traffic_buckets: dict[int, Counter[str]] = {}
         self._outcomes: Counter[str] = Counter()
         self._status_codes: Counter[int] = Counter()
         self._actions: Counter[str] = Counter()
@@ -64,6 +77,15 @@ class GatewayMetrics:
 
         with self._lock:
             self._outcomes[outcome] += 1
+
+            bucket_timestamp = self._bucket_timestamp(self._wall_clock())
+            bucket = self._traffic_buckets.setdefault(
+                bucket_timestamp,
+                Counter(),
+            )
+            bucket["requests"] += 1
+            bucket[outcome] += 1
+            self._prune_timeline(bucket_timestamp)
 
             if status_code is not None:
                 self._status_codes[int(status_code)] += 1
@@ -158,7 +180,77 @@ class GatewayMetrics:
                         else 0.0
                     ),
                 },
+                "trafficTimeline": self._traffic_timeline(),
             }
+
+    def _bucket_timestamp(self, timestamp: float) -> int:
+        """Округлює Unix timestamp до початку часового bucket."""
+
+        return (
+            int(timestamp) // self._timeline_bucket_sec
+        ) * self._timeline_bucket_sec
+
+    def _prune_timeline(self, current_bucket: int) -> None:
+        """Видаляє точки, що вийшли за межі часового вікна."""
+
+        minimum_timestamp = current_bucket - self._timeline_window_sec
+        for timestamp in list(self._traffic_buckets):
+            if timestamp < minimum_timestamp:
+                del self._traffic_buckets[timestamp]
+
+    def _traffic_timeline(self) -> dict[str, Any]:
+        """Повертає заповнений нулями часовий ряд останніх п'яти хвилин."""
+
+        current_bucket = self._bucket_timestamp(self._wall_clock())
+        self._prune_timeline(current_bucket)
+        earliest_bucket = max(
+            self._bucket_timestamp(self._started_wall_at),
+            current_bucket - self._timeline_window_sec,
+        )
+        points: list[dict[str, Any]] = []
+
+        for timestamp in range(
+            earliest_bucket,
+            current_bucket + 1,
+            self._timeline_bucket_sec,
+        ):
+            bucket = self._traffic_buckets.get(timestamp, Counter())
+            requests = int(bucket.get("requests", 0))
+            limited = int(bucket.get("rate_limited", 0))
+            blocked = int(bucket.get("blocked", 0))
+            errors = int(
+                bucket.get("upstream_error", 0)
+                + bucket.get("circuit_open", 0)
+                + bucket.get("internal_error", 0)
+            )
+
+            points.append(
+                {
+                    "timestamp": datetime.fromtimestamp(
+                        timestamp,
+                        timezone.utc,
+                    ).isoformat().replace("+00:00", "Z"),
+                    "requests": requests,
+                    "requestsPerSecond": round(
+                        requests / self._timeline_bucket_sec,
+                        3,
+                    ),
+                    "forwarded": int(
+                        bucket.get("success", 0)
+                        + bucket.get("client_error", 0)
+                        + bucket.get("upstream_error", 0)
+                    ),
+                    "limited": limited,
+                    "blocked": blocked,
+                    "errors": errors,
+                }
+            )
+
+        return {
+            "bucketSec": self._timeline_bucket_sec,
+            "windowSec": self._timeline_window_sec,
+            "points": points,
+        }
 
     @staticmethod
     def _average(values: list[float]) -> float:
