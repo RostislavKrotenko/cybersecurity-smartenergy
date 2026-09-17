@@ -27,9 +27,10 @@ from src.analyzer.pipeline import (
     _throttle_actions,
     _write_live_output,
 )
-from src.analyzer.policy_engine import list_policy_names, load_policies
+from src.analyzer.policy_engine import get_modifiers, list_policy_names, load_policies
 from src.analyzer.state_store import ComponentStateStore
 from src.contracts.action import Action
+from src.contracts.event import Event
 from src.contracts.incident import Incident
 from src.contracts.interfaces import ActionFeedback, ActionSink, EventSource
 from src.shared.config_loader import load_yaml
@@ -98,6 +99,69 @@ def _parse_utc_timestamp(value: str) -> datetime | None:
         parsed = parsed.replace(tzinfo=timezone.utc)
 
     return parsed.astimezone(timezone.utc)
+
+
+def _detection_window_seconds(
+    rules_cfg: dict[str, Any],
+    policies_cfg: dict[str, Any],
+    selected_policies: list[str],
+) -> float:
+    """Повертає найбільше часове вікно активних правил і політик."""
+    largest_window = 1.0
+
+    for rule in rules_cfg.get("rules", []):
+        if not rule.get("enabled", True):
+            continue
+
+        base_window = max(1.0, float(rule.get("window_sec", 60)))
+        threat_type = str(rule.get("threat_type", "unknown"))
+
+        for policy_name in selected_policies:
+            modifiers = get_modifiers(policies_cfg, policy_name)
+            threat_modifiers = modifiers.get(threat_type, {})
+            multiplier = max(
+                0.1,
+                float(threat_modifiers.get("window_multiplier", 1.0)),
+            )
+            largest_window = max(largest_window, base_window * multiplier)
+
+    return largest_window
+
+
+def _extend_detection_window(
+    buffered_events: list[Event],
+    new_events: list[Event],
+    window_seconds: float,
+) -> list[Event]:
+    """Додає нові події та залишає лише актуальне вікно детекції."""
+    timestamped_events: list[tuple[Event, datetime]] = []
+
+    for event in [*buffered_events, *new_events]:
+        parsed_timestamp = _parse_utc_timestamp(event.timestamp)
+        if parsed_timestamp is not None:
+            timestamped_events.append((event, parsed_timestamp))
+
+    if not timestamped_events:
+        return []
+
+    latest_timestamp = max(timestamp for _, timestamp in timestamped_events)
+    cutoff = latest_timestamp - timedelta(seconds=max(1.0, window_seconds))
+    return [
+        event
+        for event, timestamp in timestamped_events
+        if timestamp >= cutoff
+    ]
+
+
+def _incident_identity(incident: Incident) -> tuple[str, str, str, str, str]:
+    """Повертає стабільну ознаку інциденту для дедуплікації."""
+    return (
+        incident.policy,
+        incident.threat_type,
+        incident.component,
+        incident.source,
+        incident.start_ts,
+    )
 
 
 def _incident_number(incident_id: str) -> int:
@@ -377,6 +441,12 @@ def watch_pipeline_with_recovery(
     ack_deduplicator = AckDeduplicator(max_entries=reliability_policy.ack_dedup_max_entries)
 
     rolling_sec = max(0.0, rolling_window_min * 60.0)
+    detection_window_sec = _detection_window_seconds(
+        rules_cfg,
+        policies_cfg,
+        selected,
+    )
+    detection_events: list[Event] = []
 
     if horizon_days is not None and horizon_days > 0:
         horizon_sec = horizon_days * 86400
@@ -480,6 +550,12 @@ def watch_pipeline_with_recovery(
                 iteration += 1
                 state_store.process_events(new_events)
 
+                detection_events = _extend_detection_window(
+                    detection_events,
+                    new_events,
+                    detection_window_sec,
+                )
+
                 if actions_by_correlation and _confirm_actions(
                     new_events,
                     actions_by_correlation,
@@ -490,11 +566,15 @@ def watch_pipeline_with_recovery(
                     incident_counter,
                     detected_incidents,
                 ) = _incremental_detect(
-                    new_events,
+                    detection_events,
                     rules_cfg,
                     policies_cfg,
                     selected,
                     incident_counter,
+                    known_incidents={
+                        _incident_identity(incident)
+                        for incident in all_incidents
+                    },
                 )
 
                 new_incidents = detected_incidents
