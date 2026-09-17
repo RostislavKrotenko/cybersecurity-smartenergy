@@ -170,18 +170,51 @@ def _gateway_status(payload: dict[str, Any]) -> str:
 
     isolation = payload.get("isolation") or {}
     circuit = payload.get("circuit") or {}
-    rate_limit = payload.get("rateLimit") or {}
 
-    if bool(isolation.get("enabled")) or str(circuit.get("mode")) == "open":
+    if bool(isolation.get("enabled")) or str(circuit.get("mode")) != "closed":
         return "degraded"
 
     if int(payload.get("blockedCount", 0) or 0) > 0:
         return "degraded"
 
-    if str(rate_limit.get("actionId") or "").strip():
+    if _rate_limit_is_hardened(payload):
         return "degraded"
 
     return "online"
+
+
+def _rate_limit_is_hardened(payload: dict[str, Any]) -> bool:
+    """Перевіряє фактичне посилення rate limit відносно baseline."""
+
+    current = payload.get("rateLimit") or {}
+    baseline = payload.get("baselineRateLimit") or {}
+
+    try:
+        current_rate = float(current.get("ratePerSecond"))
+        current_burst = int(current.get("burstCapacity"))
+        baseline_rate = float(baseline.get("ratePerSecond"))
+        baseline_burst = int(baseline.get("burstCapacity"))
+    except (TypeError, ValueError):
+        return False
+
+    return bool(current.get("enabled", True)) and (
+        current_rate < baseline_rate
+        or current_burst < baseline_burst
+    )
+
+
+def _gateway_mitigation(payload: dict[str, Any]) -> dict[str, bool]:
+    """Повертає окремі фактичні ознаки активного стримування."""
+
+    isolation = payload.get("isolation") or {}
+    circuit = payload.get("circuit") or {}
+
+    return {
+        "blocking": int(payload.get("blockedCount", 0) or 0) > 0,
+        "isolation": bool(isolation.get("enabled")),
+        "circuitOpen": str(circuit.get("mode")) != "closed",
+        "rateLimitHardened": _rate_limit_is_hardened(payload),
+    }
 
 
 def _gateway_result(
@@ -234,6 +267,7 @@ def _gateway_result(
         "statusCode": status_code,
         "detail": detail,
         "corsLimited": False,
+        "mitigation": _gateway_mitigation(state) if payload else {},
         "gatewayState": payload,
     }
 
@@ -248,10 +282,6 @@ def _target_list() -> list[ExternalReadTarget]:
         "CYBERSECURITY_INVERTER_URL",
         "http://backend_dosmukhamedov:6050/api/settings",
     )
-    stability_url = _env(
-        "CYBERSECURITY_TROIAN_URL",
-        "http://backend_troian:8085/api/equipment",
-    )
     history_url = _env("CYBERSECURITY_HISTORY_URL", "http://history-api:6032/api/status")
     influx_url = _env("CYBERSECURITY_INFLUX_URL", "http://influxdb:8086/health")
     mongo_host = _env("CYBERSECURITY_MONGO_HOST", "mongodb")
@@ -264,12 +294,15 @@ def _target_list() -> list[ExternalReadTarget]:
     return [
         ExternalReadTarget(
             id="gateway-telemetry",
-            name="Телеметрія Gateway",
+            name="Телеметричний API Smart Energy",
             component="gateway",
             protocol="http",
             endpoint=gateway_url,
             port=int(_env("CYBERSECURITY_GATEWAY_PORT", "6006")),
-            description="Надає актуальні енергетичні показники із захищеного backend.",
+            description=(
+                "Повертає енергетичні вимірювання через захищений "
+                "HTTP-контур."
+            ),
             url=gateway_url,
         ),
         ExternalReadTarget(
@@ -291,16 +324,6 @@ def _target_list() -> list[ExternalReadTarget]:
             port=int(_env("CYBERSECURITY_INVERTER_PORT", "6050")),
             description="Надає поточний режим роботи й налаштування інвертора.",
             url=inverter_url,
-        ),
-        ExternalReadTarget(
-            id="troian-advisor",
-            name="Сервіс функціональної стійкості",
-            component="api",
-            protocol="http",
-            endpoint=stability_url,
-            port=int(_env("CYBERSECURITY_TROIAN_PORT", "6028")),
-            description="Надає дані про обладнання для оцінювання функціональної стійкості.",
-            url=stability_url,
         ),
         ExternalReadTarget(
             id="history-api",
@@ -346,12 +369,15 @@ def _target_list() -> list[ExternalReadTarget]:
         ),
         ExternalReadTarget(
             id="functional-stability-ws",
-            name="WebSocket функціональної стійкості",
+            name="WebSocket оновлень Smart Energy",
             component="network",
             protocol="tcp",
             endpoint=f"{websocket_host}:{websocket_port}/ws",
             port=int(_env("CYBERSECURITY_STABILITY_PUBLIC_PORT", "6040")),
-            description="Передає в реальному часі оновлення функціональної стійкості.",
+            description=(
+                "Канал передавання актуальних станів обладнання. "
+                "Перевіряється лише доступність з’єднання."
+            ),
             host=websocket_host,
             connect_port=websocket_port,
         ),
