@@ -140,7 +140,7 @@ services:
       CONTROL_APPLIED_PATH: /work/data/integration/actions_applied.jsonl
       CONTROL_IDEMPOTENCY_PATH: /work/data/integration/control/idempotency.sqlite3
       CONTROL_ACTIONS_CHECKPOINT_PATH: /work/data/integration/checkpoints/control-actions.json
-      CONTROL_ISOLATION_SCHEDULE_PATH: /work/data/integration/control/isolation-schedule.json
+      CONTROL_RECOVERY_SCHEDULE_PATH: /work/data/integration/control/recovery-schedule.json
       CONTROL_GATEWAY_SERVICE_ID: iot-gateway
       CONTROL_POLL_INTERVAL_SEC: "${CONTROL_POLL_INTERVAL_SEC:-0.5}"
       CONTROL_DEFAULT_RATE_PER_SECOND: "${GATEWAY_RATE_PER_SECOND:-25}"
