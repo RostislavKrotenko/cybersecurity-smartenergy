@@ -116,6 +116,8 @@ class ActionAck:
     result: str  # success або failed
     error: str = ""
     state_event: str = ""  # наприклад, "rate_limit_enabled"
+    service_id: str = ""  # Gateway, який фактично виконав команду
+    details: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
         d = asdict(self)
@@ -124,6 +126,9 @@ class ActionAck:
     @classmethod
     def from_json(cls, line: str) -> ActionAck:
         d = json.loads(line)
+        details = d.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
         return cls(
             action_id=d.get("action_id", ""),
             correlation_id=d.get("correlation_id", ""),
@@ -133,4 +138,6 @@ class ActionAck:
             result=d.get("result", ""),
             error=d.get("error", ""),
             state_event=d.get("state_event", ""),
+            service_id=d.get("service_id", d.get("serviceId", "")),
+            details=details,
         )
