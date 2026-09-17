@@ -215,6 +215,11 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
             "blockedCount": persisted["blockedCount"],
             "isolation": persisted["isolation"],
             "rateLimit": persisted["rateLimit"],
+            "baselineRateLimit": {
+                "enabled": True,
+                "ratePerSecond": effective_settings.rate_per_second,
+                "burstCapacity": effective_settings.burst_capacity,
+            },
             "circuit": runtime.circuit_breaker.snapshot(),
             "cache": runtime.response_cache.snapshot(),
             "metrics": runtime.metrics.snapshot(),
