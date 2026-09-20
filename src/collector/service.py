@@ -10,6 +10,7 @@ import time
 from src.adapters.file_adapter import FileEventSink
 from src.collector.config import CollectorSettings
 from src.collector.quarantine import (
+    LowCurrentRule,
     MqttTelemetryQuarantine,
     TelemetryLimit,
 )
@@ -228,6 +229,11 @@ def create_collector(
                     maximum_delta=settings.mqtt_power_kw_delta,
                 ),
             },
+            low_current_rule=LowCurrentRule(
+                minimum_current_a=settings.mqtt_current_a_min,
+                voltage_min=settings.mqtt_current_voltage_min,
+                voltage_max=settings.mqtt_current_voltage_max,
+            ),
         )
         if settings.mqtt_enabled
         else None
