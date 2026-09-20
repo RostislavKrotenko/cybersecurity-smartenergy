@@ -12,7 +12,7 @@
 - виявлення та пом'якшення API flood/DDoS;
 - rate limiting і автоматичне блокування джерел;
 - circuit breaker, контрольовану ізоляцію та stale-cache;
-- аналіз реальної MQTT-телеметрії за ключами `voltage` і `power_kw`;
+- аналіз реальної MQTT-телеметрії за ключами `voltage`, `power_kw` і `current_a`;
 - карантин усього MQTT-повідомлення, якщо його контрольований показник
   виходить за фізичні межі або містить небезпечний стрибок;
 - read-only перевірки доступності HTTP/TCP компонентів;
@@ -153,6 +153,9 @@ read-only доступність зовнішніх компонентів, ін
 
 MTTD, MTTR і availability у таблиці політик є модельними порівняльними
 показниками. Вони не подаються як фактичний час стендової реакції.
+Верхні KPI показують політику `standard` за всіма інцидентами поточної
+сесії, а не середнє значення трьох різних політик. У секції порівняння можна
+перемкнутися між останнім експериментом і накопичувальною статистикою сесії.
 
 ### Команди
 
@@ -184,6 +187,9 @@ make frontend-build     # Production build
 - `data/live/actions.jsonl`
 - `data/live/actions_applied.jsonl`
 - `out/incidents.csv`
+- `out/results.csv`
+- `out/session_incidents.csv`
+- `out/session_results.csv`
 - `out/actions.csv`
 - `out/state.csv`
 
