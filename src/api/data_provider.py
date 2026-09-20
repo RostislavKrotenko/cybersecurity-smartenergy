@@ -27,6 +27,8 @@ from src.contracts.interfaces import (
 ROOT = Path(__file__).resolve().parent.parent.parent
 RESULTS_PATH = ROOT / "out" / "results.csv"
 INCIDENTS_PATH = ROOT / "out" / "incidents.csv"
+SESSION_RESULTS_PATH = ROOT / "out" / "session_results.csv"
+SESSION_INCIDENTS_PATH = ROOT / "out" / "session_incidents.csv"
 ACTIONS_PATH = ROOT / "out" / "actions.csv"
 STATE_PATH = ROOT / "out" / "state.csv"
 EVENTS_PATH = ROOT / "data" / "events.csv"
@@ -40,11 +42,19 @@ class APIDataProvider:
         incident_source: IncidentSource | None = None,
         action_source: ActionSource | None = None,
         metrics_source: MetricsSource | None = None,
+        session_incident_source: IncidentSource | None = None,
+        session_metrics_source: MetricsSource | None = None,
         state_provider: StateProvider | None = None,
     ):
         self.incident_source = incident_source or FileIncidentSource(str(INCIDENTS_PATH))
         self.action_source = action_source or FileActionSource(str(ACTIONS_PATH))
         self.metrics_source = metrics_source or FileMetricsSource(str(RESULTS_PATH))
+        self.session_incident_source = session_incident_source or FileIncidentSource(
+            str(SESSION_INCIDENTS_PATH)
+        )
+        self.session_metrics_source = session_metrics_source or FileMetricsSource(
+            str(SESSION_RESULTS_PATH)
+        )
         self.state_provider = state_provider or FileStateSource(str(STATE_PATH))
 
     def get_incidents(self, limit: int = 10000) -> list[dict[str, Any]]:
@@ -66,6 +76,14 @@ class APIDataProvider:
     def get_metrics(self) -> list[dict[str, Any]]:
         """Повертає метрики, згруповані за політиками."""
         return self.metrics_source.get_metrics_by_policy()
+
+    def get_session_incidents(self, limit: int = 10000) -> list[dict[str, Any]]:
+        """Повертає накопичені інциденти поточної сесії Analyzer."""
+        return self.session_incident_source.get_incidents(limit)
+
+    def get_session_metrics(self) -> list[dict[str, Any]]:
+        """Повертає накопичувальні метрики поточної сесії Analyzer."""
+        return self.session_metrics_source.get_metrics_by_policy()
 
     def get_overall_metrics(self) -> dict[str, float]:
         """Повертає загальні агреговані метрики системи."""
