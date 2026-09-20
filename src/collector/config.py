@@ -105,6 +105,9 @@ class CollectorSettings:
     mqtt_power_kw_min: float
     mqtt_power_kw_max: float
     mqtt_power_kw_delta: float
+    mqtt_current_a_min: float
+    mqtt_current_voltage_min: float
+    mqtt_current_voltage_max: float
 
     @classmethod
     def from_env(cls) -> "CollectorSettings":
@@ -240,6 +243,18 @@ class CollectorSettings:
                 "COLLECTOR_MQTT_POWER_KW_DELTA",
                 30.0,
             ),
+            mqtt_current_a_min=_env_float(
+                "COLLECTOR_MQTT_CURRENT_A_MIN",
+                0.5,
+            ),
+            mqtt_current_voltage_min=_env_float(
+                "COLLECTOR_MQTT_CURRENT_VOLTAGE_MIN",
+                180.0,
+            ),
+            mqtt_current_voltage_max=_env_float(
+                "COLLECTOR_MQTT_CURRENT_VOLTAGE_MAX",
+                280.0,
+            ),
         )
 
         settings.validate()
@@ -325,6 +340,12 @@ class CollectorSettings:
 
         if self.mqtt_voltage_delta <= 0 or self.mqtt_power_kw_delta <= 0:
             raise ValueError("Допустимі стрибки MQTT мають бути більше нуля")
+
+        if self.mqtt_current_a_min < 0:
+            raise ValueError("Мінімальний струм MQTT не може бути від'ємним")
+
+        if self.mqtt_current_voltage_min >= self.mqtt_current_voltage_max:
+            raise ValueError("Контекстні межі напруги для струму задано некоректно")
 
 
 def _parse_gateway_event_logs(
