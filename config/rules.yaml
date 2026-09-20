@@ -48,7 +48,8 @@ rules:
     threat_type: integrity_attack
     description: >
       Виявляє фізично недопустимі значення або різкі зміни напруги
-      та потужності у нормалізованій MQTT-телеметрії Smart Energy.
+      та потужності, а також стійко понижений струм за нормальної напруги
+      у нормалізованій MQTT-телеметрії Smart Energy.
     enabled: true
 
     match:
@@ -64,6 +65,10 @@ rules:
         min: -10.0
         max: 100.0
         unit: kW
+      current_a:
+        min: 0.5
+        max: 100.0
+        unit: A
 
     delta:
       voltage: 50.0
