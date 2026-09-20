@@ -102,6 +102,28 @@ _BASE_TIMING: dict[str, dict[str, float]] = {
 _SEV_IMPACT = {"low": 0.2, "medium": 0.4, "high": 0.7, "critical": 1.0}
 
 
+def estimate_incident_timing(
+    threat_type: str,
+    policy_modifiers: dict[str, dict[str, float]] | None = None,
+) -> tuple[float, float]:
+    """Повертає модельні MTTD і MTTR для загрози та політики.
+
+    Функція використовується як корелятором, так і порівняльними метриками.
+    Завдяки цьому пропущений політикою сценарій не зникає з оцінювання:
+    для нього застосовується час реакції відповідного профілю захисту.
+    """
+
+    base = _BASE_TIMING.get(
+        threat_type,
+        {"mttd": 30.0, "mttr": 120.0},
+    )
+    modifier = (policy_modifiers or {}).get(threat_type, {})
+    return (
+        base["mttd"] * modifier.get("mttd_multiplier", 1.0),
+        base["mttr"] * modifier.get("mttr_multiplier", 1.0),
+    )
+
+
 def _build_incident(
     group: list[Alert],
     idx: int,
@@ -120,11 +142,7 @@ def _build_incident(
         Створений інцидент.
     """
     threat = group[0].threat_type
-    bases = _BASE_TIMING.get(threat, {"mttd": 30.0, "mttr": 120.0})
-    mod = pm.get(threat, {})
-
-    mttd = bases["mttd"] * mod.get("mttd_multiplier", 1.0)
-    mttr = bases["mttr"] * mod.get("mttr_multiplier", 1.0)
+    mttd, mttr = estimate_incident_timing(threat, pm)
 
     start_ts = group[0].timestamp
     start_dt = _ts(start_ts)
@@ -136,6 +154,7 @@ def _build_incident(
         sev = _max_sev(sev, a.severity)
 
     avg_conf = sum(a.confidence for a in group) / len(group)
+    mod = pm.get(threat, {})
     impact_mult = mod.get("impact_multiplier", 1.0)
     impact_score = round(_SEV_IMPACT.get(sev, 0.5) * avg_conf * impact_mult, 4)
     impact_score = min(impact_score, 1.0)
