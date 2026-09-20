@@ -25,7 +25,7 @@ router = APIRouter(prefix="/cybersecurity", tags=["cybersecurity"])
 
 CANONICAL_COMPONENTS: tuple[str, ...] = ()
 INTEGRATION_MODES = {"dry-run", "shadow", "active"}
-ANALYZED_TELEMETRY_KEYS = frozenset({"voltage", "power_kw"})
+ANALYZED_TELEMETRY_KEYS = frozenset({"voltage", "power_kw", "current_a"})
 THREAT_PRESENTATION = {
     "availability_attack": ("RULE-DDOS-001", "DDoS/API flood"),
     "integrity_attack": ("RULE-SPOOF-001", "Аномалія MQTT-телеметрії"),
@@ -48,6 +48,9 @@ ACTIVE_POLICY_METRIC_FIELDS = (
     "mean_mttd_min",
     "mean_mttr_min",
     "incidents_total",
+    "scenarios_total",
+    "incidents_missed",
+    "detection_rate_pct",
     "incidents_critical",
     "incidents_high",
     "incidents_medium",
@@ -56,6 +59,7 @@ ACTIVE_POLICY_METRIC_FIELDS = (
     "by_integrity_attack",
     "by_outage",
 )
+SELECTED_POLICY = "standard"
 
 COMPONENT_NAMES = {
     "gateway": "Gateway",
@@ -99,9 +103,9 @@ def _parse_utc(value: Any) -> datetime | None:
 
 def _backend_public_port() -> int:
     try:
-        return int(os.getenv("CYBERSECURITY_PUBLIC_PORT", "6049"))
+        return int(os.getenv("CYBERSECURITY_PUBLIC_PORT", "6008"))
     except ValueError:
-        return 6049
+        return 6008
 
 
 def _integration_mode() -> str:
@@ -494,23 +498,38 @@ def _number(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _build_metrics_snapshot(
+def _policy_incident_count(item: dict[str, Any]) -> int:
+    """Повертає кількість інцидентів незалежно від версії CSV-контракту."""
+    return int(_number(item.get("incidents_total") or item.get("incident_count")))
+
+
+def _build_metrics_scope(
     raw_metrics: list[dict[str, Any]],
-    raw_overall: dict[str, Any],
-    generated_at: str,
+    *,
+    total_actions: int,
 ) -> dict[str, Any]:
-    """Формує чесне порівняння останнього непорожнього експерименту."""
+    """Будує один зріз метрик і виділяє політику ``standard``.
+
+    Політики minimal і baseline залишаються у ``byPolicy`` для порівняння.
+    Зведені KPI не усереднюються між різними моделями захисту, а показують
+    лише результат основної моделі ``standard``.
+    """
+
     has_experiment_data = any(
-        int(_number(item.get("incidents_total") or item.get("incident_count"))) > 0
+        _policy_incident_count(item) > 0
         for item in raw_metrics
     )
     active_metrics: list[dict[str, Any]] = []
 
     for item in raw_metrics:
-        incident_count = int(
-            _number(item.get("incidents_total") or item.get("incident_count"))
-        )
+        incident_count = _policy_incident_count(item)
+        scenario_count = int(_number(item.get("scenarios_total")))
+        detection_rate = _number(item.get("detection_rate_pct"))
         detected = incident_count > 0
+        complete_detection = detected and (
+            "detection_rate_pct" not in item
+            or (scenario_count > 0 and detection_rate >= 100.0)
+        )
         metric = {
             key: item[key]
             for key in ACTIVE_POLICY_METRIC_FIELDS
@@ -519,6 +538,8 @@ def _build_metrics_snapshot(
         metric["detected"] = detected
         metric["status"] = (
             "detected"
+            if complete_detection
+            else "partial"
             if detected
             else "not_detected"
             if has_experiment_data
@@ -537,43 +558,102 @@ def _build_metrics_snapshot(
 
         active_metrics.append(metric)
 
-    detected_metrics = [
-        item
-        for item in raw_metrics
-        if int(_number(item.get("incidents_total") or item.get("incident_count"))) > 0
+    selected_metric = next(
+        (
+            item
+            for item in raw_metrics
+            if str(item.get("policy", "")).strip().lower() == SELECTED_POLICY
+        ),
+        None,
+    )
+    selected_detected = bool(
+        selected_metric is not None
+        and _policy_incident_count(selected_metric) > 0
+    )
+
+    availability = (
+        _number(selected_metric.get("availability_pct"))
+        if selected_detected and selected_metric is not None
+        else None
+    )
+    mttd = (
+        _number(selected_metric.get("mean_mttd_min"))
+        if selected_detected and selected_metric is not None
+        else None
+    )
+    mttr = (
+        _number(selected_metric.get("mean_mttr_min"))
+        if selected_detected and selected_metric is not None
+        else None
+    )
+
+    return {
+        "status": "ready" if has_experiment_data else "no_data",
+        "selectedPolicy": SELECTED_POLICY,
+        "summary": {
+            "policies": len(raw_metrics),
+            "detectedByPolicies": sum(
+                1 for item in raw_metrics if _policy_incident_count(item) > 0
+            ),
+            "selectedPolicy": SELECTED_POLICY,
+            "availabilityPct": availability,
+            "mttdMin": mttd,
+            "mttrMin": mttr,
+            # Застарілі назви залишено для сумісності зі старішим UI.
+            # Значення тепер належать standard, а не середньому політик.
+            "avgAvailabilityPct": availability,
+            "avgMttdMin": mttd,
+            "avgMttrMin": mttr,
+            "totalIncidents": (
+                _policy_incident_count(selected_metric)
+                if selected_metric is not None
+                else 0
+            ),
+            "totalActions": total_actions,
+        },
+        "byPolicy": active_metrics,
+    }
+
+
+def _session_started_at(raw_incidents: list[dict[str, Any]]) -> str | None:
+    """Повертає timestamp першого валідного інциденту накопичувальної сесії."""
+
+    timestamps = [
+        parsed
+        for incident in raw_incidents
+        if (parsed := _parse_utc(incident.get("start_ts"))) is not None
     ]
+    if not timestamps:
+        return None
+    return min(timestamps).isoformat().replace("+00:00", "Z")
 
-    def _mean(field: str) -> float | None:
-        """Обчислює середнє лише для політик, що виявили сценарій."""
-        values = [
-            _number(item.get(field))
-            for item in detected_metrics
-            if item.get(field) is not None
-        ]
-        if not values:
-            return None
-        return round(sum(values) / len(values), 2)
 
-    total_incidents = int(
-        sum(
-            _number(item.get("incidents_total") or item.get("incident_count"))
-            for item in detected_metrics
-        )
+def _build_metrics_snapshot(
+    raw_metrics: list[dict[str, Any]],
+    raw_overall: dict[str, Any],
+    generated_at: str,
+    raw_session_metrics: list[dict[str, Any]] | None = None,
+    raw_session_incidents: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Поєднує останній експеримент і накопичувальну статистику сесії."""
+
+    total_actions = int(_number(raw_overall.get("total_actions")))
+    experiment = _build_metrics_scope(
+        raw_metrics,
+        total_actions=total_actions,
+    )
+    session = _build_metrics_scope(
+        raw_session_metrics or [],
+        total_actions=total_actions,
     )
 
     return {
         "generatedAt": generated_at,
-        "status": "ready" if has_experiment_data else "no_data",
-        "summary": {
-            "policies": len(raw_metrics),
-            "detectedByPolicies": len(detected_metrics),
-            "avgAvailabilityPct": _mean("availability_pct"),
-            "avgMttdMin": _mean("mean_mttd_min"),
-            "avgMttrMin": _mean("mean_mttr_min"),
-            "totalIncidents": total_incidents,
-            "totalActions": int(_number(raw_overall.get("total_actions"))),
+        **experiment,
+        "session": {
+            **session,
+            "startedAt": _session_started_at(raw_session_incidents or []),
         },
-        "byPolicy": active_metrics,
     }
 
 
@@ -1303,6 +1383,18 @@ def _create_cybersecurity_snapshot(
         provider.get_actions(max(action_limit, 1000))
     )
     raw_metrics = provider.get_metrics()
+    get_session_metrics = getattr(provider, "get_session_metrics", None)
+    raw_session_metrics = (
+        get_session_metrics()
+        if callable(get_session_metrics)
+        else []
+    )
+    get_session_incidents = getattr(provider, "get_session_incidents", None)
+    raw_session_incidents = (
+        get_session_incidents(10000)
+        if callable(get_session_incidents)
+        else []
+    )
     raw_overall = provider.get_overall_metrics()
     raw_overall["total_actions"] = float(
         sum(1 for action in actions if _is_active_action(action))
@@ -1330,7 +1422,13 @@ def _create_cybersecurity_snapshot(
         api=api_snapshot,
         read_only=_build_read_only_snapshot(states, generated_at, external_adapters),
         network=_build_network_snapshot(states, generated_at, external_adapters),
-        metrics=_build_metrics_snapshot(raw_metrics, raw_overall, generated_at),
+        metrics=_build_metrics_snapshot(
+            raw_metrics,
+            raw_overall,
+            generated_at,
+            raw_session_metrics,
+            raw_session_incidents,
+        ),
         telemetry=telemetry_snapshot,
         incidents=incidents_snapshot,
         actions=_build_actions_snapshot(actions, generated_at, action_limit),
