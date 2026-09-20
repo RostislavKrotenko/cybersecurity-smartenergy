@@ -29,6 +29,15 @@ class TelemetryLimit:
     maximum_delta: float
 
 
+@dataclass(frozen=True, slots=True)
+class LowCurrentRule:
+    """Умови виявлення аномально низького струму під напругою."""
+
+    minimum_current_a: float
+    voltage_min: float
+    voltage_max: float
+
+
 class MqttTelemetryQuarantine:
     """Вилучає небезпечні MQTT-вимірювання з робочого потоку.
 
@@ -44,12 +53,14 @@ class MqttTelemetryQuarantine:
         path: str | Path,
         enabled: bool,
         limits: dict[str, TelemetryLimit],
+        low_current_rule: LowCurrentRule | None = None,
     ) -> None:
         """Створює карантин із заданими фізичними межами."""
 
         self._path = Path(path)
         self._enabled = enabled
         self._limits = dict(limits)
+        self._low_current_rule = low_current_rule
         self._last_valid_values: dict[tuple[str, str], float] = {}
         self._quarantined_count = 0
 
@@ -100,6 +111,12 @@ class MqttTelemetryQuarantine:
                 reasons, _ = self._inspect(event)
                 if reasons:
                     violations.append((event, reasons))
+
+            violations.extend(
+                self._inspect_low_current(
+                    [event for _, event in indexed_events]
+                )
+            )
 
             if violations:
                 message_events = [event for _, event in indexed_events]
@@ -206,6 +223,53 @@ class MqttTelemetryQuarantine:
             reasons.append("abrupt_value_change")
 
         return reasons, numeric_value
+
+    def _inspect_low_current(
+        self,
+        events: list[Event],
+    ) -> list[tuple[Event, list[str]]]:
+        """Виявляє низький струм лише на пристрої з нормальною напругою.
+
+        Значення струму близьке до нуля саме по собі може бути нормальним
+        для вимкненого обладнання. Подія вважається аномальною тільки тоді,
+        коли той самий MQTT-пакет містить нормальну напругу для того самого
+        джерела, але струм нижчий за встановлену межу.
+        """
+
+        rule = self._low_current_rule
+        if rule is None:
+            return []
+
+        voltage_by_source: dict[str, float] = {}
+        for event in events:
+            if event.key != "voltage":
+                continue
+            try:
+                voltage = float(event.value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(voltage):
+                voltage_by_source[event.source] = voltage
+
+        violations: list[tuple[Event, list[str]]] = []
+        for event in events:
+            if event.key != "current_a":
+                continue
+
+            try:
+                current = float(event.value)
+            except (TypeError, ValueError):
+                continue
+
+            voltage = voltage_by_source.get(event.source)
+            if voltage is None or not math.isfinite(current):
+                continue
+
+            energized = rule.voltage_min <= voltage <= rule.voltage_max
+            if energized and current < rule.minimum_current_a:
+                violations.append((event, ["low_current"]))
+
+        return violations
 
     @staticmethod
     def _quarantine_notice(event: Event, reasons: list[str]) -> Event:
