@@ -29,17 +29,17 @@ INCIDENT_CSV_COLUMNS = [
 class Incident:
     """Корельований інцидент безпеки з метриками часу."""
 
-    incident_id: str
-    policy: str
-    threat_type: str
-    severity: str
-    component: str
+    incident_id: str  # наприклад, "INC-001"
+    policy: str  # застосована політика
+    threat_type: str  # допустимі значення: credential_attack, availability_attack, integrity_attack, outage
+    severity: str  # підвищений рівень критичності
+    component: str  # уражені компоненти через крапку з комою
     event_count: int
-    start_ts: str
-    detect_ts: str
-    recover_ts: str
-    mttd_sec: float
-    mttr_sec: float
+    start_ts: str  # ISO-8601
+    detect_ts: str  # ISO-8601
+    recover_ts: str  # ISO-8601
+    mttd_sec: float  # секунди
+    mttr_sec: float  # секунди
     impact_score: float
     description: str
     response_action: str
@@ -49,12 +49,9 @@ class Incident:
         """Повертає один рядок CSV без символу нового рядка."""
         buf = io.StringIO()
         writer = csv.writer(buf)
-        writer.writerow(
-            [getattr(self, column) for column in INCIDENT_CSV_COLUMNS]
-        )
+        writer.writerow([getattr(self, c) for c in INCIDENT_CSV_COLUMNS])
         return buf.getvalue().rstrip("\r\n")
 
     @staticmethod
     def csv_header() -> str:
-        """Повертає заголовок CSV для збереження інцидентів."""
         return ",".join(INCIDENT_CSV_COLUMNS)
