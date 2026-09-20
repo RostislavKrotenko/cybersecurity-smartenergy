@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from src.analyzer.decision import decide, write_actions_csv
+from src.analyzer.metrics import compute
 from src.analyzer.pipeline import (
     _apply_acks,
     _apply_restore_lock,
@@ -28,6 +29,7 @@ from src.analyzer.pipeline import (
     _write_live_output,
 )
 from src.analyzer.policy_engine import get_modifiers, list_policy_names, load_policies
+from src.analyzer.reporter import write_incidents_csv, write_results_csv
 from src.analyzer.state_store import ComponentStateStore
 from src.contracts.action import Action
 from src.contracts.event import Event
@@ -48,6 +50,9 @@ log = logging.getLogger(__name__)
 _INCIDENT_NUMBER_RE = re.compile(r"(\d+)$")
 _AUTH_ACTORS_RE = re.compile(r"actors=(\d+)")
 _AUTH_IPS_RE = re.compile(r"ips=(\d+)")
+_SESSION_INCIDENTS_FILE = "session_incidents.csv"
+_SESSION_RESULTS_FILE = "session_results.csv"
+_INCIDENT_SCENARIO_TOLERANCE_SECONDS = 30.0
 
 
 @dataclass(slots=True)
@@ -164,6 +169,77 @@ def _incident_identity(incident: Incident) -> tuple[str, str, str, str, str]:
     )
 
 
+def _same_incident_scenario(
+    left: Incident,
+    right: Incident,
+    *,
+    tolerance_seconds: float = _INCIDENT_SCENARIO_TOLERANCE_SECONDS,
+) -> bool:
+    """Перевіряє, чи два інциденти описують той самий live-сценарій.
+
+    Під час повторної кореляції рухомого вікна початкова подія може
+    зсунутися на кілька секунд. Точне порівняння ``start_ts`` у такому
+    випадку створює дублікати. Інциденти різних політик навмисно не
+    об'єднуються, оскільки вони потрібні для порівняння моделей захисту.
+    """
+
+    if (
+        left.policy,
+        left.threat_type,
+        left.component,
+        left.source,
+    ) != (
+        right.policy,
+        right.threat_type,
+        right.component,
+        right.source,
+    ):
+        return False
+
+    left_start = _parse_utc_timestamp(left.start_ts)
+    right_start = _parse_utc_timestamp(right.start_ts)
+    if left_start is None or right_start is None:
+        return left.start_ts == right.start_ts
+
+    return abs((left_start - right_start).total_seconds()) <= max(
+        0.0,
+        tolerance_seconds,
+    )
+
+
+def _deduplicate_incident_scenarios(
+    incidents: list[Incident],
+) -> list[Incident]:
+    """Залишає по одному запису кожного сценарію для кожної політики."""
+
+    unique: list[Incident] = []
+    for incident in incidents:
+        if any(
+            _same_incident_scenario(existing, incident)
+            for existing in unique
+        ):
+            continue
+        unique.append(incident)
+    return unique
+
+
+def _new_incident_scenarios(
+    history: list[Incident],
+    detected: list[Incident],
+) -> list[Incident]:
+    """Повертає лише нові сценарії відносно історії та поточного пакета."""
+
+    accepted: list[Incident] = []
+    for incident in detected:
+        if any(
+            _same_incident_scenario(existing, incident)
+            for existing in [*history, *accepted]
+        ):
+            continue
+        accepted.append(incident)
+    return accepted
+
+
 def _incident_number(incident_id: str) -> int:
     """Отримує числову частину ідентифікатора інциденту."""
     match = _INCIDENT_NUMBER_RE.search(incident_id.strip())
@@ -181,7 +257,10 @@ def _load_incidents(path: Path, rolling_window_sec: float) -> list[Incident]:
     if rolling_window_sec > 0:
         cutoff = _utc_now() - timedelta(seconds=rolling_window_sec)
 
-    incidents_by_id: dict[str, Incident] = {}
+    incidents_by_identity: dict[
+        tuple[str, str, str, str, str],
+        Incident,
+    ] = {}
 
     try:
         with path.open("r", encoding="utf-8", newline="") as stream:
@@ -215,13 +294,15 @@ def _load_incidents(path: Path, rolling_window_sec: float) -> list[Incident]:
                     response_action=str(row.get("response_action", "")),
                     source=str(row.get("source", "")),
                 )
-                incidents_by_id[incident_id] = incident
+                incidents_by_identity[_incident_identity(incident)] = incident
 
     except (OSError, csv.Error) as error:
         log.warning("Не вдалося відновити інциденти з %s: %s", path, error)
         return []
 
-    incidents = list(incidents_by_id.values())
+    incidents = _deduplicate_incident_scenarios(
+        list(incidents_by_identity.values())
+    )
     log.info("Відновлено %d активних інцидентів із %s", len(incidents), path)
     return incidents
 
@@ -412,6 +493,102 @@ def _expire_incidents(
     return active, expired_count
 
 
+def _append_policy_experiment(
+    history: list[Incident],
+    *,
+    is_open: bool,
+    detected: list[Incident],
+) -> tuple[list[Incident], bool]:
+    """Додає інциденти до незмінної історії поточного експерименту.
+
+    Після закриття rolling window перший новий інцидент починає новий
+    експеримент і замінює попередню історію. Поки експеримент триває,
+    результати всіх політик накопичуються разом і не зникають по черзі.
+    """
+
+    if not detected:
+        return list(history), is_open
+
+    current_history = list(history) if is_open else []
+    current_history.extend(detected)
+    return current_history, True
+
+
+def _append_session_incidents(
+    history: list[Incident],
+    detected: list[Incident],
+) -> list[Incident]:
+    """Додає до сесії лише інциденти, яких ще немає в історії.
+
+    Стабільна ознака інциденту не залежить від номера ``INC-*``, тому
+    повторне читання подій після restart не спотворює накопичувальні метрики.
+    """
+
+    return [
+        *history,
+        *_new_incident_scenarios(history, detected),
+    ]
+
+
+def _session_horizon_seconds(
+    incidents: list[Incident],
+    *,
+    minimum_seconds: float,
+) -> float:
+    """Обчислює стабільний модельний горизонт накопичувальної сесії.
+
+    Кожен інцидент однієї політики відповідає окремому виявленому сценарію.
+    Тому базовий горизонт множиться на найбільшу кількість сценаріїв серед
+    політик. Метрика не прямує штучно до 100% лише через плин реального часу
+    і залишається порівнюваною між ``minimal``, ``baseline`` та ``standard``.
+    """
+
+    incidents_by_policy: dict[str, int] = {}
+    for incident in incidents:
+        incidents_by_policy[incident.policy] = (
+            incidents_by_policy.get(incident.policy, 0) + 1
+        )
+
+    scenario_count = max(incidents_by_policy.values(), default=1)
+    return max(1.0, minimum_seconds) * scenario_count
+
+
+def _write_session_output(
+    incidents: list[Incident],
+    selected: list[str],
+    policies_cfg: dict[str, Any],
+    minimum_horizon_sec: float,
+    output_path: Path,
+) -> None:
+    """Атомарно зберігає накопичувальну статистику поточної сесії."""
+
+    if not incidents:
+        return
+
+    horizon_sec = _session_horizon_seconds(
+        incidents,
+        minimum_seconds=minimum_horizon_sec,
+    )
+    metrics = [
+        compute(
+            [incident for incident in incidents if incident.policy == policy],
+            policy,
+            horizon_sec=horizon_sec,
+            reference_incidents=incidents,
+            policy_modifiers=get_modifiers(policies_cfg, policy),
+        )
+        for policy in selected
+    ]
+    write_incidents_csv(
+        incidents,
+        str(output_path / _SESSION_INCIDENTS_FILE),
+    )
+    write_results_csv(
+        metrics,
+        str(output_path / _SESSION_RESULTS_FILE),
+    )
+
+
 def watch_pipeline_with_recovery(
     event_source: EventSource,
     out_dir: str = "out",
@@ -459,6 +636,26 @@ def watch_pipeline_with_recovery(
     restored = load_runtime_state(output_path, rolling_sec)
     incident_counter = restored.incident_counter
     all_incidents = restored.incidents
+    experiment_incidents = _load_incidents(
+        output_path / "incidents.csv",
+        rolling_window_sec=0,
+    )
+    if not experiment_incidents:
+        experiment_incidents = list(all_incidents)
+    session_incidents_path = output_path / _SESSION_INCIDENTS_FILE
+    session_incidents = _load_incidents(
+        session_incidents_path,
+        rolling_window_sec=0,
+    )
+    if not session_incidents_path.exists() and experiment_incidents:
+        session_incidents = list(experiment_incidents)
+
+    for incident in [*experiment_incidents, *session_incidents]:
+        incident_counter = max(
+            incident_counter,
+            _incident_number(incident.incident_id),
+        )
+    experiment_open = bool(all_incidents)
     all_actions = restored.actions
     acted_incidents = restored.acted_incidents
 
@@ -470,14 +667,23 @@ def watch_pipeline_with_recovery(
 
     write_actions_csv(all_actions, str(output_path / "actions.csv"))
     state_store.write_csv(str(output_path / "state.csv"))
-    _write_live_output(
-        all_incidents,
-        selected,
-        policies_cfg,
-        horizon_sec,
-        output_path,
-        actions_count=len(all_actions),
-    )
+    if experiment_incidents:
+        _write_live_output(
+            experiment_incidents,
+            selected,
+            policies_cfg,
+            horizon_sec,
+            output_path,
+            actions_count=len(all_actions),
+        )
+    if session_incidents:
+        _write_session_output(
+            session_incidents,
+            selected,
+            policies_cfg,
+            horizon_sec,
+            output_path,
+        )
 
     iteration = 0
     tick_counter = 0
@@ -577,8 +783,37 @@ def watch_pipeline_with_recovery(
                     },
                 )
 
+                detected_incidents = _new_incident_scenarios(
+                    [
+                        *all_incidents,
+                        *experiment_incidents,
+                        *session_incidents,
+                    ],
+                    detected_incidents,
+                )
+
                 new_incidents = detected_incidents
+
+                was_open = experiment_open
+                experiment_incidents, experiment_open = (
+                    _append_policy_experiment(
+                        experiment_incidents,
+                        is_open=experiment_open,
+                        detected=detected_incidents,
+                    )
+                )
+                if detected_incidents and not was_open:
+                    log.info(
+                        "Розпочато новий експеримент порівняння політик"
+                    )
+
                 all_incidents.extend(detected_incidents)
+
+                previous_session_size = len(session_incidents)
+                session_incidents = _append_session_incidents(
+                    session_incidents,
+                    detected_incidents,
+                )
 
                 if detected_incidents:
                     new_actions = decide(detected_incidents, acted_incidents)
@@ -629,20 +864,34 @@ def watch_pipeline_with_recovery(
                             write_actions_csv(all_actions, str(plan_path))
 
             all_incidents, expired_count = _expire_incidents(all_incidents, rolling_sec)
+            if experiment_open and not all_incidents:
+                experiment_open = False
+                log.info(
+                    "Експеримент завершено; порівняльні метрики "
+                    "залишаються зафіксованими до нового інциденту"
+                )
             state_store.tick()
 
             if new_events or state_events:
                 state_store.write_csv(str(output_path / "state.csv"))
 
-            if new_events or expired_count:
+            if new_incidents:
                 _write_live_output(
-                    all_incidents,
+                    experiment_incidents,
                     selected,
                     policies_cfg,
                     horizon_sec,
                     output_path,
                     actions_count=len(all_actions),
                 )
+                if len(session_incidents) > previous_session_size:
+                    _write_session_output(
+                        session_incidents,
+                        selected,
+                        policies_cfg,
+                        horizon_sec,
+                        output_path,
+                    )
 
             if new_events:
                 log.info(
