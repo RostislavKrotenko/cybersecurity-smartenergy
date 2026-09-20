@@ -14,6 +14,17 @@ x-cybersecurity-service: &cybersecurity-service
     - cybersecurity-network
 
 services:
+  cybersecurity-storage-init:
+    <<: *cybersecurity-service
+    container_name: cybersecurity-storage-init
+    restart: "no"
+    command:
+      - python
+      - -m
+      - src.shared.storage_init
+    environment:
+      CYBERSECURITY_STORAGE_GENERATION: "2026-09-20-clean-runtime-v1"
+
   cybersecurity-gateway:
     <<: *cybersecurity-service
     container_name: cybersecurity-gateway
@@ -46,6 +57,9 @@ services:
       GATEWAY_STALE_CACHE_TTL_SEC: "${GATEWAY_STALE_CACHE_TTL_SEC:-30}"
     ports:
       - "${CYBERSECURITY_GATEWAY_PORT:-8080}:8080"
+    depends_on:
+      cybersecurity-storage-init:
+        condition: service_completed_successfully
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
