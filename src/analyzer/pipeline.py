@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -279,6 +279,8 @@ def watch_pipeline_with_adapters(
     rolling_sec = rolling_window_min * 60.0
     inc_counter = 0
     all_incidents: list[Any] = []
+    experiment_incidents: list[Any] = []
+    experiment_open = False
     all_actions: list[Action] = []
     acted_incidents: set[str] = set()
     state_store = ComponentStateStore()
@@ -306,16 +308,19 @@ def watch_pipeline_with_adapters(
             selected,
             inc_counter,
         )
+        experiment_incidents = list(all_incidents)
+        experiment_open = bool(experiment_incidents)
         state_store.tick()
         state_store.write_csv(str(out_p / "state.csv"))
-        _write_live_output(
-            all_incidents,
-            selected,
-            policies_cfg,
-            horizon_sec,
-            out_p,
-            actions_count=len(all_actions),
-        )
+        if experiment_incidents:
+            _write_live_output(
+                experiment_incidents,
+                selected,
+                policies_cfg,
+                horizon_sec,
+                out_p,
+                actions_count=len(all_actions),
+            )
 
     if state_event_source is not None:
         pre_state_events = state_event_source.read_batch()
@@ -354,6 +359,19 @@ def watch_pipeline_with_adapters(
             new_events = next(event_iter)
             state_events = next(state_iter) if state_iter is not None else []
 
+            all_incidents, expired = _expire_incidents(
+                all_incidents,
+                rolling_sec=rolling_sec,
+            )
+            if expired:
+                log.debug("Expired %d old live incidents", expired)
+            if experiment_open and not all_incidents:
+                experiment_open = False
+                log.info(
+                    "Експеримент завершено; порівняльні метрики "
+                    "залишаються зафіксованими до нового інциденту"
+                )
+
             acks_changed = False
             if mode == IntegrationMode.ACTIVE and action_feedback is not None:
                 acks, feedback_offset = action_feedback.read_acks(since=feedback_offset)
@@ -391,7 +409,16 @@ def watch_pipeline_with_adapters(
                     selected,
                     inc_counter,
                 )
+
+                if new_incs and not experiment_open:
+                    experiment_incidents = []
+                    experiment_open = True
+                    log.info(
+                        "Розпочато новий експеримент порівняння політик"
+                    )
+
                 all_incidents.extend(new_incs)
+                experiment_incidents.extend(new_incs)
 
                 if new_incs:
                     new_actions = decide(new_incs, acted_incidents)
@@ -442,25 +469,17 @@ def watch_pipeline_with_adapters(
                                 plan_path,
                             )
 
-                if rolling_sec > 0 and all_incidents:
-                    latest = max(_ts(i.start_ts) for i in all_incidents)
-                    cutoff = latest - timedelta(seconds=rolling_sec)
-                    before = len(all_incidents)
-                    all_incidents = [i for i in all_incidents if _ts(i.start_ts) >= cutoff]
-                    expired = before - len(all_incidents)
-                    if expired:
-                        log.debug("Expired %d old incidents", expired)
-
                 state_store.tick()
                 state_store.write_csv(str(out_p / "state.csv"))
-                _write_live_output(
-                    all_incidents,
-                    selected,
-                    policies_cfg,
-                    horizon_sec,
-                    out_p,
-                    actions_count=len(all_actions),
-                )
+                if new_incs:
+                    _write_live_output(
+                        experiment_incidents,
+                        selected,
+                        policies_cfg,
+                        horizon_sec,
+                        out_p,
+                        actions_count=len(all_actions),
+                    )
 
                 log.info(
                     "[tick %d] iter %d: +%d events (+%d state), +%d incidents, %d active, %d actions total",
@@ -797,12 +816,12 @@ def _write_live_output(
     out_p: Path,
     actions_count: int = 0,
 ) -> None:
-    """Оновлює live-інциденти та останній непорожній експеримент.
+    """Атомарно зберігає повний поточний експеримент.
 
-    ``incidents.csv`` відображає поточне рухоме вікно й тому може стати
-    порожнім. Порівняльні метрики, навпаки, мають залишатися результатом
-    останнього завершеного експерименту до появи нового. Через це порожнє
-    вікно не перезаписує ``results.csv`` штучними значеннями 100%.
+    Список ``incidents`` накопичується від першого інциденту експерименту
+    до завершення його rolling window. Він не скорочується разом із live-
+    станом, тому політики не зникають із ``results.csv`` по черзі. Після
+    завершення експерименту файли залишаються незмінними до нового сценарію.
     """
     write_incidents_csv(incidents, str(out_p / "incidents.csv"))
 
@@ -816,7 +835,13 @@ def _write_live_output(
     all_metrics = []
     for pname in selected:
         policy_incs = [i for i in incidents if i.policy == pname]
-        m = compute(policy_incs, pname, horizon_sec=horizon_sec)
+        m = compute(
+            policy_incs,
+            pname,
+            horizon_sec=horizon_sec,
+            reference_incidents=incidents,
+            policy_modifiers=get_modifiers(policies_cfg, pname),
+        )
         all_metrics.append(m)
 
     control_ranking = rank_controls(policies_cfg, selected)
@@ -828,6 +853,36 @@ def _write_live_output(
         str(out_p / "report.txt"),
         actions_count=actions_count,
     )
+
+
+def _expire_incidents(
+    incidents: list[Any],
+    *,
+    rolling_sec: float,
+    now: datetime | None = None,
+) -> tuple[list[Any], int]:
+    """Вилучає інциденти, строк активності яких минув за реальним часом.
+
+    Попередня реалізація відраховувала вікно від timestamp найновішого
+    інциденту. Якщо нових інцидентів не було, старий інцидент міг залишатися
+    активним безстроково. Тепер межа визначається поточним UTC-часом.
+    """
+
+    if rolling_sec <= 0 or not incidents:
+        return list(incidents), 0
+
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    cutoff = current_time.astimezone(timezone.utc) - timedelta(
+        seconds=rolling_sec
+    )
+    active = [
+        incident
+        for incident in incidents
+        if _ts(incident.start_ts) >= cutoff
+    ]
+    return active, len(incidents) - len(active)
 
 
 def _throttle_actions(
