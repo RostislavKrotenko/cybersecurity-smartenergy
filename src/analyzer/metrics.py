@@ -1,13 +1,17 @@
 """Розрахунок метрик кіберстійкості на основі інцидентів.
 
 Downtime рахується як інтервал від ``detect_ts`` до ``recover_ts``. Це дорівнює
-MTTR і не включає MTTD. У downtime входять лише інциденти з severity >= high,
-а перетини інтервалів об'єднуються перед підсумовуванням.
+MTTR і не включає MTTD. У downtime входять інциденти з severity ``medium``,
+``high`` і ``critical``, а перетини інтервалів об'єднуються перед
+підсумовуванням. ``Medium`` враховується тому, що карантин телеметрії тимчасово
+робить відповідний канал даних непридатним для штатного використання, навіть
+якщо HTTP-сервіс залишається доступним.
 
 Метрики обчислюються окремо для кожної політики. У порівняльному режимі всі
 політики оцінюються на спільному наборі сценаріїв, тому пропущена атака не дає
 штучні 100% доступності:
-- availability_pct: частка горизонту аналізу без модельного high/critical простою.
+- availability_pct: частка горизонту без модельної функціональної деградації
+  рівня medium, high або critical.
 - total_downtime_hr: сумарний downtime у годинах.
 - mean_mttd_min: середній MTTD у хвилинах.
 - mean_mttr_min: середній MTTR у хвилинах.
@@ -168,11 +172,11 @@ def compute(
             2,
         )
 
-    high_sev = {"high", "critical"}
+    availability_affecting_severities = {"medium", "high", "critical"}
     intervals: list[tuple[datetime, datetime]] = []
     if comparison_mode:
         for scenario in scenarios:
-            if scenario.severity not in high_sev:
+            if scenario.severity not in availability_affecting_severities:
                 continue
             mttd_sec, mttr_sec = estimate_incident_timing(
                 scenario.threat_type,
@@ -182,7 +186,7 @@ def compute(
             intervals.append((start, start + timedelta(seconds=mttr_sec)))
     else:
         for inc in incidents:
-            if inc.severity in high_sev:
+            if inc.severity in availability_affecting_severities:
                 if not inc.detect_ts or not inc.recover_ts:
                     log.warning(
                         "Інцидент %s пропущено для downtime: "
