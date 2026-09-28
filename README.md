@@ -1,244 +1,202 @@
-# SmartEnergy Cyber-Resilience Analyzer
+# SECMS - система моніторингу кіберзахисту Smart Energy
 
-Контейнеризований модуль кіберзахисту та функціональної стійкості SmartEnergy:
-захисний reverse proxy, near-real-time аналіз MQTT-телеметрії,
-автоматичне реагування й read-only моніторинг доступності компонентів.
+## Тема роботи
 
-## Призначення
+Методи кіберзахисту для підвищення функціональної стійкості програмного комплексу Smart Energy.
 
-Активна інтеграція забезпечує:
+## Короткий опис
 
-- незалежний захист кількох backend-контурів окремими Gateway-екземплярами;
-- виявлення та пом'якшення API flood/DDoS;
-- rate limiting і автоматичне блокування джерел;
-- circuit breaker, контрольовану ізоляцію та stale-cache;
-- аналіз реальної MQTT-телеметрії за ключами `voltage`, `power_kw` і `current_a`;
-- карантин усього MQTT-повідомлення, якщо його контрольований показник
-  виходить за фізичні межі або містить небезпечний стрибок;
-- read-only перевірки доступності HTTP/TCP компонентів;
-- відновлення стану дій за допомогою ACK, idempotency і checkpoints.
+SECMS контролює захищений HTTP-контур Smart Energy та MQTT-телеметрію. Система виявляє надмірну інтенсивність запитів, аномальні значення напруги, потужності й струму, формує інциденти та виконує дозволені дії через власний захисний шлюз.
 
-Сценарії автентифікації, пошкодження БД, несанкціонованих команд і складних
-мережевих атак можуть залишатися в емуляторі як дослідницькі дані, але не є
-активними можливостями інтеграції `rozumnaEnergia`.
+Основні можливості:
 
-Система оцінює ефективність політик безпеки `minimal`, `baseline`, `standard` через метрики Availability / MTTD / MTTR.
+- обмеження інтенсивності HTTP-запитів і тимчасове блокування джерел;
+- автоматичне посилення обмежень під час перевантаження API;
+- запобіжник відмов і кешована відповідь у разі недоступності цільового сервісу;
+- збирання та нормалізація MQTT-телеметрії;
+- виявлення аномалій `voltage`, `power_kw` і пониженого `current_a`;
+- карантин аномальних MQTT-повідомлень у контурі SECMS;
+- формування інцидентів, команд реагування та підтверджень виконання;
+- порівняння політик `minimal`, `baseline` і `standard`;
+- перевірка доступності зовнішніх компонентів Smart Energy без зміни їхнього стану;
+- відображення стану системи у вебінтерфейсі React.
 
-## Архітектура
+SECMS активно керує тільки власним захисним шлюзом. Перевірки MongoDB, InfluxDB, MQTT та інших зовнішніх компонентів показують їхню доступність, але не перевіряють цілісність даних і не доводять наявність атаки.
 
-| Модуль | Роль |
-|---|---|
-| Gateway | Окремий reverse proxy для кожного `serviceId`: rate limiting, блокування, circuit breaker і stale-cache |
-| Collector | Збирає розділені журнали кількох Gateway, MQTT і перевірки доступності |
-| Analyzer | Виявляє DDoS, аномалії телеметрії та недоступність upstream |
-| Control | Ідемпотентно застосовує підтримувані дії через Gateway |
-| API | Формує агрегований snapshot для UI |
-| Emulator | Окремий дослідницький генератор сценаріїв, не джерело production-даних |
+## Склад системи
 
-## Docker профілі
+| Компонент | Призначення |
+| --- | --- |
+| Gateway | Приймає HTTP-запити, обмежує їхню інтенсивність, блокує джерела та передає дозволені запити до Smart Energy API |
+| Collector | Збирає події Gateway, результати перевірок доступності та MQTT-телеметрію |
+| Analyzer | Застосовує правила виявлення, створює інциденти та порівнює політики захисту |
+| Control | Виконує дозволені команди реагування та контролює їх повторне виконання |
+| API | Формує зведений стан для вебінтерфейсу |
 
-| Профіль | Опис |
-|---------|------|
-| `live` | Повний closed-loop: Emulator → Analyzer → API + React Frontend + Postgres |
-| `api` | Тільки REST API (потребує готових даних в `out/`) |
+## Необхідне програмне забезпечення
 
-## Вимоги
+Для рекомендованого запуску потрібні:
 
-- Python 3.11+
-- Node.js 20+
-- Docker + Docker Compose
+- Linux, macOS або Windows із підтримкою контейнерів;
+- Git;
+- Docker Engine 24 або новіший;
+- Docker Compose версії 2;
+- доступний HTTP-сервіс Smart Energy, до якого Gateway передаватиме дозволені запити;
+- MQTT-брокер, якщо потрібно аналізувати реальну телеметрію.
 
-## Швидкий старт
+Окремо встановлювати Python, бібліотеки Python або базу даних не потрібно. Docker-образ використовує Python 3.11 і встановлює залежності з `requirements.txt`. Внутрішній стан SECMS зберігається у Docker volumes.
 
-### Через Docker (рекомендовано)
+## Встановлення та запуск
+
+1. Завантажити репозиторій і перейти до його каталогу:
 
 ```bash
-docker compose --profile live down -v && docker compose --profile live up -d --build --force-recreate
+git clone https://github.com/RostislavKrotenko/cybersecurity-smartenergy.git
+cd cybersecurity-smartenergy
 ```
 
-Або через Makefile:
+2. Створити локальний файл налаштувань:
 
 ```bash
-make docker-live
+cp deploy/integration.env.example .env
 ```
 
-### Публікація production-образу в Docker Hub
+3. Відкрити `.env` і обов'язково замінити значення:
 
-Загальний проєкт використовує один versioned image для Gateway, Collector,
-Analyzer, Control та API. На ARM-комп'ютері образ для production AMD-сервера
-потрібно збирати явно для `linux/amd64`:
+```text
+GATEWAY_CONTROL_TOKEN=replace-this-with-a-long-random-token
+```
+
+Для генерації випадкового значення можна виконати:
 
 ```bash
-docker login
-docker buildx create --name smartenergy-builder --use
-docker buildx inspect --bootstrap
-docker buildx build \
-  --platform linux/amd64 \
-  --tag rostyslavkrotenko/cybersecurity-smartenergy:latest \
-  --push \
-  .
-docker buildx imagetools inspect \
-  rostyslavkrotenko/cybersecurity-smartenergy:latest
+openssl rand -hex 32
 ```
 
-Якщо builder `smartenergy-builder` уже існує, замість його повторного створення
-використовуйте:
+4. У `.env` вказати адресу захищеного Smart Energy API. Для сервісу, який працює на хост-машині через порт `6006`, використовується:
+
+```text
+SMARTENERGY_UPSTREAM_URL=http://host.docker.internal:6006
+```
+
+5. Зібрати образ і запустити SECMS:
 
 ```bash
-docker buildx use smartenergy-builder
+docker compose -f docker-compose.integration.yml up -d --build
 ```
 
-Тег у `docker-compose.yaml` загального проєкту потрібно оновлювати лише після
-успішної публікації нового versioned image. Реальні токени й файли `.env` у
-Docker image та Git додавати не можна.
-
-### Локально (без Docker)
+6. Перевірити стан контейнерів:
 
 ```bash
-# Backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
-
-# Frontend
-cd frontend && npm install && cd ..
-
-# Запуск
-make demo-live
+docker compose -f docker-compose.integration.yml ps
 ```
 
-В окремому терміналі для фронтенду:
+Очікуваний результат: `cybersecurity-gateway` і `cybersecurity-api` мають стан `healthy`, а Collector, Analyzer та Control мають стан `Up`.
+
+## Перевірка після запуску
+
+Перевірка Gateway:
 
 ```bash
-make frontend-dev
+curl http://localhost:8080/_cybersecurity/healthz
 ```
 
-## Endpoints
-
-| URL | Опис |
-|-----|------|
-| http://localhost:5173 | React Dashboard (основний UI) |
-| http://localhost:8000/api/docs | Swagger UI (API документація) |
-| http://localhost:8000/api/incidents | Інциденти |
-| http://localhost:8000/api/actions | Дії |
-| http://localhost:8000/api/state | Стан компонентів |
-| http://localhost:8000/api/metrics | Метрики |
-
-## REST API
-
-API побудовано на FastAPI з автоматичною документацією.
-
-### Основні endpoints
-
-```
-GET /api/incidents           - список інцидентів (з фільтрами)
-GET /api/incidents/count     - кількість інцідентів
-GET /api/actions             - список дій + статистика
-GET /api/actions/summary     - статистика дій
-GET /api/state               - стан усіх компонентів
-GET /api/state/components/{id}     - стан конкретного компонента
-GET /api/metrics             - метрики по політиках
-GET /api/metrics/overall     - загальні метрики
-GET /api/health              - health check
-```
-
-## Frontend (React)
-
-Активний UI інтегровано як React Router маршрут `/cybersecurity` у репозиторії
-`rozumnaEnergia`. Він показує окремі стани кожного Gateway, стан API, останню
-MQTT-телеметрію та карантинні записи,
-read-only доступність зовнішніх компонентів, інциденти, фактичні дії та
-порівняльні метрики політик.
-
-MTTD, MTTR і availability у таблиці політик є модельними порівняльними
-показниками. Вони не подаються як фактичний час стендової реакції.
-Верхні KPI показують політику `standard` за всіма інцидентами поточної
-сесії, а не середнє значення трьох різних політик. У секції порівняння можна
-перемкнутися між останнім експериментом і накопичувальною статистикою сесії.
-
-### Команди
+Перевірка API:
 
 ```bash
-make frontend-install   # Встановити залежності
-make frontend-dev       # Dev сервер (localhost:5173)
-make frontend-build     # Production build
+curl http://localhost:6049/healthz
 ```
 
-## Closed-loop реагування
-
-### Gateway / API
-
-- `availability_attack` -> `enable_rate_limit` (Gateway)
-- `availability_attack` + critical -> `isolate_component` (API)
-- повторні порушення rate limit -> автоматичне блокування джерела (Gateway)
-- `integrity_attack` для MQTT -> повний payload вилучається з робочої
-  телеметрії, а Analyzer отримує лише службову подію карантину
-- `outage` -> фіксація інциденту; circuit breaker і stale-cache виконуються
-  безпосередньо Gateway
-
-## Дані та часові мітки
-
-- Усі timestamp зберігаються в UTC.
-- Dashboard/API конвертує час лише для відображення.
-
-Основні live-файли:
-- `data/live/events.jsonl`
-- `data/live/actions.jsonl`
-- `data/live/actions_applied.jsonl`
-- `out/incidents.csv`
-- `out/results.csv`
-- `out/session_incidents.csv`
-- `out/session_results.csv`
-- `out/actions.csv`
-- `out/state.csv`
-
-## Тести та якість
+Отримання повного стану SECMS:
 
 ```bash
-make test
-make test-cov
-make lint
+curl http://localhost:6049/api/cybersecurity/snapshot
 ```
 
-Запуск по маркерах (`pytest -m`) для вибіркових прогонів:
+Якщо порти змінено у `.env`, у командах потрібно використати значення `CYBERSECURITY_GATEWAY_PORT` і `CYBERSECURITY_API_PORT`.
+
+## Інструкція користувача
+
+Основний інтерфейс SECMS інтегрований у спільний React-застосунок `rozumnaEnergia`. Після запуску спільного Docker Compose сторінка доступна за адресою:
+
+```text
+http://<адреса-сервера>:5173/cybersecurity
+```
+
+Порядок роботи:
+
+1. Відкрити сторінку `/cybersecurity` і перевірити загальний стан SECMS.
+2. У секції Gateway переглянути доступність захищеного API, поточне обмеження запитів, блокування та стан запобіжника відмов.
+3. На графіку HTTP-навантаження перевірити зміну кількості успішних, обмежених, заблокованих і помилкових відповідей.
+4. У секції MQTT переглянути останні значення телеметрії. Показники `voltage`, `power_kw` і `current_a` аналізуються правилами SECMS.
+5. Відкрити історію карантину, щоб переглянути повідомлення з фізично недопустимими значеннями або різкими змінами.
+6. У секції інцидентів перевірити тип події, рівень критичності, джерело та час виявлення.
+7. У журналі дій перевірити застосоване реагування та результат його виконання.
+8. У порівнянні політик переглянути доступність, MTTD і MTTR для профілів `minimal`, `baseline` і `standard`. Це розрахункові порівняльні показники, а не безпосередньо виміряний час роботи обладнання.
+9. Якщо дані не оновлюються, перевірити стан контейнерів і журнали API:
 
 ```bash
-# Компоненти
-pytest -m component_api
-pytest -m component_analyzer
-pytest -m component_emulator
-
-# Типи
-pytest -m type_smoke
-pytest -m type_integration
-
-# Пріоритети
-pytest -m priority_p0
-pytest -m "priority_p1 and component_api"
-
-# Виключити зовнішні/повільні
-pytest -m "not external and not slow"
+docker compose -f docker-compose.integration.yml logs --tail=100 cybersecurity-api
 ```
 
-## Інтеграційна готовність
+Інтерфейс React зберігається у спільному репозиторії [rozumnaEnergia](https://github.com/bondarenkoRodionTV52mp/rozumnaEnergia). Цей репозиторій містить серверну частину SECMS, конфігурацію правил і автономний інтеграційний Compose.
 
-Пакет артефактів для підключення до реальної SmartEnergy системи винесено у wiki:
-- https://github.com/RostislavKrotenko/cybersecurity-smartenergy/wiki/Integration-Readiness
+## Зупинення системи
 
-Безпечні режими запуску аналізатора:
+Зупинити контейнери:
 
 ```bash
-# dry-run: план дій без емісії в зовнішню систему
-python -m src.analyzer --watch --input data/live/events.jsonl --integration-mode dry-run
-
-# shadow: план дій у shadow-режимі (без емісії)
-python -m src.analyzer --watch --input data/live/events.jsonl --integration-mode shadow
-
-# active: активна емісія дій у ActionSink
-python -m src.analyzer --watch --input data/live/events.jsonl --integration-mode active
+docker compose -f docker-compose.integration.yml down
 ```
 
-## Ліцензія
+Повністю видалити контейнери разом із накопиченими даними SECMS:
 
-MIT (див. LICENSE)
+```bash
+docker compose -f docker-compose.integration.yml down --volumes
+```
+
+Команда з `--volumes` видаляє історію подій, інцидентів, дій і контрольні точки поточного локального запуску.
+
+## Основні налаштування
+
+| Змінна | Призначення | Типове значення |
+| --- | --- | --- |
+| `GATEWAY_CONTROL_TOKEN` | Токен для керувальних запитів Control до Gateway | Обов'язково задати |
+| `SMARTENERGY_UPSTREAM_URL` | Адреса захищеного Smart Energy API | `http://host.docker.internal:6006` |
+| `CYBERSECURITY_GATEWAY_PORT` | Публічний порт Gateway | `8080` |
+| `CYBERSECURITY_API_PORT` | Публічний порт API SECMS | `6049` |
+| `COLLECTOR_MQTT_ENABLED` | Увімкнення збирання MQTT-телеметрії | `false` |
+| `SMARTENERGY_MQTT_HOST` | Адреса MQTT-брокера | `host.docker.internal` |
+| `SMARTENERGY_MQTT_PORT` | Порт MQTT-брокера | `6030` |
+| `SMARTENERGY_MQTT_TOPICS` | Перелік MQTT-тем | `smartenergy/#` |
+
+Повний приклад налаштувань наведено у `deploy/integration.env.example`.
+
+## Корисні адреси
+
+| Адреса | Призначення |
+| --- | --- |
+| `http://localhost:8080/_cybersecurity/healthz` | Стан Gateway |
+| `http://localhost:6049/healthz` | Стан API SECMS |
+| `http://localhost:6049/docs` | Інтерактивний опис REST API |
+| `http://localhost:6049/api/cybersecurity/snapshot` | Зведений стан для React UI |
+
+## Структура репозиторію
+
+```text
+config/                         правила виявлення та політики захисту
+deploy/                         приклади змінних середовища
+docs/                           матеріали та опис інтеграції
+src/gateway/                    захисний HTTP Gateway
+src/collector/                  збирання подій і MQTT-телеметрії
+src/analyzer/                   виявлення інцидентів і розрахунок метрик
+src/control/                    виконання команд реагування
+src/api/                        REST API системи
+tests/                          автоматизовані перевірки
+Dockerfile                      образ серверної частини SECMS
+docker-compose.integration.yml  автономний інтеграційний запуск
+```
+
+## Автор
+
+Кротенко Ростислав Олександрович, група ТВ-52мп.
